@@ -157,7 +157,7 @@ Zero-trust: the Composition API re-verifies the JWT itself and never trusts upst
 
 - Tracing: OpenTelemetry, propagated through **both gRPC metadata and Kafka headers**, otherwise traces break at every async hop.
 - Metrics: Prometheus RED metrics per endpoint, plus consumer lag, saga duration, outbox backlog.
-- Logs: `slog` JSON, every line carrying `trace_id`, `correlation_id`, `service`, `user_id`.
+- Logs: `zap` JSON on stdout via `pkg/logger` — never a log file, never a second logging library. Request-scoped code takes its logger from the context with `logger.From(ctx)`, which attaches `trace_id`, `span_id`, `correlation_id`, and `user_id`; `service` and `version` are bound at construction. Store the plain logger with `logger.Into(ctx, log)` — never the result of `From`, or the context fields duplicate on the next hop.
 - Health: `/healthz` for liveness, `/readyz` checking DB and Kafka.
 - Alerts worth having from day one: consumer lag > 10k, any DLQ message, outbox backlog > 1000, p99 over SLO, error rate > 1%.
 
@@ -183,6 +183,8 @@ The local stack runs entirely from `docker compose` — Kafka in KRaft mode (no 
 ## Deployment notes
 
 One Deployment per service with HPA on CPU or consumer lag (KEDA). Migrations run as Jobs/init containers. gRPC needs a headless service with client-side load balancing — an L4 load balancer pins a single connection. Graceful shutdown stops consumers first, then `GracefulStop()`, with `terminationGracePeriodSeconds: 30`. Config comes from env (12-factor); secrets from External Secrets / Sealed Secrets.
+
+Every component that needs configuration declares its own struct with `env` tags and loads it through `pkg/config` — `config.MustLoad[T](config.WithPrefix("..."))` in `main.go` or `bootstrap`, then passed down explicitly. Nothing calls `os.Getenv` at runtime, and no code branches on an environment name: differences between deploys live in the values, not in `if env == "production"`.
 
 ## Working conventions
 
