@@ -70,9 +70,25 @@ Contract-first with `buf`. Change `.proto` first, run `buf lint`, `buf breaking 
 
 Request validation is declared in the proto with **protovalidate** and enforced by a single interceptor — do not write per-handler validation code.
 
-Standard server interceptor chain (`pkg/grpcx/server`), in order: recovery → otel → logging → metrics → auth → validate.
+Standard server interceptor chain (`pkg/grpcx/server`), in order: recovery → logging → metrics → auth → validate. Tracing is not in that list because otel is installed as a `stats.Handler`, its interceptor form being deprecated upstream — which wraps the whole chain rather than sitting inside it, so the span exists before recovery runs and a panic lands on the trace instead of beside it.
 
-Client side (`pkg/grpcx/client`): callers always set a deadline and callees respect `ctx.Done()`; retries only on `Unavailable`/`DeadlineExceeded` with exponential backoff + jitter, and only for idempotent methods; circuit breaker per target service; keepalive plus a default service config for round-robin balancing.
+Consequences of that order, both deliberate:
+
+- Recovery is outermost, so it catches a panic thrown by any other interceptor. It runs before logging has put a request logger in the context, so panic lines carry `trace_id` but not `correlation_id`.
+- Auth is inside logging, so the access line has no `user_id`. Handler logs do; join them by `trace_id`.
+
+The chain also owns the correlation ID: it adopts an inbound `x-correlation-id` or mints one, puts it in the context, and echoes it as a response header.
+
+`pkg/grpcx` itself only holds what both ends must agree on — the identity metadata keys and `Identity` in the context. Authentication establishes *who* is calling and nothing more; whether that caller may touch this aggregate is a business rule owned by the service. The default authenticator reads the identity forwarded from the edge and never rejects, because relays, timeout workers, and plain service-to-service reads legitimately arrive with no user behind them. Services that are themselves the first reachable hop — the Composition API — pass their own verifier via `WithAuth`.
+
+Client side (`pkg/grpcx/client`): callers always set a deadline and callees respect `ctx.Done()` (a call arriving without a deadline gets a default one rather than waiting forever); retries only on `Unavailable`/`DeadlineExceeded` with exponential backoff + jitter, and only for idempotent methods; circuit breaker per target service, outside the retry loop so one logical call counts once; keepalive plus a default service config for round-robin balancing.
+
+Two rules the client depends on:
+
+- **Method names decide retries.** `Get*`, `List*`, `Batch*`, `Search*`, `Count*`, `Check*` are treated as idempotent; anything else is not. A method named like a read that is not one — `GetOrCreateCart` — will be retried wrongly. Name mutations for the mutation, or list the exceptions in `IDEMPOTENT_METHODS`.
+- **Only failures that mean the target is unhealthy count against the breaker** — `Unavailable`, `DeadlineExceeded`, `ResourceExhausted`, `Internal`, `Unknown`, `DataLoss`. `NotFound` and `FailedPrecondition` are the service working correctly; counting them would let a run of sold-out SKUs trip the breaker and take checkout down.
+
+East-west traffic is plaintext. TLS is terminated by Kong at the edge, and internal encryption, when it is wanted, comes from the mesh rather than from every service growing its own certificate handling.
 
 Error mapping lives in `pkg/errorx`:
 
@@ -155,11 +171,23 @@ Zero-trust: the Composition API re-verifies the JWT itself and never trusts upst
 
 ## Observability
 
-- Tracing: OpenTelemetry, propagated through **both gRPC metadata and Kafka headers**, otherwise traces break at every async hop.
-- Metrics: Prometheus RED metrics per endpoint, plus consumer lag, saga duration, outbox backlog.
+**`observability.Start` runs first in `main`, before anything else is constructed.** otelgrpc resolves `otel.GetTracerProvider()` at the moment its handler is built, so a process that wires its gRPC server before its telemetry captures the no-op provider permanently: no span is ever exported, `trace_id` is empty on every log line, and nothing reports an error. This is the one ordering rule in the repo that fails silently.
+
+```go
+obs := observability.MustStart(ctx, obsCfg, observability.WithLogger(log))
+defer obs.Shutdown(context.WithoutCancel(ctx))
+
+srv := server.MustNew(grpcCfg, server.WithLogger(log), server.WithRegisterer(obs.Registry()))
+obs.AddReadinessCheck("postgres", pool.Ping)
+```
+
+- Tracing: OpenTelemetry over OTLP/gRPC to Jaeger/Tempo, propagated through **both gRPC metadata and Kafka headers** (W3C trace context + baggage), otherwise traces break at every async hop. Sampling is **parent-based** — sampling per service independently is how traces come back with the middle missing — so `SAMPLE_RATIO` only governs traces this process itself begins.
+- Metrics: Prometheus RED metrics per endpoint, plus consumer lag, saga duration, outbox backlog. The registry is owned by `pkg/observability` and passed down explicitly; nothing reaches for `prometheus.DefaultRegisterer`. The gRPC set comes from `pkg/grpcx/server` and no handler emits its own: `grpc_server_handled_total` (with `grpc_code`), `grpc_server_handling_seconds` (deliberately without it — a 13-bucket histogram multiplied by every status code is how a metrics backend drowns), `grpc_server_in_flight_requests`, `grpc_server_panics_recovered_total`. otelgrpc's own `rpc.*` metrics are suppressed so the same calls are not measured twice under two naming schemes.
 - Logs: `zap` JSON on stdout via `pkg/logger` — never a log file, never a second logging library. Request-scoped code takes its logger from the context with `logger.From(ctx)`, which attaches `trace_id`, `span_id`, `correlation_id`, and `user_id`; `service` and `version` are bound at construction. Store the plain logger with `logger.Into(ctx, log)` — never the result of `From`, or the context fields duplicate on the next hop.
-- Health: `/healthz` for liveness, `/readyz` checking DB and Kafka.
-- Alerts worth having from day one: consumer lag > 10k, any DLQ message, outbox backlog > 1000, p99 over SLO, error rate > 1%.
+- Log level follows meaning, not status: `NotFound`, `FailedPrecondition`, and the rest of the expected outcomes log at info. Only codes that say the service is broken log at error, or the error rate measures user behaviour instead of health and the alert on it never stops firing.
+- Admin endpoints live on their own port (`OBS_ADMIN_ADDR`, default `:9090`), never routed to from outside the cluster: `/metrics`, `/healthz`, `/readyz`. **Liveness checks nothing** — a liveness failure restarts the pod, and restarting because a database is unreachable turns one outage into a crash-loop across every replica. Dependencies go in readiness via `AddReadinessCheck`, registered as each one is wired; they run in parallel under one shared budget and the response body names what failed.
+- gRPC servers additionally serve the standard gRPC health service, and flip it to `NOT_SERVING` before draining so callers stop routing here while in-flight calls finish.
+- Alerts worth having from day one: consumer lag > 10k, any DLQ message, outbox backlog > 1000, p99 over SLO, error rate > 1%, any recovered panic.
 
 ## Testing
 
@@ -182,7 +210,12 @@ The local stack runs entirely from `docker compose` — Kafka in KRaft mode (no 
 
 ## Deployment notes
 
-One Deployment per service with HPA on CPU or consumer lag (KEDA). Migrations run as Jobs/init containers. gRPC needs a headless service with client-side load balancing — an L4 load balancer pins a single connection. Graceful shutdown stops consumers first, then `GracefulStop()`, with `terminationGracePeriodSeconds: 30`. Config comes from env (12-factor); secrets from External Secrets / Sealed Secrets.
+One Deployment per service with HPA on CPU or consumer lag (KEDA). Migrations run as Jobs/init containers. gRPC needs a headless service with client-side load balancing — an L4 load balancer pins a single connection. Config comes from env (12-factor); secrets from External Secrets / Sealed Secrets.
+
+Two couplings between settings that are easy to break by tuning one side alone:
+
+- Graceful shutdown stops consumers first, then hands the gRPC server its cancelled context; `pkg/grpcx/server` drains within `SHUTDOWN_TIMEOUT` (25s) and forces a stop after. That has to stay under `terminationGracePeriodSeconds: 30`, or the kubelet's SIGKILL lands mid-drain and the graceful path never runs.
+- Client-side balancing only spreads across replicas that existed when the caller last resolved. `MAX_CONNECTION_AGE` on the server is what forces callers to re-resolve, so scaling out actually receives traffic. A client's `KEEPALIVE_TIME` must also stay above the server's `MIN_CLIENT_PING_INTERVAL`, or the server answers a well-behaved caller's pings with GOAWAY.
 
 Every component that needs configuration declares its own struct with `env` tags and loads it through `pkg/config` — `config.MustLoad[T](config.WithPrefix("..."))` in `main.go` or `bootstrap`, then passed down explicitly. Nothing calls `os.Getenv` at runtime, and no code branches on an environment name: differences between deploys live in the values, not in `if env == "production"`.
 
