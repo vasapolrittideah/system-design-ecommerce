@@ -68,7 +68,7 @@ A service owns exactly one bounded context: one set of aggregates, one database,
 
 Contract-first with `buf`. Change `.proto` first, run `buf lint`, `buf breaking --against '.git#branch=trunk'`, then `buf generate`. Never edit files under `gen/`.
 
-Request validation is declared in the proto with **protovalidate** and enforced by a single interceptor — do not write per-handler validation code.
+Request validation is declared in the proto with **protovalidate** and enforced by a single interceptor — do not write per-handler validation code. The Composition API is the one place that cannot use it, because its request bodies are hand-written DTOs rather than protos; those are validated by `validate` struct tags through `httpx.Validator.Bind`. Those are the only two mechanisms in the repo. A handler that checks its own input by hand is a bug wherever it appears.
 
 Standard server interceptor chain (`pkg/grpcx/server`), in order: recovery → logging → metrics → auth → validate. Tracing is not in that list because otel is installed as a `stats.Handler`, its interceptor form being deprecated upstream — which wraps the whole chain rather than sitting inside it, so the span exists before recovery runs and a panic lands on the trace instead of beside it.
 
@@ -173,6 +173,14 @@ Screen-oriented REST endpoints — one endpoint per screen, not per entity — s
 - Every service exposes batch `GetXByIDs(ids)` methods. Never loop single-item gRPC calls.
 - BFF DTOs are defined separately from service protos so clients never bind to internal structures.
 - Short-TTL cache with singleflight for read-heavy data; invalidate via Kafka events.
+
+The HTTP side is `pkg/httpx`, which services never import — they speak gRPC, and `pkg/errorx` already carries their errors this far. Routers come from `httpx.NewRouter`, never a bare `chi.NewRouter`: chi answers an unrouted path, a wrong method, and a panic in `text/plain`, and its recoverer prints the stack into the response, so three exceptions to the response contract exist from the first commit unless its fallbacks are replaced.
+
+**`httpx.CorrelationID` is mandatory, and omitting it fails silently.** It is where the ID enters the system: `pkg/grpcx/client` reads it off the context and forwards it to every service the request fans out to, and those services put it on the outbox rows for the events they raise. Without the middleware the context holds nothing, every downstream service mints its own ID, and one user-visible operation appears in the logs as several unrelated ones — with no error anywhere.
+
+Every non-2xx answer is one shape, `httpx.ErrorResponse`, and JSON is **camelCase** throughout. Clients branch on `error.code` — the reason code from `errorx` — never on the HTTP status: 409 alone cannot say whether an order was already paid or a SKU was sold out. Renaming a reason code is a breaking change.
+
+Responses are localised from `Accept-Language`, defaulting to `en`, with the negotiated language echoed as `Content-Language`. Only `error.fields[].message` is translated. `error.message` is a developer aid and a last-resort string — never render it to a user, or a Thai screen shows English prose the moment anything but validation fails.
 
 ## Gateway and auth
 
