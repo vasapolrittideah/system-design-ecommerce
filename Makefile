@@ -191,7 +191,16 @@ proto-format: ## Format .proto files in place
 .PHONY: proto-breaking
 proto-breaking: ## Check for breaking changes against trunk
 	$(call need,buf)
-	buf breaking --against '$(BREAKING_AGAINST)'
+	@# A baseline that contains no .proto files is the first proto commit, not
+	@# a breaking change — but buf exits 1 on it either way, which would leave
+	@# `make proto` failing for everyone until the first schema lands.
+	@out=$$(buf breaking --against '$(BREAKING_AGAINST)' 2>&1) || { \
+		case "$$out" in \
+			*"had no .proto files"*) \
+				echo "baseline has no .proto files yet — nothing to compare against" ;; \
+			*) echo "$$out"; exit 1 ;; \
+		esac; \
+	}
 
 .PHONY: proto-generate
 proto-generate: ## buf generate into gen/go
