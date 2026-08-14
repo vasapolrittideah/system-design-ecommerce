@@ -46,7 +46,7 @@ func loggingStream(base *zap.Logger) grpc.StreamServerInterceptor {
 		ctx := requestContext(stream.Context(), base)
 
 		start := time.Now()
-		err := handler(srv, withContext(stream, ctx))
+		err := handler(srv, withContext(ctx, stream))
 		logCall(ctx, info.FullMethod, streamType(info), err, time.Since(start))
 
 		return err

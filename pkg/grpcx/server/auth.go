@@ -65,7 +65,7 @@ func authStream(fn Authenticator) grpc.StreamServerInterceptor {
 			return err
 		}
 
-		return handler(srv, withContext(stream, ctx))
+		return handler(srv, withContext(ctx, stream))
 	}
 }
 

@@ -54,7 +54,7 @@ func (s *wrappedStream) Context() context.Context {
 
 // withContext wraps stream so the handler sees ctx, flattening nested wrappers
 // so a chain of five interceptors does not build five layers of indirection.
-func withContext(stream grpc.ServerStream, ctx context.Context) grpc.ServerStream {
+func withContext(ctx context.Context, stream grpc.ServerStream) grpc.ServerStream {
 	if w, ok := stream.(*wrappedStream); ok {
 		return &wrappedStream{ServerStream: w.ServerStream, ctx: ctx}
 	}
