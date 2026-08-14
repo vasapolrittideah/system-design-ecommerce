@@ -65,8 +65,8 @@ func validate(v protovalidate.Validator, req any) error {
 	// wrong or uncompilable. That is our bug, not the caller's, so it must not
 	// come back as InvalidArgument and send them off debugging a request that
 	// was fine.
-	var invalid *protovalidate.ValidationError
-	if !errors.As(err, &invalid) {
+	invalid, ok := errors.AsType[*protovalidate.ValidationError](err)
+	if !ok {
 		return status.Error(codes.Internal, "internal error")
 	}
 
