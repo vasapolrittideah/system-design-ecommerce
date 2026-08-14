@@ -245,16 +245,21 @@ make migrate-up SVC=x   # goose -dir services/x/db/migrations postgres "$(DSN)" 
 make mock               # mockery, driven by .mockery.yml
 make test               # go test ./... -race -cover
 make lint               # golangci-lint run
-make cluster-create     # k3d cluster, once
+make cluster-create     # k3d cluster with its registry, once
+make dev                # tilt up — watch, rebuild, redeploy
 make up                 # apply deploy/k8s/infra into the cluster
 make deploy SVC=x       # build image, run the migration Job, roll out
 ```
 
-The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies (Postgres, Jaeger; Kafka in KRaft mode and Kong DB-less as the phases needing them arrive) and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/local/<name>` for the services. Every dependency a service needs must be startable this way; nothing may require a shared remote environment to develop against.
+The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies every service shares (Jaeger, Reloader; Kafka in KRaft mode and Kong DB-less as the phases needing them arrive) and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/local/<name>` for the services.
+
+**Databases are not shared infrastructure.** Each service's local overlay declares its own single-database Postgres instance, so "database per service" is structural rather than a matter of grants. One instance holding a database per service is cheaper and was what this stack ran first, but Postgres grants `CONNECT` on every new database to `PUBLIC`, so each service role could open a connection to every other service's database and list its tables through `pg_catalog` — closing that needed a `REVOKE` in an init script whose absence nothing would report. With an instance per service there is nothing to revoke, and reaching another service's data would mean reaching another Service. Every dependency a service needs must be startable this way; nothing may require a shared remote environment to develop against.
 
 Kubernetes locally rather than compose because the rules this repo cares about most are the ones compose cannot express: a headless Service with client-side gRPC balancing, `MAX_CONNECTION_AGE` forcing callers to re-resolve, `SHUTDOWN_TIMEOUT` fitting inside `terminationGracePeriodSeconds`, migrations as a Job, and readiness removing a pod from the endpoint list. Manifests that are never run before production are three bugs discovered on the same afternoon.
 
-The cost is the inner loop, and the way around it is to run the dependencies in the cluster and the service on the host: `make up`, `make port-forward`, then `make run SVC=x`. Put the service in the cluster with `make deploy` when the thing being tested is one of the behaviours above.
+The cost is the inner loop, and there are two ways around it. `make dev` runs Tilt, which watches the tree and rebuilds and redeploys into the cluster — about eleven seconds from a Go edit to the new binary serving. For a tighter loop than that, run the dependencies in the cluster and the service on the host: `make up`, `make port-forward`, then `make run SVC=x`.
+
+**The Tiltfile deliberately has no live update.** Syncing a host-compiled binary into the running container would take that eleven seconds to two or three, and costs four divergences from production to do it: the Go sources have to leave the image build context or every edit invalidates it and the sync never fires, the server has to run a different distroless variant because the restart wrapper needs a `touch` the minimal image lacks, `readOnlyRootFilesystem` has to be off, and the binary gets compiled twice. That is a poor trade in a repo whose reason for running Kubernetes locally is not having such divergences. Re-measure before revisiting it.
 
 Two manifests carry couplings that break silently when one side is tuned alone. `terminationGracePeriodSeconds` (35s) must exceed the `preStop` sleep (5s) plus `IDENTITY_GRPC_SHUTDOWN_TIMEOUT` (25s). And the Deployment sets no CPU limit on purpose: the HPA measures utilisation against the CPU *request*, so a throttled pod reports spare capacity and the autoscaler declines to scale exactly when it should.
 
