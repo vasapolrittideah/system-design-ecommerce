@@ -32,8 +32,17 @@ GOLANGCI_LINT_VERSION ?= v2.12.2
 SVC ?=
 CMD ?= server
 
-# Local development database. Override for anything else.
-DSN ?= postgres://postgres:postgres@localhost:5432/$(SVC)?sslmode=disable
+# Local Kubernetes stack. The cluster is created once and outlives everything
+# else; NAMESPACE is where both the infra and the services land.
+CLUSTER   ?= ecommerce
+NAMESPACE ?= ecommerce
+K8S_DIR   := deploy/k8s
+IMAGE_TAG ?= dev
+
+# Local development database, reached through `make port-forward`. Each service
+# connects as its own role — that is what makes database-per-service a
+# permission error rather than a code review comment.
+DSN ?= postgres://$(SVC):$(SVC)@localhost:5432/$(SVC)?sslmode=disable
 
 # `buf breaking` baseline. CI on a PR may want '.git\#branch=origin/trunk'.
 # The backslash is required: an unescaped # starts a Make comment.
@@ -53,6 +62,17 @@ endef
 
 define need_svc
 	@if [ -z "$(SVC)" ]; then echo "SVC is required, e.g. make $@ SVC=order"; exit 1; fi
+endef
+
+# k3d, kubectl, and docker are not Go programs, so `make tools` cannot install
+# them. Each gets its own hint instead of a generic one.
+define need_bin
+	@command -v $(1) >/dev/null 2>&1 || { echo "$(1) not found — install with: $(2)"; exit 1; }
+endef
+
+define need_cluster
+	$(call need_bin,k3d,brew install k3d)
+	@k3d cluster list $(CLUSTER) >/dev/null 2>&1 || { echo "cluster '$(CLUSTER)' does not exist — run: make cluster-create"; exit 1; }
 endef
 
 ##@ General
@@ -227,27 +247,126 @@ migrate-create: ## Create a migration (make migrate-create SVC=order NAME=add_or
 	@mkdir -p services/$(SVC)/db/migrations
 	goose -dir services/$(SVC)/db/migrations create $(NAME) sql
 
+##@ Local cluster
+
+.PHONY: cluster-create
+cluster-create: ## Create the k3d cluster (run once, survives reboots)
+	$(call need_bin,k3d,brew install k3d)
+	@# Traefik is disabled because Kong is this system's gateway, and two
+	@# ingress controllers fighting over port 80 is a confusing first hour.
+	@#
+	@# The loadbalancer port mappings are declared now even though nothing
+	@# listens on them yet: k3d cannot add a port mapping to an existing
+	@# cluster, so leaving them out means recreating the cluster on the day
+	@# Kong arrives.
+	k3d cluster create $(CLUSTER) \
+		--agents 2 \
+		--k3s-arg "--disable=traefik@server:*" \
+		-p "8000:80@loadbalancer" \
+		-p "8443:443@loadbalancer" \
+		--wait
+	kubectl apply -f $(K8S_DIR)/infra/namespace.yaml
+	kubectl config set-context --current --namespace=$(NAMESPACE)
+
+.PHONY: cluster-delete
+cluster-delete: ## Delete the k3d cluster and everything inside it
+	$(call need_bin,k3d,brew install k3d)
+	k3d cluster delete $(CLUSTER)
+
 ##@ Local stack
 
 .PHONY: up
-up: ## Start the local stack (Postgres, Kafka, Kong, otel…)
-	docker compose up -d --build
+up: ## Start local infra in the cluster (Postgres, Jaeger)
+	$(need_cluster)
+	kubectl apply -f $(K8S_DIR)/infra/namespace.yaml
+	kubectl apply -k $(K8S_DIR)/infra
+	kubectl -n $(NAMESPACE) rollout status statefulset/postgres --timeout=180s
+	kubectl -n $(NAMESPACE) rollout status deployment/jaeger --timeout=180s
 
 .PHONY: down
-down: ## Stop the local stack
-	docker compose down
+down: ## Remove local infra, keeping the namespace and the database volume
+	kubectl delete -k $(K8S_DIR)/infra --ignore-not-found
 
 .PHONY: clean-volumes
-clean-volumes: ## Stop the local stack and delete its volumes — destroys local data
-	docker compose down -v
+clean-volumes: ## Delete the namespace and its volumes — destroys local data
+	kubectl delete namespace $(NAMESPACE) --ignore-not-found
 
 .PHONY: ps
-ps: ## Show local stack containers
-	docker compose ps
+ps: ## Show everything running in the namespace
+	kubectl -n $(NAMESPACE) get pods,svc,job,hpa
 
 .PHONY: logs
-logs: ## Tail local stack logs (make logs SVC=order for one service)
-	docker compose logs -f --tail=100 $(SVC)
+logs: ## Tail a service's logs across every replica (make logs SVC=identity)
+	$(need_svc)
+	kubectl -n $(NAMESPACE) logs -f --tail=100 --max-log-requests=10 \
+		-l app.kubernetes.io/name=$(SVC)
+
+.PHONY: port-forward
+port-forward: ## Expose infra on localhost for host-run services (ctrl-c to stop)
+	@echo "postgres  -> localhost:5432"
+	@echo "jaeger UI -> http://localhost:16686"
+	@trap 'kill 0' EXIT; \
+	kubectl -n $(NAMESPACE) port-forward svc/postgres 5432:5432 >/dev/null & \
+	kubectl -n $(NAMESPACE) port-forward svc/jaeger 16686:16686 >/dev/null & \
+	wait
+
+##@ Deploy
+
+.PHONY: keys
+keys: ## Generate the local ES256 signing keypair for identity (gitignored)
+	@dir=$(K8S_DIR)/overlays/local/identity; \
+	if [ -f $$dir/jwt-private.pem ]; then \
+		echo "$$dir/jwt-private.pem already exists — delete it to rotate"; exit 0; \
+	fi; \
+	openssl ecparam -name prime256v1 -genkey -noout -out $$dir/jwt-private.pem; \
+	openssl ec -in $$dir/jwt-private.pem -pubout -out $$dir/jwt-public.pem 2>/dev/null; \
+	echo "wrote $$dir/jwt-{private,public}.pem"
+
+.PHONY: image
+image: ## Build a service's images and import them into the cluster (SVC=identity)
+	$(need_svc)
+	$(need_cluster)
+	$(call need_bin,docker,brew install --cask docker)
+	@# Build context is the repo root: one go.mod covers every service, so a
+	@# context scoped to services/$(SVC) cannot see the module it belongs to.
+	docker build -f services/$(SVC)/Dockerfile --target server \
+		-t ecommerce/$(SVC):$(IMAGE_TAG) .
+	docker build -f services/$(SVC)/Dockerfile --target migrate \
+		-t ecommerce/$(SVC)-migrate:$(IMAGE_TAG) .
+	k3d image import -c $(CLUSTER) \
+		ecommerce/$(SVC):$(IMAGE_TAG) ecommerce/$(SVC)-migrate:$(IMAGE_TAG)
+
+.PHONY: deploy
+deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity)
+	$(need_svc)
+	$(MAKE) image SVC=$(SVC)
+	@# Kustomize has no hooks, so the migration is ordered here instead. The
+	@# Job is immutable once created, which is why it is deleted rather than
+	@# re-applied — a changed image on an existing Job is rejected outright.
+	kubectl -n $(NAMESPACE) delete job $(SVC)-migrate --ignore-not-found
+	kubectl apply -k $(K8S_DIR)/overlays/local/$(SVC)
+	@kubectl -n $(NAMESPACE) wait --for=condition=complete job/$(SVC)-migrate --timeout=180s || { \
+		echo "--- migration failed ---"; \
+		kubectl -n $(NAMESPACE) logs job/$(SVC)-migrate --tail=50; \
+		exit 1; \
+	}
+	kubectl -n $(NAMESPACE) rollout status deployment/$(SVC) --timeout=180s
+
+.PHONY: undeploy
+undeploy: ## Remove a service from the cluster (SVC=identity)
+	$(need_svc)
+	kubectl delete -k $(K8S_DIR)/overlays/local/$(SVC) --ignore-not-found
+
+.PHONY: restart
+restart: ## Roll a service's pods without rebuilding (SVC=identity)
+	$(need_svc)
+	kubectl -n $(NAMESPACE) rollout restart deployment/$(SVC)
+	kubectl -n $(NAMESPACE) rollout status deployment/$(SVC) --timeout=180s
+
+.PHONY: render
+render: ## Print the manifests an overlay would apply (SVC=identity)
+	$(need_svc)
+	kubectl kustomize $(K8S_DIR)/overlays/local/$(SVC)
 
 ##@ Tools
 
