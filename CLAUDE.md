@@ -209,7 +209,7 @@ Rules that package settles once:
 - **Access tokens are JWTs; refresh tokens are not.** A refresh token has to be revocable, which a self-contained signed token cannot be — logout would have to wait out the TTL. Refresh tokens are opaque random strings whose hash the identity service stores in a table, where a row can be deleted.
 - **Access-token TTL stays short** (15m default), because until it expires a stolen token works, a deleted user is still logged in, and a revoked role is still held.
 
-PEM keys reach a process through env as either the PEM itself, which a Kubernetes Secret carries fine, or base64 of it, which is what survives a single-line `.env` a host-run process reads under `make run`. `pkg/auth` accepts both by looking at the value.
+PEM keys reach a process through env as either the PEM itself, which a Kubernetes Secret carries fine, or base64 of it, which is the shape that survives any delivery keeping a value on one line. `pkg/auth` accepts both by looking at the value.
 
 ## Observability
 
@@ -257,7 +257,9 @@ The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for
 
 Kubernetes locally rather than compose because the rules this repo cares about most are the ones compose cannot express: a headless Service with client-side gRPC balancing, `MAX_CONNECTION_AGE` forcing callers to re-resolve, `SHUTDOWN_TIMEOUT` fitting inside `terminationGracePeriodSeconds`, migrations as a Job, and readiness removing a pod from the endpoint list. Manifests that are never run before production are three bugs discovered on the same afternoon.
 
-The cost is the inner loop, and there are two ways around it. `make dev` runs Tilt, which watches the tree and rebuilds and redeploys into the cluster — about eleven seconds from a Go edit to the new binary serving. For a tighter loop than that, run the dependencies in the cluster and the service on the host: `make up`, `make port-forward`, then `make run SVC=x`.
+The cost is the inner loop, and `make dev` is the whole answer to it: Tilt watches the tree and rebuilds and redeploys into the cluster — about eleven seconds from a Go edit to the new binary serving. Editing any file the image is built from is enough; nothing else needs running.
+
+**There is deliberately no second, faster loop that runs a service on the host.** One was half-built and removed. Everything a service reads comes from a ConfigMap and a Secret that kustomize assembles and the kubelet injects, so a host-run process has to reproduce that environment by hand — with values that are not merely absent but different, since `IDENTITY_DB_HOST` is a Service name in the cluster and `localhost` behind a port-forward. That hand-written copy drifts silently the moment an overlay changes, and the loop it buys is worth a few seconds against a rebuild already measured in eleven. A tool like `air` would only automate restarting that process; it does not address the environment, which is the part that actually costs. `make port-forward` stays, because goose and psql need a database on `localhost` — not because a service is meant to run there.
 
 **The Tiltfile deliberately has no live update.** Syncing a host-compiled binary into the running container would take that eleven seconds to two or three, and costs four divergences from production to do it: the Go sources have to leave the image build context or every edit invalidates it and the sync never fires, the server has to run a different distroless variant because the restart wrapper needs a `touch` the minimal image lacks, `readOnlyRootFilesystem` has to be off, and the binary gets compiled twice. That is a poor trade in a repo whose reason for running Kubernetes locally is not having such divergences. Re-measure before revisiting it.
 
