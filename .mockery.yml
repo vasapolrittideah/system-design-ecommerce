@@ -11,6 +11,6 @@ structname: "Mock{{.InterfaceName}}"
 
 packages:
   # Driven ports: repositories, gateways, publishers.
-  github.com/vasapolrittideah/system-design-ecommerce/services/catalog/internal/port/out:
+  github.com/vasapolrittideah/system-design-ecommerce/services/identity/internal/port/out:
     config:
       all: true

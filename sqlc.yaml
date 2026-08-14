@@ -5,12 +5,12 @@ version: "2"
 # a service grows a database — never point two entries at one output package.
 sql:
   - engine: postgresql
-    schema: services/catalog/db/migrations
-    queries: services/catalog/db/queries
+    schema: services/identity/db/migrations
+    queries: services/identity/db/queries
     gen:
       go:
         package: sqlc
-        out: services/catalog/internal/adapter/out/postgres/sqlc
+        out: services/identity/internal/adapter/out/postgres/sqlc
         # pgx/v5, not database/sql — this decides the whole generated API.
         sql_package: pgx/v5
         # Queriers are what repositories depend on and what tests fake.
