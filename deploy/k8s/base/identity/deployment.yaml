@@ -2,6 +2,19 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: identity
+  annotations:
+    # Restart these pods when a ConfigMap or Secret they reference changes
+    # content. Nothing here re-reads its configuration at runtime — env is read
+    # once, when the container starts — so without this a rotated signing key
+    # leaves every running replica holding the old one, with no error anywhere
+    # to say so.
+    #
+    # It does nothing while the ConfigMap and Secret come from kustomize
+    # generators, whose content hash changes their name and so rolls the
+    # Deployment through the ordinary apply. It becomes the only thing that
+    # rolls them the moment a fixed-name Secret appears — an External Secrets
+    # operator writing one, or a Secret created out of band.
+    reloader.stakater.com/auto: "true"
 spec:
   # No replicas field: the HPA owns it. Setting both makes kustomize apply and
   # the autoscaler fight, and every deploy resets the pod count.

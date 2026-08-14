@@ -282,6 +282,7 @@ up: ## Start local infra in the cluster (Postgres, Jaeger)
 	kubectl apply -k $(K8S_DIR)/infra
 	kubectl -n $(NAMESPACE) rollout status statefulset/postgres --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/jaeger --timeout=180s
+	kubectl -n $(NAMESPACE) rollout status deployment/reloader-reloader --timeout=180s
 
 .PHONY: down
 down: ## Remove local infra, keeping the namespace and the database volume
