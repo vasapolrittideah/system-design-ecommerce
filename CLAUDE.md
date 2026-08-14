@@ -119,9 +119,11 @@ Attach `ErrorInfo` details so clients can handle specific cases — `.WithReason
 
 - `pgx/v5` with `pgxpool`, not `database/sql`.
 - `sqlc` for type-safe queries. No ORM.
-- Migrations live in `services/<name>/db/migrations/` and run as a Job/init container — never on application startup.
+- Migrations live in `services/<name>/db/migrations/` and run as a Job/init container — never on application startup. `sqlc` reads that same directory as its schema source, so the migration files *are* the schema; there is no second `schema.sql` to keep in step.
 - Every table carries `id uuid`, `created_at`, `updated_at`, `version int` (optimistic locking).
 - Transactions go through `pkg/txmanager`: use cases call `tx.Do(ctx, fn)` and stay unaware of PostgreSQL. Repositories pull the tx off the context and fall back to the pool when absent.
+
+The migration tool is **goose**, picked over golang-migrate for how each one fails rather than how it runs. golang-migrate marks `schema_migrations.dirty` when a migration fails and refuses every later run until someone connects and forces a version — inside an init container that is a crash-loop on every replica, waiting on a human, for a failure that may have been a lock timeout. goose runs each migration in a transaction and records nothing when it rolls back, so a transient failure clears itself on the next restart. Neither survives a half-applied `-- +goose NO TRANSACTION` migration, which is the price of `CREATE INDEX CONCURRENTLY`.
 
 **Transactional outbox is mandatory for publishing events.** Write the aggregate and its events to the `outbox` table in one transaction; a relay polls with `FOR UPDATE SKIP LOCKED` and publishes afterwards. Never publish to Kafka directly from a use case.
 
