@@ -1,0 +1,16 @@
+template: testify
+
+# Mocks exist for one reason: use case tests that need to drive a port into a
+# failure the real adapter cannot be asked for on demand. Domain tests use no
+# mocks at all, and adapter tests use testcontainers — so only ports are listed
+# here, never domain types or adapters.
+dir: "{{.InterfaceDir}}/mocks"
+pkgname: mocks
+filename: "{{.InterfaceName | snakecase}}.go"
+structname: "Mock{{.InterfaceName}}"
+
+packages:
+  # Driven ports: repositories, gateways, publishers.
+  github.com/vasapolrittideah/system-design-ecommerce/services/catalog/internal/port/out:
+    config:
+      all: true
