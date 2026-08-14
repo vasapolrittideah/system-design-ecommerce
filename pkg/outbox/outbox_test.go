@@ -4,6 +4,7 @@
 package outbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -112,7 +113,7 @@ func TestWritePersistsEveryField(t *testing.T) {
 	if got.Topic != want.Topic {
 		t.Errorf("topic = %q, want %q", got.Topic, want.Topic)
 	}
-	if string(got.Payload) != string(want.Payload) {
+	if !bytes.Equal(got.Payload, want.Payload) {
 		t.Errorf("payload = %v, want %v", got.Payload, want.Payload)
 	}
 	if got.Headers["traceparent"] != want.Headers["traceparent"] {

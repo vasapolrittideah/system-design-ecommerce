@@ -168,9 +168,11 @@ func (r *Relay) Run(ctx context.Context) error {
 
 		var wait time.Duration
 		switch {
+		// The cycle was cut short by shutdown, not by a real failure. Its
+		// transaction rolled back, so the rows are still waiting, and the error
+		// publishBatch returned only describes how the cancellation surfaced.
+		//nolint:nilerr // discarding err here is the point: shutdown is not a failure
 		case ctx.Err() != nil:
-			// The cycle was cut short by shutdown, not by a real failure. Its
-			// transaction rolled back, so the rows are still waiting.
 			return nil
 		case err != nil:
 			wait = backoff
@@ -309,8 +311,8 @@ func claim(ctx context.Context, db txmanager.DBTX, limit int) ([]Message, error)
 
 func markPublished(ctx context.Context, db txmanager.DBTX, messages []Message) error {
 	ids := make([]int64, len(messages))
-	for i, m := range messages {
-		ids[i] = m.ID
+	for i := range messages {
+		ids[i] = messages[i].ID
 	}
 
 	const sql = `UPDATE outbox SET published_at = now() WHERE id = ANY($1)`

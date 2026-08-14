@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -24,12 +25,11 @@ func relayConfig() RelayConfig {
 // publisher records what it was handed and can be made to fail or to stall, so
 // a test can hold a claim open while another relay tries to take the same rows.
 type publisher struct {
-	mu       sync.Mutex
-	batches  [][]Message
-	err      error
-	entered  chan struct{} // signalled as Publish is entered, if non-nil
-	release  chan struct{} // Publish waits for this to close, if non-nil
-	released bool
+	mu      sync.Mutex
+	batches [][]Message
+	err     error
+	entered chan struct{} // signalled as Publish is entered, if non-nil
+	release chan struct{} // Publish waits for this to close, if non-nil
 }
 
 func (p *publisher) Publish(ctx context.Context, messages []Message) error {
@@ -159,7 +159,7 @@ func TestRelayPublishesAndMarksRows(t *testing.T) {
 	if got.EventType != want.EventType {
 		t.Errorf("EventType = %q, want %q", got.EventType, want.EventType)
 	}
-	if string(got.Payload) != string(want.Payload) {
+	if !bytes.Equal(got.Payload, want.Payload) {
 		t.Errorf("Payload = %v, want %v", got.Payload, want.Payload)
 	}
 	if got.Headers["traceparent"] != want.Headers["traceparent"] {
