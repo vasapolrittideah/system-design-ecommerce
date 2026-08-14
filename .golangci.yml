@@ -1,0 +1,176 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose
+    - depguard
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - testifylint
+    - unconvert
+    - unparam
+    - wastedassign
+
+  settings:
+    depguard:
+      rules:
+        # --------------------------------------------------------------------
+        # internal/domain imports only the standard library.
+        #
+        # `allow` is a whitelist: anything not listed is denied, so this rule
+        # needs no maintenance as new libraries enter the repo. If a domain
+        # package is ever split into sub-packages, add its import path here.
+        # --------------------------------------------------------------------
+        domain-stdlib-only:
+          list-mode: strict
+          files:
+            - "**/internal/domain/**"
+          allow:
+            - $gostd
+          deny:
+            - pkg: github.com/vasapolrittideah/system-design-ecommerce/pkg
+              desc: domain must not depend on infrastructure; declare the error kind structurally with ErrorKind() string instead of importing errorx
+            - pkg: github.com/vasapolrittideah/system-design-ecommerce/gen
+              desc: domain must not depend on generated proto; adapters map proto to domain
+            - pkg: google.golang.org/grpc
+              desc: domain is transport-agnostic
+            - pkg: google.golang.org/protobuf
+              desc: domain is transport-agnostic
+            - pkg: github.com/jackc/pgx/v5
+              desc: domain is persistence-agnostic
+            - pkg: github.com/segmentio/kafka-go
+              desc: domain is messaging-agnostic
+
+        # --------------------------------------------------------------------
+        # pkg/ is cross-cutting infrastructure — no business logic.
+        # --------------------------------------------------------------------
+        pkg-no-service-imports:
+          files:
+            - "**/pkg/**"
+          deny:
+            - pkg: github.com/vasapolrittideah/system-design-ecommerce/services
+              desc: pkg/ must stay free of business logic; move the shared piece into pkg/ or keep it inside the service
+
+        # --------------------------------------------------------------------
+        # Services speak gRPC; the HTTP layer belongs to the Composition API.
+        # --------------------------------------------------------------------
+        services-no-httpx:
+          files:
+            - "**/services/**"
+            - "!**/services/composition/**"
+          deny:
+            - pkg: github.com/vasapolrittideah/system-design-ecommerce/pkg/httpx
+              desc: httpx is the Composition API's HTTP layer; services expose gRPC and let errorx carry their errors
+
+        # --------------------------------------------------------------------
+        # Repo-wide bans.
+        # --------------------------------------------------------------------
+        all:
+          files:
+            - $all
+            - "!$test" # a test may reach for log or a throwaway helper
+          deny:
+            - pkg: github.com/pkg/errors
+              desc: use the standard errors package with pkg/errorx
+            - pkg: github.com/sirupsen/logrus
+              desc: logging is zap through pkg/logger — never a second logging library
+            - pkg: log
+              desc: use pkg/logger; logger.From(ctx) in request-scoped code
+            - pkg: io/ioutil
+              desc: deprecated; use io and os
+
+    errcheck:
+      check-type-assertions: true
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        # Config structs are passed by value on purpose — config.MustLoad[T]
+        # yields a value and every MustNew in pkg/ takes one.
+        - hugeParam
+        # A trailing `defer conn.Close()` survives the next line added below it.
+        - unnecessaryDefer
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow # `err` shadowed inside a narrower scope is idiomatic Go
+
+    misspell:
+      # No locale: the prose here is British on purpose ("behaviour",
+      # "localised") and only genuine typos should be reported.
+      ignore-rules:
+        - statuser # the Go -er interface suffix, not a typo for "stature"
+
+    revive:
+      rules:
+        - name: exported
+        - name: context-as-argument
+          arguments:
+            - allowTypesBefore: "*testing.T"
+        - name: context-keys-type
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: indent-error-flow
+        - name: range-val-address
+        - name: unexported-return
+        - name: unreachable-code
+        - name: var-naming
+
+  exclusions:
+    generated: lax
+    paths:
+      - gen/go
+    rules:
+      # Closing a body or a conn in a test is noise, not a leak. Test helpers
+      # under internal/*test/ are held to the same relaxed standard.
+      - path: (_test\.go|internal/[a-z]*test/)
+        linters:
+          - bodyclose
+          - errcheck
+          - gosec
+          - noctx
+          - unparam
+      # A listener is created once at startup; ListenConfig buys nothing there.
+      - linters:
+          - noctx
+        text: net\.Listen must not be called
+      # Jitter is not a security decision — math/rand is the right tool.
+      - path: pkg/grpcx/client/retry\.go
+        linters:
+          - gosec
+        text: G404
+      # Generated mocks are not ours to lint.
+      - path: mocks?/
+        linters:
+          - revive
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/vasapolrittideah/system-design-ecommerce
+  exclusions:
+    generated: lax
+    paths:
+      - gen/go
