@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package ecommerce.identity.v1;
+
+import "buf/validate/validate.proto";
+import "ecommerce/identity/v1/user.proto";
+
+// IdentityService owns users, their credentials, and the tokens minted from
+// them. It is reached over east-west gRPC only — the edge is Kong and the
+// Composition API, and no service in this repo speaks HTTP.
+//
+// Every field constraint below is declared here rather than checked in a
+// handler: a single interceptor enforces them, so a handler that validates its
+// own input is a bug wherever it appears.
+service IdentityService {
+  // Register creates a user from an email and a password.
+  //
+  // Deliberately not named Create*, and deliberately not a read: the client
+  // retry policy treats Get/List/Batch/Search/Count/Check as idempotent and
+  // retries them on Unavailable, which would turn one slow registration into
+  // several accounts.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // GetUser reads one user by ID.
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+
+  // GetUsersByIDs reads many. Every service exposes one of these so the
+  // Composition API can fill a screen without looping single-item calls.
+  rpc GetUsersByIDs(GetUsersByIDsRequest) returns (GetUsersByIDsResponse);
+}
+
+message RegisterRequest {
+  // Bounded at 254 bytes, the longest address SMTP is required to accept.
+  string email = 1 [(buf.validate.field).string = {
+    email: true
+    max_bytes: 254
+  }];
+
+  // Length is all that is checked here. Composition rules ("one digit, one
+  // symbol") push users toward predictable passwords and belong nowhere near a
+  // transport contract.
+  //
+  // The upper bound exists so an unbounded input cannot be handed to a
+  // deliberately slow hash. If bcrypt is ever chosen over argon2id it must
+  // drop to 72: bcrypt silently truncates there, which would make two
+  // different long passwords authenticate each other.
+  string password = 2 [(buf.validate.field).string = {
+    min_len: 8
+    max_bytes: 256
+  }];
+}
+
+message RegisterResponse {
+  // The created user, and no tokens. Registering and signing in are separate
+  // acts — bundling them means a client that only wanted to create an account
+  // is handed a credential it has to decide what to do with, and it hides the
+  // case where registration succeeds but sign-in should not be allowed yet.
+  User user = 1;
+}
+
+message GetUserRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message GetUsersByIDsRequest {
+  // Bounded because the response is: an unbounded id list is how a batch read
+  // drives its own callee out of memory.
+  repeated string ids = 1 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 100
+      unique: true
+    },
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+}
+
+message GetUsersByIDsResponse {
+  // Users present in the store, in no guaranteed order and possibly fewer than
+  // were asked for. A missing id is not an error: one deleted user must not
+  // fail the whole screen the Composition API is assembling.
+  repeated User users = 1;
+}

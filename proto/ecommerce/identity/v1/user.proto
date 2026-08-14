@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package ecommerce.identity.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// User is what the identity service tells everyone else about a person.
+//
+// It is the outward shape, not the aggregate: the password hash, the refresh
+// tokens, and the optimistic-locking version stay inside the service and never
+// appear here. A field on this message is a promise to every caller, so it is
+// far cheaper to add one later than to take one back.
+message User {
+  // Stable identifier, a UUID. It is also the "sub" claim of every access
+  // token issued for this user, so nothing else may be used to identify them.
+  string id = 1;
+
+  // Login identity, unique across the service and stored lowercased.
+  string email = 2;
+
+  // What the user is, never what they may do with a particular aggregate —
+  // that rule belongs to whichever service owns the aggregate. These are the
+  // roles copied into the "roles" claim at sign time.
+  repeated string roles = 3;
+
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
