@@ -46,8 +46,11 @@ func TestPoolConfigAppliesConnectionSettings(t *testing.T) {
 	if conn.User != cfg.User {
 		t.Errorf("User = %q, want %q", conn.User, cfg.User)
 	}
-	if conn.Password != cfg.Password {
-		t.Errorf("Password = %q, want %q", conn.Password, cfg.Password)
+	// Compared through Reveal because the config field redacts itself — which
+	// is also the assertion that the password survived the round trip through
+	// the DSN rather than being written out as "[REDACTED]".
+	if conn.Password != cfg.Password.Reveal() {
+		t.Errorf("Password = %q, want %q", conn.Password, cfg.Password.Reveal())
 	}
 	if conn.Database != cfg.Database {
 		t.Errorf("Database = %q, want %q", conn.Database, cfg.Database)
@@ -101,8 +104,8 @@ func TestPoolConfigEscapesCredentials(t *testing.T) {
 	if got.ConnConfig.User != cfg.User {
 		t.Errorf("User = %q, want %q", got.ConnConfig.User, cfg.User)
 	}
-	if got.ConnConfig.Password != cfg.Password {
-		t.Errorf("Password = %q, want %q", got.ConnConfig.Password, cfg.Password)
+	if got.ConnConfig.Password != cfg.Password.Reveal() {
+		t.Errorf("Password = %q, want %q", got.ConnConfig.Password, cfg.Password.Reveal())
 	}
 	if got.ConnConfig.Database != cfg.Database {
 		t.Errorf("Database = %q, want %q", got.ConnConfig.Database, cfg.Database)
@@ -143,7 +146,7 @@ func TestPoolConfigDoesNotLeakPasswordInErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("poolConfig() error = nil, want error")
 	}
-	if strings.Contains(err.Error(), cfg.Password) {
+	if strings.Contains(err.Error(), cfg.Password.Reveal()) {
 		t.Errorf("error %q contains the password", err)
 	}
 }

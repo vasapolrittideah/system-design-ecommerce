@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/config"
 )
 
 // Config is the environment-driven pool configuration. Services load it with
@@ -42,8 +44,10 @@ type Config struct {
 	// by convention.
 	User string `env:"USER,required"`
 
-	// Password comes from a secret, never from the image or a config map.
-	Password string `env:"PASSWORD,required"`
+	// Password comes from a secret, never from the image or a config map, and
+	// is config.Secret rather than string so that printing the pool config —
+	// the obvious thing to do when a connection fails — cannot print it.
+	Password config.Secret `env:"PASSWORD,required"`
 
 	// Database is the database name.
 	Database string `env:"DATABASE,required"`
@@ -159,10 +163,15 @@ func poolConfig(cfg Config) (*pgxpool.Config, error) {
 // dsn builds the connection string. It goes through net/url so a password
 // containing a reserved character is escaped rather than silently truncating
 // the string at the first "@" or "/".
+//
+// The result carries the password in clear, and pgxpool keeps it reachable
+// afterwards through pool.Config().ConnString(). Nothing here logs either, but
+// that is a property of this file rather than something the type system
+// enforces once the string has left it.
 func dsn(cfg Config) string {
 	u := url.URL{
 		Scheme:   "postgres",
-		User:     url.UserPassword(cfg.User, cfg.Password),
+		User:     url.UserPassword(cfg.User, cfg.Password.Reveal()),
 		Host:     net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		Path:     "/" + cfg.Database,
 		RawQuery: url.Values{"sslmode": []string{cfg.SSLMode}}.Encode(),
