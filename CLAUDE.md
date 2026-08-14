@@ -262,7 +262,11 @@ Two manifests carry couplings that break silently when one side is tuned alone. 
 
 One Deployment per service with HPA on CPU or consumer lag (KEDA). Migrations run as Jobs/init containers. gRPC needs a headless service with client-side load balancing — an L4 load balancer pins a single connection. Config comes from env (12-factor); secrets from External Secrets / Sealed Secrets.
 
-**Every service Deployment carries `reloader.stakater.com/auto: "true"`.** Configuration is read from env once, when the container starts, so a Secret that changes underneath a running pod changes nothing until something restarts it. Kustomize generators hide this — their content hash renames the object, which rolls the Deployment through the ordinary apply — and that is exactly why the annotation goes on before the first externally-managed Secret arrives rather than after. Without it, rotating a signing key leaves every replica holding the old one and reports success.
+**Every service Deployment carries `reloader.stakater.com/auto: "true"`, and generated ConfigMaps and Secrets carry fixed names** (`disableNameSuffixHash: true`). Configuration is read from env once, when the container starts, so a Secret that changes underneath a running pod changes nothing until something restarts it — and rotating a signing key would otherwise report success while every replica kept signing with the old one.
+
+Kustomize's content-hash suffix would also roll the Deployment, by renaming the object on each change, but it gets there by creating a new Secret every time and orphaning the last one. Nothing deletes those: each rotation leaves the superseded signing key in the cluster permanently, readable by anything that can read Secrets. `kubectl apply --prune` is not the way out — kubectl's own help calls it alpha and advises against it, and a label selector would miss a generated Secret anyway, since generator output carries only the labels of the kustomization that declares it.
+
+So the name is fixed and the restart comes from the operator. The cost is that a rollout now depends on something outside kubectl: `make deploy` refuses to run when Reloader is not Available, because the failure it would otherwise produce is a deploy that reports success and changes nothing.
 
 Two couplings between settings that are easy to break by tuning one side alone:
 
