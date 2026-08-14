@@ -36,6 +36,13 @@ func TestToGRPCCode(t *testing.T) {
 			want: codes.FailedPrecondition,
 		},
 		{
+			// The pair a client reacts to differently: refresh the credential,
+			// or stop asking.
+			name: "unauthenticated",
+			err:  errorx.New(errorx.KindUnauthenticated, "token expired"),
+			want: codes.Unauthenticated,
+		},
+		{
 			name: "unauthorized",
 			err:  errorx.New(errorx.KindUnauthorized, "not your order"),
 			want: codes.PermissionDenied,
@@ -244,6 +251,13 @@ func TestHTTPStatus(t *testing.T) {
 			name: "conflict",
 			err:  &domainError{kind: "conflict", msg: "sold out"},
 			want: http.StatusConflict,
+		},
+		{
+			// 401 and 403 are not interchangeable to a frontend: the first
+			// triggers the refresh flow, the second logs the user out.
+			name: "unauthenticated",
+			err:  errorx.New(errorx.KindUnauthenticated, "token expired"),
+			want: http.StatusUnauthorized,
 		},
 		{
 			name: "unauthorized",

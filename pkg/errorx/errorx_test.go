@@ -109,6 +109,15 @@ func TestErrorsIsMatchesSentinelsByKind(t *testing.T) {
 			want:     true,
 		},
 		{
+			// The two refusals are near-identical in name and adjacent in every
+			// table in this package, which is exactly how one ends up mapped to
+			// the other's code.
+			name:     "unauthenticated is not unauthorized",
+			err:      errorx.New(errorx.KindUnauthenticated, "token expired"),
+			sentinel: errorx.ErrUnauthorized,
+			want:     false,
+		},
+		{
 			// A domain error is matched by kind through KindOf, not by errors.Is
 			// against a sentinel it has never heard of.
 			name:     "domain error does not match a sentinel it cannot reference",

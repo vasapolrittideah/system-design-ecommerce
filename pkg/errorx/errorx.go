@@ -103,9 +103,26 @@ const (
 	// changes.
 	KindConflict Kind = "conflict"
 
-	// KindUnauthorized is an authenticated caller reaching for something that
-	// is not theirs. Whether the caller is authenticated at all is settled at
-	// the edge, long before an error of this kind is possible.
+	// KindUnauthenticated is a caller this process cannot identify: no token,
+	// an expired one, a signature that does not check out. It says nothing
+	// about what they would have been allowed to do.
+	//
+	// It exists separately from [KindUnauthorized] because the two ask the
+	// client for opposite things. 401 means the credential is the problem and
+	// the refresh flow should run; 403 means the credential was fine and the
+	// answer is still no. A frontend handed 403 for an expired token logs the
+	// user out instead of quietly renewing.
+	//
+	// Only a process that verifies tokens itself raises this — Kong at the
+	// edge, and the Composition API re-verifying behind it. A service reached
+	// over east-west gRPC never does: by then identity was settled two hops
+	// ago, and the only question left is authorization.
+	KindUnauthenticated Kind = "unauthenticated"
+
+	// KindUnauthorized is an identified caller reaching for something that is
+	// not theirs. Who they are is already settled; whether this particular
+	// aggregate is theirs is a business rule, and it belongs to the service
+	// that owns the data rather than to the gateway.
 	KindUnauthorized Kind = "unauthorized"
 
 	// KindInternal is everything else — the failures no client can act on.
@@ -130,22 +147,24 @@ type Kinder interface {
 // reasons are the default ErrorInfo reason codes, used when the caller does not
 // set a more specific one.
 var reasons = map[Kind]string{
-	KindNotFound:     "NOT_FOUND",
-	KindInvalidInput: "INVALID_INPUT",
-	KindConflict:     "CONFLICT",
-	KindUnauthorized: "UNAUTHORIZED",
-	KindInternal:     "INTERNAL",
+	KindNotFound:        "NOT_FOUND",
+	KindInvalidInput:    "INVALID_INPUT",
+	KindConflict:        "CONFLICT",
+	KindUnauthenticated: "UNAUTHENTICATED",
+	KindUnauthorized:    "UNAUTHORIZED",
+	KindInternal:        "INTERNAL",
 }
 
 // Sentinels for the code that only needs to ask "what kind of failure is this",
 // via errors.Is. They carry no reason or metadata of their own; New builds the
 // errors that do.
 var (
-	ErrNotFound     = &Error{kind: KindNotFound, msg: "not found"}
-	ErrInvalidInput = &Error{kind: KindInvalidInput, msg: "invalid input"}
-	ErrConflict     = &Error{kind: KindConflict, msg: "conflict"}
-	ErrUnauthorized = &Error{kind: KindUnauthorized, msg: "unauthorized"}
-	ErrInternal     = &Error{kind: KindInternal, msg: "internal error"}
+	ErrNotFound        = &Error{kind: KindNotFound, msg: "not found"}
+	ErrInvalidInput    = &Error{kind: KindInvalidInput, msg: "invalid input"}
+	ErrConflict        = &Error{kind: KindConflict, msg: "conflict"}
+	ErrUnauthenticated = &Error{kind: KindUnauthenticated, msg: "unauthenticated"}
+	ErrUnauthorized    = &Error{kind: KindUnauthorized, msg: "unauthorized"}
+	ErrInternal        = &Error{kind: KindInternal, msg: "internal error"}
 )
 
 // Error is a classified error: a kind, a human message, and the machine-

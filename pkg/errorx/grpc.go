@@ -11,16 +11,20 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// codeForKind is the mapping the whole system agrees on. Two kinds share
-// FailedPrecondition because the caller's move is the same for both: the
-// request was understood and refused by the current state, and retrying it
-// unchanged will not help. The reason code is what tells them apart.
+// codeForKind is the mapping the whole system agrees on.
+//
+// Unauthenticated and PermissionDenied stay apart even though both are a
+// refusal, because they ask the caller for different things: one to present a
+// credential, the other to stop asking. Everything finer-grained than that —
+// which precondition failed, which resource was missing — is the reason code's
+// job, not the status code's.
 var codeForKind = map[Kind]codes.Code{
-	KindNotFound:     codes.NotFound,
-	KindInvalidInput: codes.InvalidArgument,
-	KindConflict:     codes.FailedPrecondition,
-	KindUnauthorized: codes.PermissionDenied,
-	KindInternal:     codes.Internal,
+	KindNotFound:        codes.NotFound,
+	KindInvalidInput:    codes.InvalidArgument,
+	KindConflict:        codes.FailedPrecondition,
+	KindUnauthenticated: codes.Unauthenticated,
+	KindUnauthorized:    codes.PermissionDenied,
+	KindInternal:        codes.Internal,
 }
 
 // ToGRPC turns any error a handler holds into the status its caller should see.
