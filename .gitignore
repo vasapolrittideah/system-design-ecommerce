@@ -1,0 +1,21 @@
+# Local tool installs (make tools) and built service binaries (make build)
+/bin/
+
+# Test and coverage output
+coverage.out
+coverage.html
+*.test
+*.out
+
+# Local environment — secrets never belong in the repo
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code local overrides (settings.json stays tracked)
+.claude/settings.local.json
