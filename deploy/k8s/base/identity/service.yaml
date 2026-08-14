@@ -1,0 +1,27 @@
+# Headless: clusterIP None makes DNS return one A record per ready pod instead
+# of a single virtual IP. gRPC holds one long-lived HTTP/2 connection, so a
+# normal ClusterIP would pin every caller to whichever replica it happened to
+# land on and the other replicas would sit idle. Callers dial
+# dns:///identity.<namespace>.svc.cluster.local:50051 and balance round-robin
+# across what they resolve.
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity
+spec:
+  clusterIP: None
+  # Left at the default false: a pod that is not ready must not be in the list
+  # a caller resolves.
+  publishNotReadyAddresses: false
+  selector:
+    app.kubernetes.io/name: identity
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      appProtocol: grpc
+    # Scraping and probing go here, on a port that is never routed to from
+    # outside the cluster.
+    - name: admin
+      port: 9090
+      targetPort: admin

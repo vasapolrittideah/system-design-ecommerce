@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce
+
+resources:
+  - ../../../base/identity
+
+configMapGenerator:
+  - name: identity-config
+    behavior: merge
+    envs:
+      - config.env
+
+# The private key never enters git. `make keys` writes jwt-private.pem here and
+# .gitignore keeps it out; kustomize build fails loudly if it is missing, which
+# is the correct outcome — a service that cannot sign has nothing to serve.
+#
+# The generated name carries a content hash, so rotating the key rolls the
+# Deployment instead of leaving the old key loaded in a running pod.
+secretGenerator:
+  - name: identity-secret
+    literals:
+      # Matches the role created by deploy/k8s/infra/postgres.yaml. Local only:
+      # a real deployment takes this from External Secrets.
+      - IDENTITY_DB_PASSWORD=identity
+    files:
+      - IDENTITY_JWT_PRIVATE_KEY=jwt-private.pem
+
+patches:
+  - path: patch-hpa.yaml

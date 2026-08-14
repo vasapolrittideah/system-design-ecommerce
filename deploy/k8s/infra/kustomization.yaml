@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Local-only dependencies. Kafka (KRaft), Kong, and Prometheus join this list
+# as the phases that need them arrive — an unused broker on a laptop is a
+# gigabyte of RAM and a pod that is red for no reason.
+
+# namespace.yaml is deliberately not listed. It is applied on its own by
+# `make up`, so that `make down` can remove the workloads without taking the
+# namespace — and with it every PersistentVolumeClaim — down as well. Throwing
+# away the database is `make clean-volumes`, and it should take a second
+# command to say so.
+resources:
+  - postgres.yaml
+  - jaeger.yaml
+
+namespace: ecommerce
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: ecommerce
+      app.kubernetes.io/component: infra
