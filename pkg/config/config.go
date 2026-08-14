@@ -6,13 +6,16 @@
 //	type ServerConfig struct {
 //		Addr     string        `env:"ADDR" envDefault:":50051"`
 //		Timeout  time.Duration `env:"TIMEOUT" envDefault:"5s"`
-//		Password string        `env:"PASSWORD,required"`
+//		Password Secret        `env:"PASSWORD,required"`
 //	}
 //
 //	cfg, err := config.Load[ServerConfig](config.WithPrefix("ORDER_GRPC_"))
 //
 // Configuration is read once at startup and passed down explicitly; nothing
 // here reaches for os.Getenv at call time.
+//
+// Anything that would be damaging in a log line is declared as Secret rather
+// than string, which is what keeps a whole config struct safe to print.
 package config
 
 import (
