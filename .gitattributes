@@ -20,3 +20,9 @@ gen/go/** linguist-generated=true
 # handled by linguist-generated above — leaving only the loss, which is being
 # unable to see what a proto change actually did to the generated API.
 gen/go/** -merge
+
+# sqlc output, for the same reasons. The glob follows the out: path every
+# sqlc.yaml entry is required to use, so a new service picks this up by putting
+# its generated package where the others are rather than by editing this file.
+services/*/internal/adapter/out/postgres/sqlc/** linguist-generated=true
+services/*/internal/adapter/out/postgres/sqlc/** -merge
