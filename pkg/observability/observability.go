@@ -30,6 +30,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
 	// Pinned to the schema resource.Default() carries in this SDK version.
 	// resource.Merge refuses to combine two different schema URLs, so bumping
 	// the SDK without bumping this line fails at startup.
