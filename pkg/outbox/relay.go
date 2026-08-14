@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/logger"
@@ -60,6 +61,30 @@ type RelayConfig struct {
 	// outage must not turn into a poll storm, and it must not turn into a relay
 	// that has backed off to twenty minutes when the broker comes back either.
 	MaxBackoff time.Duration `env:"MAX_BACKOFF" envDefault:"30s"`
+
+	// StatsInterval is how often the backlog is measured. Counting unpublished
+	// rows walks the partial index, which is cheap while the relay is keeping
+	// up and progressively less so when it is not — exactly when the loop can
+	// least afford to do it every cycle. Measuring on its own cadence, near the
+	// scrape interval, keeps the cost flat.
+	StatsInterval time.Duration `env:"STATS_INTERVAL" envDefault:"15s"`
+}
+
+// RelayOption customizes a relay beyond what the environment expresses.
+type RelayOption func(*relayOptions)
+
+type relayOptions struct {
+	registerer prometheus.Registerer
+}
+
+// WithRegisterer registers the relay metrics somewhere other than the default
+// Prometheus registry — the registry pkg/observability owns, in a service, and
+// a throwaway one in tests, which would otherwise panic on the second relay
+// registering the same collectors.
+func WithRegisterer(reg prometheus.Registerer) RelayOption {
+	return func(o *relayOptions) {
+		o.registerer = reg
+	}
 }
 
 // Relay publishes outbox rows and marks them published.
@@ -74,11 +99,12 @@ type Relay struct {
 	pool      *pgxpool.Pool
 	publisher Publisher
 	tx        *txmanager.Manager
+	metrics   *metrics
 	cfg       RelayConfig
 }
 
 // NewRelay builds a relay over pool.
-func NewRelay(pool *pgxpool.Pool, publisher Publisher, cfg RelayConfig) (*Relay, error) {
+func NewRelay(pool *pgxpool.Pool, publisher Publisher, cfg RelayConfig, opts ...RelayOption) (*Relay, error) {
 	switch {
 	case publisher == nil:
 		return nil, errors.New("outbox: relay needs a publisher")
@@ -88,12 +114,25 @@ func NewRelay(pool *pgxpool.Pool, publisher Publisher, cfg RelayConfig) (*Relay,
 		return nil, fmt.Errorf("outbox: PollInterval is %v, want a positive duration", cfg.PollInterval)
 	case cfg.MaxBackoff < cfg.PollInterval:
 		return nil, fmt.Errorf("outbox: MaxBackoff is %v, want at least PollInterval (%v)", cfg.MaxBackoff, cfg.PollInterval)
+	case cfg.StatsInterval <= 0:
+		return nil, fmt.Errorf("outbox: StatsInterval is %v, want a positive duration", cfg.StatsInterval)
+	}
+
+	o := relayOptions{registerer: prometheus.DefaultRegisterer}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	metrics, err := newMetrics(o.registerer)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Relay{
 		pool:      pool,
 		publisher: publisher,
 		tx:        txmanager.New(pool),
+		metrics:   metrics,
 		cfg:       cfg,
 	}, nil
 }
@@ -113,7 +152,18 @@ func (r *Relay) Run(ctx context.Context) error {
 	log := logger.From(ctx)
 	backoff := r.cfg.PollInterval
 
+	// Zero forces the first measurement before the first publish, so a relay
+	// that comes up to an existing backlog reports it immediately.
+	var lastStats time.Time
+
 	for {
+		if time.Since(lastStats) >= r.cfg.StatsInterval {
+			if err := r.observeBacklog(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("outbox: backlog measurement failed", zap.Error(err))
+			}
+			lastStats = time.Now()
+		}
+
 		published, err := r.publishBatch(ctx)
 
 		var wait time.Duration
@@ -182,10 +232,44 @@ func (r *Relay) publishBatch(ctx context.Context) (int, error) {
 		return nil
 	})
 	if err != nil {
+		// A cycle cut short by shutdown is not a failure, and counting it as
+		// one would put a spike in the error rate on every deploy.
+		if ctx.Err() == nil {
+			r.metrics.failures.Inc()
+		}
+
 		return 0, err
 	}
 
+	r.metrics.published.Add(float64(published))
+
 	return published, nil
+}
+
+// observeBacklog measures the queue: how many rows are waiting and how long the
+// oldest has been waiting.
+//
+// It reads outside any transaction, so it sees only committed rows — which is
+// what the backlog means. The two numbers come from one statement because they
+// have to describe the same instant to be comparable.
+func (r *Relay) observeBacklog(ctx context.Context) error {
+	const sql = `
+		SELECT count(*), coalesce(extract(epoch FROM now() - min(created_at)), 0)::float8
+		FROM outbox
+		WHERE published_at IS NULL`
+
+	var (
+		backlog int64
+		age     float64
+	)
+	if err := r.pool.QueryRow(ctx, sql).Scan(&backlog, &age); err != nil {
+		return fmt.Errorf("outbox: measure backlog: %w", err)
+	}
+
+	r.metrics.backlog.Set(float64(backlog))
+	r.metrics.oldestAge.Set(age)
+
+	return nil
 }
 
 // claim locks the oldest unpublished rows for this transaction. SKIP LOCKED

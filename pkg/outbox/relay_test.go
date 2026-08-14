@@ -8,13 +8,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func relayConfig() RelayConfig {
 	return RelayConfig{
-		BatchSize:    10,
-		PollInterval: 10 * time.Millisecond,
-		MaxBackoff:   50 * time.Millisecond,
+		BatchSize:     10,
+		PollInterval:  10 * time.Millisecond,
+		MaxBackoff:    50 * time.Millisecond,
+		StatsInterval: 10 * time.Millisecond,
 	}
 }
 
@@ -66,7 +69,9 @@ func (p *publisher) calls() int {
 func newRelay(t *testing.T, pool *pgxpool.Pool, pub Publisher, cfg RelayConfig) *Relay {
 	t.Helper()
 
-	relay, err := NewRelay(pool, pub, cfg)
+	// Its own registry per relay: the collectors are registered by name, so
+	// sharing one would fail the second relay in a test that needs two.
+	relay, err := NewRelay(pool, pub, cfg, WithRegisterer(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatalf("NewRelay() error = %v, want nil", err)
 	}
@@ -303,6 +308,81 @@ func TestRelaySkipsRowsAnotherRelayHasClaimed(t *testing.T) {
 	}
 }
 
+func TestRelayCountsWhatItPublished(t *testing.T) {
+	ctx := context.Background()
+	pool := setup(t)
+	relay := newRelay(t, pool, &publisher{}, relayConfig())
+
+	seed(t, ctx, pool, "OrderCreated", "OrderPaid")
+
+	if _, err := relay.publishBatch(ctx); err != nil {
+		t.Fatalf("publishBatch() error = %v, want nil", err)
+	}
+
+	if got := testutil.ToFloat64(relay.metrics.published); got != 2 {
+		t.Errorf("outbox_published_total = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(relay.metrics.failures); got != 0 {
+		t.Errorf("outbox_publish_failures_total = %v, want 0", got)
+	}
+}
+
+func TestRelayCountsFailedCycles(t *testing.T) {
+	ctx := context.Background()
+	pool := setup(t)
+	relay := newRelay(t, pool, &publisher{err: errors.New("broker unreachable")}, relayConfig())
+
+	seed(t, ctx, pool, "OrderCreated")
+
+	if _, err := relay.publishBatch(ctx); err == nil {
+		t.Fatal("publishBatch() error = nil, want error")
+	}
+
+	if got := testutil.ToFloat64(relay.metrics.failures); got != 1 {
+		t.Errorf("outbox_publish_failures_total = %v, want 1", got)
+	}
+	// Nothing reached the broker, so nothing may be counted as published.
+	if got := testutil.ToFloat64(relay.metrics.published); got != 0 {
+		t.Errorf("outbox_published_total = %v, want 0", got)
+	}
+}
+
+func TestRelayReportsTheBacklog(t *testing.T) {
+	ctx := context.Background()
+	pool := setup(t)
+	relay := newRelay(t, pool, &publisher{}, relayConfig())
+
+	seed(t, ctx, pool, "First", "Second", "Third")
+
+	if err := relay.observeBacklog(ctx); err != nil {
+		t.Fatalf("observeBacklog() error = %v, want nil", err)
+	}
+	if got := testutil.ToFloat64(relay.metrics.backlog); got != 3 {
+		t.Errorf("outbox_backlog_rows = %v, want 3", got)
+	}
+	// Depth without age cannot distinguish a burst from a stalled relay, so the
+	// age has to be a real measurement rather than a placeholder.
+	if got := testutil.ToFloat64(relay.metrics.oldestAge); got <= 0 {
+		t.Errorf("outbox_oldest_unpublished_seconds = %v, want above 0", got)
+	}
+
+	if _, err := relay.publishBatch(ctx); err != nil {
+		t.Fatalf("publishBatch() error = %v, want nil", err)
+	}
+
+	if err := relay.observeBacklog(ctx); err != nil {
+		t.Fatalf("observeBacklog() error = %v, want nil", err)
+	}
+	if got := testutil.ToFloat64(relay.metrics.backlog); got != 0 {
+		t.Errorf("outbox_backlog_rows = %v, want 0", got)
+	}
+	// An empty queue has no oldest row; reporting the last age forever would
+	// leave the alert firing after the backlog cleared.
+	if got := testutil.ToFloat64(relay.metrics.oldestAge); got != 0 {
+		t.Errorf("outbox_oldest_unpublished_seconds = %v, want 0", got)
+	}
+}
+
 func TestRunDrainsABacklog(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -323,6 +403,10 @@ func TestRunDrainsABacklog(t *testing.T) {
 	if got := len(pub.published()); got != 5 {
 		t.Errorf("publisher got %d messages, want 5", got)
 	}
+
+	// The loop measures on its own cadence, so the gauge catches up shortly
+	// after the rows do.
+	waitFor(t, func() bool { return testutil.ToFloat64(relay.metrics.backlog) == 0 }, "the backlog gauge to settle")
 
 	cancel()
 	if err := <-stopped; err != nil {
@@ -389,6 +473,7 @@ func TestNewRelayRejectsInvalidConfig(t *testing.T) {
 		{"zero batch size", &publisher{}, func(c *RelayConfig) { c.BatchSize = 0 }},
 		{"zero poll interval", &publisher{}, func(c *RelayConfig) { c.PollInterval = 0 }},
 		{"backoff below poll interval", &publisher{}, func(c *RelayConfig) { c.MaxBackoff = c.PollInterval / 2 }},
+		{"zero stats interval", &publisher{}, func(c *RelayConfig) { c.StatsInterval = 0 }},
 	}
 
 	for _, tt := range tests {
