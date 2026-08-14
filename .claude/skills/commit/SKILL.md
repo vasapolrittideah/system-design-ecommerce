@@ -28,6 +28,29 @@ Turn working-tree changes into one or more commits that follow
   already says what. Blank line before it.
 - **footer** — optional. `BREAKING CHANGE: <desc>`, `Refs: #123`, `Closes: #123`.
 
+### Articles in the subject
+
+The spec says nothing about `a`/`an`/`the` — this is house style, and it is
+about brevity, not grammar. `add the parser` is imperative too; the reason to
+drop an article is the 72-char budget, never the mood.
+
+- **`a` / `an` — drop it.** The commit is what makes the thing exist, so the
+  indefinite article carries no information: `add shared zap logger`, not
+  `add a shared zap logger`.
+- **`the` — keep it when it points at something that already exists**, because
+  then it is real information: whether the change creates or touches. Compare
+  `add domain error mapping` (new) with `fix the domain error mapping`
+  (already there).
+- **Position decides.** As the direct object of the verb, the noun is usually
+  being created — drop the article. Inside a prepositional phrase (`in …`,
+  `from …`, `with …`), it usually refers to existing code — keep it:
+  `separate the semconv comment from its import group`.
+- **Over 72 chars, cut articles before cutting meaning** — but stop before the
+  subject turns into telegraph style that has to be re-read.
+
+Check the mood separately: "If applied, this commit will `<subject>`" must read
+as a grammatical sentence.
+
 ## Types
 
 | Type | Use for |
