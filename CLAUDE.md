@@ -90,17 +90,30 @@ Two rules the client depends on:
 
 East-west traffic is plaintext. TLS is terminated by Kong at the edge, and internal encryption, when it is wanted, comes from the mesh rather than from every service growing its own certificate handling.
 
-Error mapping lives in `pkg/errorx`:
+Error mapping lives in `pkg/errorx`, and every error resolves to exactly one `Kind`:
 
 ```text
-ErrNotFound                        → codes.NotFound            → 404
-ErrInvalidInput                    → codes.InvalidArgument     → 400
-ErrInvalidTransition, ErrOutOfStock→ codes.FailedPrecondition  → 409
-ErrUnauthorized                    → codes.PermissionDenied    → 403
-anything else                      → codes.Internal            → 500 (never leak internals)
+KindNotFound      → codes.NotFound            → 404
+KindInvalidInput  → codes.InvalidArgument     → 400
+KindConflict      → codes.FailedPrecondition  → 409
+KindUnauthorized  → codes.PermissionDenied    → 403
+KindInternal      → codes.Internal            → 500 (never leak internals)
 ```
 
-Attach `ErrorInfo` details (`reason` code + metadata such as `sku`) so clients can handle specific cases.
+The kinds are transport-shaped, never business-shaped: `KindConflict`, not `ErrOutOfStock`. A service names its own failures in its own vocabulary and points them at a kind — `pkg/` may not learn what a SKU is.
+
+**A domain package declares its kind structurally, never by importing `errorx`.** It implements `ErrorKind() string` returning one of the kind strings (`"conflict"`, `"not_found"`, …), which is a method signature and therefore no dependency at all — the same trick as `Unwrap` and `Stringer`. This is what keeps `internal/domain` stdlib-only while its errors still map correctly. Code outside `domain` builds errors directly instead: `errorx.New(errorx.KindNotFound, "order %s not found", id)`, or `errorx.Wrap` where a lower layer's failure is the explanation. An error declaring no kind is Internal — an unclassified failure is a bug until someone classifies it, and defaulting the other way would answer 400 for a broken database.
+
+`ToGRPC` resolves in a fixed order, each step existing because the next would get that case wrong:
+
+1. **A declared kind** wins over everything, so a use case can reclassify what a lower layer said.
+2. **An error that is already a gRPC status keeps its code.** Gateways hold these; flattening a downstream `Unavailable` into `Internal` hides from the caller's circuit breaker exactly what it exists to detect.
+3. **A cancelled or expired context** becomes `Canceled`/`DeadlineExceeded`. These arrive bare from pgx and anything selecting on `ctx.Done()`, and reporting a caller who hung up as `Internal` puts client behaviour into the error rate and into breakers that should not have been touched.
+4. Anything else is `Internal`.
+
+Only the `Internal` message is replaced — every other kind is a fact the caller asked for. The returned error still wraps the original, so the access line logs the full chain while the client gets the scrubbed status; without that, hiding internals would also erase the only record of what broke.
+
+Attach `ErrorInfo` details so clients can handle specific cases — `.WithReason("OUT_OF_STOCK").WithMetadata(map[string]string{"sku": sku})`. Reason codes are API: a client branches on them, so renaming one is a breaking change. Every error carries one whether or not it was set, defaulted from the kind, so nobody has to pattern-match a message. Reading back on the other side is `errorx.Reason` / `errorx.Metadata`, and the Composition API turns a status into an HTTP code with `errorx.HTTPStatus`.
 
 ## PostgreSQL
 
