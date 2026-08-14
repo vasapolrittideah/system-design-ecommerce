@@ -209,7 +209,7 @@ Rules that package settles once:
 - **Access tokens are JWTs; refresh tokens are not.** A refresh token has to be revocable, which a self-contained signed token cannot be — logout would have to wait out the TTL. Refresh tokens are opaque random strings whose hash the identity service stores in a table, where a row can be deleted.
 - **Access-token TTL stays short** (15m default), because until it expires a stolen token works, a deleted user is still logged in, and a revoked role is still held.
 
-PEM keys reach a process through env as either the PEM itself, which a Kubernetes Secret carries fine, or base64 of it, which is what survives a `.env` file read by docker compose. `pkg/auth` accepts both by looking at the value.
+PEM keys reach a process through env as either the PEM itself, which a Kubernetes Secret carries fine, or base64 of it, which is what survives a single-line `.env` a host-run process reads under `make run`. `pkg/auth` accepts both by looking at the value.
 
 ## Observability
 
@@ -240,15 +240,23 @@ Shared test helpers — container bootstrapping, fixtures, fake clock — live i
 ## Commands
 
 ```text
-make proto     # buf lint + buf breaking + buf generate
-make migrate   # goose -dir services/$(SVC)/db/migrations postgres "$(DSN)" up
-make mock      # mockery --all
-make test      # go test ./... -race -cover
-make lint      # golangci-lint run
-make up        # docker compose up -d --build
+make proto              # buf lint + buf breaking + buf generate
+make migrate-up SVC=x   # goose -dir services/x/db/migrations postgres "$(DSN)" up
+make mock               # mockery, driven by .mockery.yml
+make test               # go test ./... -race -cover
+make lint               # golangci-lint run
+make cluster-create     # k3d cluster, once
+make up                 # apply deploy/k8s/infra into the cluster
+make deploy SVC=x       # build image, run the migration Job, roll out
 ```
 
-The local stack runs entirely from `docker compose` — Kafka in KRaft mode (no Zookeeper), Kong DB-less. Every dependency a service needs must be startable this way; nothing may require a shared remote environment to develop against.
+The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies (Postgres, Jaeger; Kafka in KRaft mode and Kong DB-less as the phases needing them arrive) and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/local/<name>` for the services. Every dependency a service needs must be startable this way; nothing may require a shared remote environment to develop against.
+
+Kubernetes locally rather than compose because the rules this repo cares about most are the ones compose cannot express: a headless Service with client-side gRPC balancing, `MAX_CONNECTION_AGE` forcing callers to re-resolve, `SHUTDOWN_TIMEOUT` fitting inside `terminationGracePeriodSeconds`, migrations as a Job, and readiness removing a pod from the endpoint list. Manifests that are never run before production are three bugs discovered on the same afternoon.
+
+The cost is the inner loop, and the way around it is to run the dependencies in the cluster and the service on the host: `make up`, `make port-forward`, then `make run SVC=x`. Put the service in the cluster with `make deploy` when the thing being tested is one of the behaviours above.
+
+Two manifests carry couplings that break silently when one side is tuned alone. `terminationGracePeriodSeconds` (35s) must exceed the `preStop` sleep (5s) plus `IDENTITY_GRPC_SHUTDOWN_TIMEOUT` (25s). And the Deployment sets no CPU limit on purpose: the HPA measures utilisation against the CPU *request*, so a throttled pod reports spare capacity and the autoscaler declines to scale exactly when it should.
 
 ## Deployment notes
 
@@ -260,6 +268,8 @@ Two couplings between settings that are easy to break by tuning one side alone:
 - Client-side balancing only spreads across replicas that existed when the caller last resolved. `MAX_CONNECTION_AGE` on the server is what forces callers to re-resolve, so scaling out actually receives traffic. A client's `KEEPALIVE_TIME` must also stay above the server's `MIN_CLIENT_PING_INTERVAL`, or the server answers a well-behaved caller's pings with GOAWAY.
 
 Every component that needs configuration declares its own struct with `env` tags and loads it through `pkg/config` — `config.MustLoad[T](config.WithPrefix("..."))` in `main.go` or `bootstrap`, then passed down explicitly. Nothing calls `os.Getenv` at runtime, and no code branches on an environment name: differences between deploys live in the values, not in `if env == "production"`.
+
+**A field whose value would be damaging in a log line is `config.Secret`, never `string`.** It parses identically and redacts itself through `String`, `GoString`, and `MarshalText`, which between them cover `%v`, `%+v`, `%#v`, `fmt.Sprint`, `errors.Errorf`, `encoding/json`, and `zap.Any` — every way a config struct actually reaches stdout. Reading it back is `.Reveal()`, so a grep for that name lists every place a secret is used. The type exists because the leak is never a reviewed line: it is one `zap.Any("cfg", cfg)` added while chasing a startup failure, no error is raised, and the only record is a log backend holding a signing key for a year. A public key stays a plain `string` — seeing it in a log is how a key mismatch gets diagnosed.
 
 ## Working conventions
 
