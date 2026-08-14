@@ -39,10 +39,19 @@ NAMESPACE ?= ecommerce
 K8S_DIR   := deploy/k8s
 IMAGE_TAG ?= dev
 
-# Local development database, reached through `make port-forward`. Each service
-# connects as its own role — that is what makes database-per-service a
-# permission error rather than a code review comment.
-DSN ?= postgres://$(SVC):$(SVC)@localhost:5432/$(SVC)?sslmode=disable
+# The k3d-managed registry Tilt pushes to. The name is also a hostname inside
+# the cluster, so it may not contain characters a DNS label cannot.
+REGISTRY  ?= ecommerce-registry:5001
+
+# Local development database, reached through `make port-forward SVC=x`. Each
+# service runs its own Postgres instance holding one database, so there is no
+# other database on the far end of this connection to reach by accident.
+#
+# The password matches the secretGenerator in the service's local overlay. It
+# is spelled out rather than read from the cluster so that migrating does not
+# require kubectl, and overriding DSN replaces the whole string anyway.
+DB_PASSWORD ?= insecure-local-only
+DSN ?= postgres://$(SVC):$(DB_PASSWORD)@localhost:5432/$(SVC)?sslmode=disable
 
 # `buf breaking` baseline. CI on a PR may want '.git\#branch=origin/trunk'.
 # The backslash is required: an unescaped # starts a Make comment.
@@ -280,11 +289,17 @@ cluster-create: ## Create the k3d cluster (run once, survives reboots)
 	@# listens on them yet: k3d cannot add a port mapping to an existing
 	@# cluster, so leaving them out means recreating the cluster on the day
 	@# Kong arrives.
+	@#
+	@# --registry-create publishes the local-registry-hosting ConfigMap that
+	@# Tilt reads, so `tilt up` pushes there and the kubelet pulls from it.
+	@# Without it every rebuild would go through `k3d image import`, which
+	@# copies the whole image into each node on every change.
 	k3d cluster create $(CLUSTER) \
 		--agents 2 \
 		--k3s-arg "--disable=traefik@server:*" \
 		-p "8000:80@loadbalancer" \
 		-p "8443:443@loadbalancer" \
+		--registry-create $(REGISTRY) \
 		--wait
 	kubectl apply -f $(K8S_DIR)/infra/namespace.yaml
 	kubectl config set-context --current --namespace=$(NAMESPACE)
@@ -297,16 +312,17 @@ cluster-delete: ## Delete the k3d cluster and everything inside it
 ##@ Local stack
 
 .PHONY: up
-up: ## Start local infra in the cluster (Postgres, Jaeger)
+up: ## Start the shared local infra in the cluster (Jaeger, Reloader)
 	$(need_cluster)
+	@# Databases are not here: each service brings its own Postgres instance in
+	@# its own overlay, so `make deploy SVC=x` is what starts x's database.
 	kubectl apply -f $(K8S_DIR)/infra/namespace.yaml
 	kubectl apply -k $(K8S_DIR)/infra
-	kubectl -n $(NAMESPACE) rollout status statefulset/postgres --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/jaeger --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/reloader-reloader --timeout=180s
 
 .PHONY: down
-down: ## Remove local infra, keeping the namespace and the database volume
+down: ## Remove the shared local infra, keeping the namespace and every volume
 	kubectl delete -k $(K8S_DIR)/infra --ignore-not-found
 
 .PHONY: clean-volumes
@@ -324,13 +340,30 @@ logs: ## Tail a service's logs across every replica (make logs SVC=identity)
 		-l app.kubernetes.io/name=$(SVC)
 
 .PHONY: port-forward
-port-forward: ## Expose infra on localhost for host-run services (ctrl-c to stop)
-	@echo "postgres  -> localhost:5432"
-	@echo "jaeger UI -> http://localhost:16686"
+port-forward: ## Expose a service's database and Jaeger on localhost (SVC=identity)
+	$(need_svc)
+	@echo "$(SVC) postgres -> localhost:5432"
+	@echo "jaeger UI       -> http://localhost:16686"
+	@# One database at a time on 5432, because that is what DSN and every
+	@# psql invocation assume. Forwarding a second service means a second
+	@# terminal with SVC set to it and a port of its own.
 	@trap 'kill 0' EXIT; \
-	kubectl -n $(NAMESPACE) port-forward svc/postgres 5432:5432 >/dev/null & \
+	kubectl -n $(NAMESPACE) port-forward svc/$(SVC)-postgres 5432:5432 >/dev/null & \
 	kubectl -n $(NAMESPACE) port-forward svc/jaeger 16686:16686 >/dev/null & \
 	wait
+
+##@ Develop
+
+.PHONY: dev
+dev: ## Run the Tilt development loop (ctrl-c to stop, leaves the cluster up)
+	$(need_cluster)
+	$(call need_bin,tilt,brew install tilt)
+	tilt up
+
+.PHONY: dev-down
+dev-down: ## Remove everything Tilt deployed, keeping the cluster
+	$(call need_bin,tilt,brew install tilt)
+	tilt down
 
 ##@ Deploy
 

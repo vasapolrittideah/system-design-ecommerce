@@ -1,0 +1,108 @@
+# The database identity owns, as its own instance.
+#
+# It lives in the local overlay rather than in infra because it is not shared
+# infrastructure: Jaeger and Reloader serve every service, this serves exactly
+# one. A production overlay contributes no equivalent — the instance is managed
+# there and the overlay only points IDENTITY_DB_HOST at it.
+#
+# One instance per service rather than one instance with a database per
+# service. The second arrangement is cheaper and was what this stack ran first,
+# but it makes the boundary a matter of grants: Postgres hands CONNECT on every
+# new database to PUBLIC, so each service role could open a connection to every
+# other service's database and list its tables, and closing that took a REVOKE
+# in an init script that nobody would notice was missing. Here there is nothing
+# to revoke. The instance contains one database, the service is its only role,
+# and reaching another service's data would mean reaching another Service — a
+# thing that shows up in a manifest rather than in a grant table.
+#
+# What it costs is honest to state: five services means five Postgres pods on a
+# laptop, and this file gets copied per service. That copy is the point. A
+# shared instance is the arrangement that quietly becomes a shared database.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity-postgres
+spec:
+  # Headless because a StatefulSet needs a governing Service and nothing here
+  # wants a virtual IP. `kubectl port-forward svc/identity-postgres` works
+  # either way, which is how a host-run service reaches it.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: identity-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: identity-postgres
+spec:
+  serviceName: identity-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      # Deliberately not app.kubernetes.io/name: identity. That label is the
+      # selector on identity's headless Service, and a Postgres pod carrying it
+      # would be handed to gRPC callers as a backend.
+      app.kubernetes.io/name: identity-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: identity-postgres
+        app.kubernetes.io/component: database
+    spec:
+      containers:
+        - name: postgres
+          # The same image pkg/postgres/postgrestest starts under
+          # testcontainers, so a query that passes in a test behaves the same
+          # against the local stack.
+          image: postgres:17-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            # The entrypoint creates this role and this database on an empty
+            # data directory, which is the whole of the setup — no init script,
+            # and no grants to get wrong. The service is the superuser of an
+            # instance that holds nothing but its own data.
+            - name: POSTGRES_USER
+              value: identity
+            - name: POSTGRES_DB
+              value: identity
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                # Read from the same Secret the service reads, so the two
+                # cannot drift. Setting it in both places is how a laptop ends
+                # up with a database nobody can log into.
+                secretKeyRef:
+                  name: identity-secret
+                  key: IDENTITY_DB_PASSWORD
+            # The image only runs its initialisation when it creates the
+            # cluster, and it needs the data one level below the mount point —
+            # a PVC root already contains lost+found on some drivers.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "identity", "-d", "identity"]
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

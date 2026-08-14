@@ -5,6 +5,7 @@ namespace: ecommerce
 
 resources:
   - ../../../base/identity
+  - postgres.yaml
 
 configMapGenerator:
   - name: identity-config
@@ -27,11 +28,18 @@ generatorOptions:
 secretGenerator:
   - name: identity-secret
     literals:
-      # Matches the role created by deploy/k8s/infra/postgres.yaml. Local only:
-      # a real deployment takes this from External Secrets.
-      - IDENTITY_DB_PASSWORD=identity
+      # Read from here by both sides: the service connects with it, and
+      # postgres.yaml sets POSTGRES_PASSWORD from this same key, so the two
+      # cannot drift into a database nobody can log into. Local only — a real
+      # deployment takes it from External Secrets.
+      #
+      # Deliberately not the service name. Tilt redacts every Secret value from
+      # its logs, so a password of "identity" would blank that word out of
+      # every line naming the service, its image, or its Deployment.
+      - IDENTITY_DB_PASSWORD=insecure-local-only
     files:
       - IDENTITY_JWT_PRIVATE_KEY=jwt-private.pem
 
 patches:
   - path: patch-hpa.yaml
+  - path: patch-deployment.yaml

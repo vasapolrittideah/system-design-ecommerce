@@ -1,9 +1,14 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Local-only dependencies. Kafka (KRaft), Kong, and Prometheus join this list
-# as the phases that need them arrive — an unused broker on a laptop is a
-# gigabyte of RAM and a pod that is red for no reason.
+# Local-only dependencies that every service shares. Kafka (KRaft), Kong, and
+# Prometheus join this list as the phases that need them arrive — an unused
+# broker on a laptop is a gigabyte of RAM and a pod that is red for no reason.
+#
+# Databases are not here. Each service runs its own Postgres instance, declared
+# in its own local overlay, because an instance serving exactly one service is
+# that service's dependency rather than shared infrastructure — and a shared
+# instance is the arrangement that quietly becomes a shared database.
 
 # namespace.yaml is deliberately not listed. It is applied on its own by
 # `make up`, so that `make down` can remove the workloads without taking the
@@ -11,7 +16,6 @@ kind: Kustomization
 # away the database is `make clean-volumes`, and it should take a second
 # command to say so.
 resources:
-  - postgres.yaml
   - jaeger.yaml
   - reloader.yaml
 
