@@ -123,6 +123,7 @@ const (
 // method. The declaration is here so there is one place that documents the
 // contract.
 type Kinder interface {
+	error
 	ErrorKind() string
 }
 
@@ -262,8 +263,8 @@ func KindOf(err error) Kind {
 // implements Kinder too, so the outermost declaration in the chain wins rather
 // than whichever type happened to be searched for first.
 func declaredKind(err error) (Kind, bool) {
-	var kinder Kinder
-	if !errors.As(err, &kinder) {
+	kinder, ok := errors.AsType[Kinder](err)
+	if !ok {
 		return "", false
 	}
 
@@ -293,8 +294,7 @@ func Reason(err error) string {
 		return ""
 	}
 
-	var e *Error
-	if errors.As(err, &e) && e.reason != "" {
+	if e, ok := errors.AsType[*Error](err); ok && e.reason != "" {
 		return e.reason
 	}
 
@@ -321,8 +321,7 @@ func Metadata(err error) map[string]string {
 		return nil
 	}
 
-	var e *Error
-	if errors.As(err, &e) && len(e.meta) > 0 {
+	if e, ok := errors.AsType[*Error](err); ok && len(e.meta) > 0 {
 		return maps.Clone(e.meta)
 	}
 
