@@ -21,7 +21,7 @@ import (
 
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/config"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/grpcx"
-	"github.com/vasapolrittideah/system-design-ecommerce/pkg/grpcx/internal/grpctest"
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/grpcx/grpctest"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/grpcx/server"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/logger"
 )

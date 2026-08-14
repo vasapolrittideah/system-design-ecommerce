@@ -9,7 +9,9 @@
 //
 // Method names are fixed rather than free-form because the client's retry
 // policy reads them: a Get* method is retried and a Do* method is not, and
-// tests need both to exist.
+// tests need both to exist. That is also why the service is only worth
+// importing to exercise grpcx itself: a service testing its own handlers has
+// generated stubs and should use those.
 package grpctest
 
 import (
@@ -88,7 +90,7 @@ func serviceDesc() *grpc.ServiceDesc {
 		// registration check needs here.
 		HandlerType: (*any)(nil),
 		Methods:     methods,
-		Metadata:    "grpcx/internal/grpctest",
+		Metadata:    "grpcx/grpctest",
 	}
 }
 

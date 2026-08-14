@@ -138,9 +138,11 @@ linters:
     paths:
       - gen/go
     rules:
-      # Closing a body or a conn in a test is noise, not a leak. Test helpers
-      # under internal/*test/ are held to the same relaxed standard.
-      - path: (_test\.go|internal/[a-z]*test/)
+      # Closing a body or a conn in a test is noise, not a leak. Test helper
+      # packages are held to the same relaxed standard, which is what makes the
+      # pkg/<x>/<x>test/ naming worth keeping to — the pattern below is how the
+      # rule finds them.
+      - path: (_test\.go|/[a-z]+test/)
         linters:
           - bodyclose
           - errcheck
