@@ -9,11 +9,10 @@ metadata:
     # leaves every running replica holding the old one, with no error anywhere
     # to say so.
     #
-    # It does nothing while the ConfigMap and Secret come from kustomize
-    # generators, whose content hash changes their name and so rolls the
-    # Deployment through the ordinary apply. It becomes the only thing that
-    # rolls them the moment a fixed-name Secret appears — an External Secrets
-    # operator writing one, or a Secret created out of band.
+    # This is load-bearing, not preparation: the generators are configured with
+    # disableNameSuffixHash, so a changed value leaves the Deployment spec
+    # byte-identical and kubectl apply rolls nothing. `make deploy` refuses to
+    # run when Reloader is not Available for exactly that reason.
     reloader.stakater.com/auto: "true"
 spec:
   # No replicas field: the HPA owns it. Setting both makes kustomize apply and

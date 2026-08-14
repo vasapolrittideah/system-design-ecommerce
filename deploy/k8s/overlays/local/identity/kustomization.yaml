@@ -16,8 +16,14 @@ configMapGenerator:
 # .gitignore keeps it out; kustomize build fails loudly if it is missing, which
 # is the correct outcome — a service that cannot sign has nothing to serve.
 #
-# The generated name carries a content hash, so rotating the key rolls the
-# Deployment instead of leaving the old key loaded in a running pod.
+# Fixed name, matching the ConfigMap in base and for the same reason: a hashed
+# name would leave every superseded copy of the signing key in the cluster with
+# nothing to clean them up. Rotating the key updates this one object, and the
+# Reloader annotation on the Deployment is what restarts the pods holding the
+# old one.
+generatorOptions:
+  disableNameSuffixHash: true
+
 secretGenerator:
   - name: identity-secret
     literals:

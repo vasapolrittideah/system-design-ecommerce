@@ -70,6 +70,18 @@ define need_bin
 	@command -v $(1) >/dev/null 2>&1 || { echo "$(1) not found — install with: $(2)"; exit 1; }
 endef
 
+# Generated ConfigMaps and Secrets carry fixed names, so kubectl apply does not
+# roll a Deployment when only their content changed — Reloader does. Deploying
+# without it means a rotated key or a changed setting reports success and takes
+# effect on nothing.
+define need_reloader
+	@kubectl -n $(NAMESPACE) wait --for=condition=Available deployment/reloader-reloader --timeout=30s >/dev/null 2>&1 || { \
+		echo "Reloader is not available in namespace '$(NAMESPACE)'."; \
+		echo "Config and secret changes would silently fail to restart anything — run: make up"; \
+		exit 1; \
+	}
+endef
+
 define need_cluster
 	$(call need_bin,k3d,brew install k3d)
 	@k3d cluster list $(CLUSTER) >/dev/null 2>&1 || { echo "cluster '$(CLUSTER)' does not exist — run: make cluster-create"; exit 1; }
@@ -340,6 +352,7 @@ image: ## Build a service's images and import them into the cluster (SVC=identit
 .PHONY: deploy
 deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity)
 	$(need_svc)
+	$(need_reloader)
 	$(MAKE) image SVC=$(SVC)
 	@# Kustomize has no hooks, so the migration is ordered here instead. The
 	@# Job is immutable once created, which is why it is deleted rather than
