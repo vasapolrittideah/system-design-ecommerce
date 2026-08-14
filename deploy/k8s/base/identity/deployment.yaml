@@ -52,7 +52,11 @@ spec:
           # k3d image import puts the image in the node's store; Always would
           # send the kubelet looking for a registry that does not exist.
           imagePullPolicy: IfNotPresent
-          args: ["server"]
+          # No command or args: the image's ENTRYPOINT is /app/server. One
+          # image holds every binary this service ships, so the worker and the
+          # outbox relay will each set `command:` to pick theirs — this one
+          # takes the default and passes no arguments, because main parses
+          # none.
           ports:
             - name: grpc
               containerPort: 50051
