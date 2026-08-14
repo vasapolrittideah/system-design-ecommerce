@@ -30,7 +30,6 @@ GOLANGCI_LINT_VERSION ?= v2.12.2
 # ------------------------------------------------------------------------------
 # Service selector for per-service targets: make migrate-up SVC=order
 SVC ?=
-CMD ?= server
 
 # Local Kubernetes stack. The cluster is created once and outlives everything
 # else; NAMESPACE is where both the infra and the services land.
@@ -176,11 +175,6 @@ build: ## Build every services/*/cmd/* binary into bin/
 		echo "  build $$svc/$$cmd -> bin/$$svc-$$cmd"; \
 		go build -o $(BIN_DIR)/$$svc-$$cmd ./services/$$svc/cmd/$$cmd; \
 	done
-
-.PHONY: run
-run: ## Run one service command (make run SVC=order CMD=server)
-	$(need_svc)
-	go run ./services/$(SVC)/cmd/$(CMD)
 
 ##@ Proto (buf)
 
