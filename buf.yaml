@@ -1,0 +1,20 @@
+version: v2
+
+modules:
+  - path: proto
+
+deps:
+  - buf.build/bufbuild/protovalidate
+
+lint:
+  use:
+    - STANDARD
+  # An ignore that lives in a comment is invisible in review; put it here instead.
+  disallow_comment_ignores: true
+
+# FILE is the strictest category: it also catches changes that only break
+# generated-code compatibility (moving a message between files, renaming a
+# field), which matters here because gen/go is committed and shared.
+breaking:
+  use:
+    - FILE

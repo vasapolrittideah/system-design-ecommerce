@@ -1,0 +1,31 @@
+version: v2
+
+# Wipe gen/ before generating so a deleted .proto cannot leave a stale .pb.go
+# behind — `make proto-check` compares the result against what is committed.
+clean: true
+
+managed:
+  enabled: true
+  # protovalidate's Go types are consumed from buf.build/gen/go/... (already in
+  # go.mod); rewriting their go_package would point our imports at a gen/go
+  # package that is never generated.
+  disable:
+    - file_option: go_package
+      module: buf.build/bufbuild/protovalidate
+  override:
+    - file_option: go_package_prefix
+      value: github.com/vasapolrittideah/system-design-ecommerce/gen/go
+
+plugins:
+  # Keep in step with google.golang.org/protobuf in go.mod.
+  - remote: buf.build/protocolbuffers/go:v1.36.11
+    out: gen/go
+    opt: paths=source_relative
+
+  - remote: buf.build/grpc/go:v1.5.1
+    out: gen/go
+    opt:
+      - paths=source_relative
+      # Forward compatibility: a service that forgets a new method fails to
+      # compile instead of returning Unimplemented at runtime.
+      - require_unimplemented_servers=true
