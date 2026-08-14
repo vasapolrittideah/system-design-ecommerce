@@ -79,7 +79,7 @@ Consequences of that order, both deliberate:
 
 The chain also owns the correlation ID: it adopts an inbound `x-correlation-id` or mints one, puts it in the context, and echoes it as a response header.
 
-`pkg/grpcx` itself only holds what both ends must agree on — the identity metadata keys and `Identity` in the context. Authentication establishes *who* is calling and nothing more; whether that caller may touch this aggregate is a business rule owned by the service. The default authenticator reads the identity forwarded from the edge and never rejects, because relays, timeout workers, and plain service-to-service reads legitimately arrive with no user behind them. Services that are themselves the first reachable hop — the Composition API — pass their own verifier via `WithAuth`.
+`pkg/grpcx` itself only holds what both ends must agree on — the identity metadata keys and `Identity` in the context. Authentication establishes *who* is calling and nothing more; whether that caller may touch this aggregate is a business rule owned by the service. The default authenticator reads the identity forwarded from the edge and never rejects, because relays, timeout workers, and plain service-to-service reads legitimately arrive with no user behind them. Verifying a token is `pkg/auth`'s job, and it happens at the edge — the Composition API's HTTP middleware — not in this chain. `WithAuth` exists for a gRPC server that ever becomes a first reachable hop; nothing is one today, and a service that grows into one wraps `pkg/auth`'s verifier rather than writing its own.
 
 Client side (`pkg/grpcx/client`): callers always set a deadline and callees respect `ctx.Done()` (a call arriving without a deadline gets a default one rather than waiting forever); retries only on `Unavailable`/`DeadlineExceeded` with exponential backoff + jitter, and only for idempotent methods; circuit breaker per target service, outside the retry loop so one logical call counts once; keepalive plus a default service config for round-robin balancing.
 
@@ -93,14 +93,17 @@ East-west traffic is plaintext. TLS is terminated by Kong at the edge, and inter
 Error mapping lives in `pkg/errorx`, and every error resolves to exactly one `Kind`:
 
 ```text
-KindNotFound      → codes.NotFound            → 404
-KindInvalidInput  → codes.InvalidArgument     → 400
-KindConflict      → codes.FailedPrecondition  → 409
-KindUnauthorized  → codes.PermissionDenied    → 403
-KindInternal      → codes.Internal            → 500 (never leak internals)
+KindNotFound         → codes.NotFound            → 404
+KindInvalidInput     → codes.InvalidArgument     → 400
+KindConflict         → codes.FailedPrecondition  → 409
+KindUnauthenticated  → codes.Unauthenticated     → 401
+KindUnauthorized     → codes.PermissionDenied    → 403
+KindInternal         → codes.Internal            → 500 (never leak internals)
 ```
 
 The kinds are transport-shaped, never business-shaped: `KindConflict`, not `ErrOutOfStock`. A service names its own failures in its own vocabulary and points them at a kind — `pkg/` may not learn what a SKU is.
+
+`KindUnauthenticated` and `KindUnauthorized` are never interchangeable, and only the second one is a service's to raise. 401 says the credential is the problem, so the client should run its refresh flow; 403 says the credential was fine and the answer is still no. A frontend handed 403 for an expired token logs the user out instead of quietly renewing. Only a process that verifies tokens itself produces the first — Kong, and the Composition API re-verifying behind it. A service reached over east-west gRPC has had identity settled two hops earlier and only ever answers the authorization question.
 
 **A domain package declares its kind structurally, never by importing `errorx`.** It implements `ErrorKind() string` returning one of the kind strings (`"conflict"`, `"not_found"`, …), which is a method signature and therefore no dependency at all — the same trick as `Unwrap` and `Stringer`. This is what keeps `internal/domain` stdlib-only while its errors still map correctly. Code outside `domain` builds errors directly instead: `errorx.New(errorx.KindNotFound, "order %s not found", id)`, or `errorx.Wrap` where a lower layer's failure is the explanation. An error declaring no kind is Internal — an unclassified failure is a bug until someone classifies it, and defaulting the other way would answer 400 for a broken database.
 
@@ -191,6 +194,22 @@ Kong is declarative and DB-less (`deploy/kong/kong.yml`, version-controlled). It
 Kong must **not** perform business authorization ("does this user own this order?") — that belongs in the owning service. Kong forwards claims via `X-User-ID` / `X-User-Roles`.
 
 Zero-trust: the Composition API re-verifies the JWT itself and never trusts upstream headers alone.
+
+Tokens are **ES256**, and the asymmetry is what makes zero-trust affordable: the identity service holds the private key and is the only thing that can mint a token; Kong and the Composition API hold a public key that can only ever say no. A shared secret would put the credential that forges any user's identity inside the process most exposed to the outside. ES256 over RS256 for size — a P-256 key is 32 bytes against 256, on a header that rides every request.
+
+`pkg/auth` is the one place a token becomes an identity. It owns the `Claims` shape both ends must agree on, the `Signer` (identity only), the `Verifier`, and the `Authenticate` HTTP middleware that puts a `grpcx.Identity` on the request context — where `pkg/grpcx/client` picks it up and forwards it to every hop. It owns nothing else: TTL policy, role assignment, and refresh-token storage are the identity service's, and authorization belongs to whoever owns the aggregate.
+
+Rules that package settles once:
+
+- **The verifier pins `ES256` rather than reading the token's `alg` header.** A parser that believes the token about how to check the token accepts `alg: none`, and accepts the public key replayed as an HMAC secret.
+- **`iss` and `aud` are checked, not merely read.** Otherwise a staging token opens a production session wherever a key pair is shared.
+- **The middleware ignores `X-User-ID` / `X-User-Roles` entirely.** Identity comes from the signature it verified itself; that is the whole content of the zero-trust rule, and it is what makes a client setting those headers by hand a non-event.
+- **Rejections carry `TOKEN_MISSING`, `TOKEN_EXPIRED`, or `TOKEN_INVALID`** and nothing finer. `TOKEN_EXPIRED` is the only one a client acts on differently — refresh rather than log in again — and collapsing the rest means someone probing signatures learns nothing from the answer.
+- **`kid` is stamped on every token from the first one**, though there is one key and the verifier ignores it. Rotating a key means running two while the old tokens drain, and a verifier can only pick between them if the token says which signed it — retrofitting that would invalidate every token already in a browser.
+- **Access tokens are JWTs; refresh tokens are not.** A refresh token has to be revocable, which a self-contained signed token cannot be — logout would have to wait out the TTL. Refresh tokens are opaque random strings whose hash the identity service stores in a table, where a row can be deleted.
+- **Access-token TTL stays short** (15m default), because until it expires a stolen token works, a deleted user is still logged in, and a revoked role is still held.
+
+PEM keys reach a process through env as either the PEM itself, which a Kubernetes Secret carries fine, or base64 of it, which is what survives a `.env` file read by docker compose. `pkg/auth` accepts both by looking at the value.
 
 ## Observability
 
