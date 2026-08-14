@@ -17,6 +17,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/auth"
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/config"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/grpcx"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/httpx"
@@ -396,7 +397,7 @@ func testKeys(t *testing.T) (*ecdsa.PrivateKey, *auth.Signer, *auth.Verifier) {
 	key, privatePEM, publicPEM := generateKeyPair(t)
 
 	signer, err := auth.NewSigner(auth.SignerConfig{
-		PrivateKey: privatePEM,
+		PrivateKey: config.Secret(privatePEM),
 		KeyID:      "test-key",
 		Issuer:     testIssuer,
 		Audience:   testAudience,

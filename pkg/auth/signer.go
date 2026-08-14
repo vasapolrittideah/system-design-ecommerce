@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/config"
 )
 
 // SignerConfig is the environment-driven signing configuration. Only the
@@ -14,7 +16,11 @@ type SignerConfig struct {
 	// PrivateKey is the ES256 signing key, PEM or base64-encoded PEM. It is the
 	// credential that mints any user's identity, so it exists in exactly one
 	// deployment and never in a verifier's environment.
-	PrivateKey string `env:"PRIVATE_KEY,required"`
+	//
+	// config.Secret rather than string: this is the one value in the repo that
+	// forges any user without touching a database, and a logged copy of it is
+	// indistinguishable from the real thing.
+	PrivateKey config.Secret `env:"PRIVATE_KEY,required"`
 
 	// KeyID names the key, and is stamped on every token as the "kid" header.
 	//
@@ -59,7 +65,7 @@ type Token struct {
 
 // NewSigner parses the private key and returns a signer for it.
 func NewSigner(cfg SignerConfig) (*Signer, error) {
-	key, err := parsePrivateKey(cfg.PrivateKey)
+	key, err := parsePrivateKey(cfg.PrivateKey.Reveal())
 	if err != nil {
 		return nil, err
 	}
