@@ -1,0 +1,22 @@
+# gen/go is buf generate output. It is committed because Go modules distribute
+# source: without it, `go build ./...` on a fresh clone fails until someone
+# installs the buf toolchain and regenerates, and gopls knows none of the
+# symbols until they do. `make proto-check` is what keeps it from drifting out
+# of step with proto/.
+#
+# What it should not do is behave like hand-written code in review.
+
+# Collapses these files in GitHub diffs and leaves them out of the language
+# statistics, so a one-line proto change does not open as a 500-line review.
+gen/go/** linguist-generated=true
+
+# Refuses a three-way merge rather than producing a file that is half of each
+# branch's generated output and compiles by accident. Git keeps the current
+# branch's version and declares a conflict; the resolution is always the same,
+# and it is never to edit the file: run `make proto` and commit the result.
+#
+# There is deliberately no `-diff` here. That would render these as "Binary
+# files differ" locally too, and the review noise it would save is already
+# handled by linguist-generated above — leaving only the loss, which is being
+# unable to see what a proto change actually did to the generated API.
+gen/go/** -merge
