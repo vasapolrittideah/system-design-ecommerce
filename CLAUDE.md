@@ -262,6 +262,8 @@ Two manifests carry couplings that break silently when one side is tuned alone. 
 
 One Deployment per service with HPA on CPU or consumer lag (KEDA). Migrations run as Jobs/init containers. gRPC needs a headless service with client-side load balancing — an L4 load balancer pins a single connection. Config comes from env (12-factor); secrets from External Secrets / Sealed Secrets.
 
+**Every service Deployment carries `reloader.stakater.com/auto: "true"`.** Configuration is read from env once, when the container starts, so a Secret that changes underneath a running pod changes nothing until something restarts it. Kustomize generators hide this — their content hash renames the object, which rolls the Deployment through the ordinary apply — and that is exactly why the annotation goes on before the first externally-managed Secret arrives rather than after. Without it, rotating a signing key leaves every replica holding the old one and reports success.
+
 Two couplings between settings that are easy to break by tuning one side alone:
 
 - Graceful shutdown stops consumers first, then hands the gRPC server its cancelled context; `pkg/grpcx/server` drains within `SHUTDOWN_TIMEOUT` (25s) and forces a stop after. That has to stay under `terminationGracePeriodSeconds: 30`, or the kubelet's SIGKILL lands mid-drain and the graceful path never runs.
