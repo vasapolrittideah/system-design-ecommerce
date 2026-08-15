@@ -11,6 +11,14 @@ RETURNING *;
 SELECT * FROM users
 WHERE id = $1;
 
+-- name: GetUserByEmail :one
+-- The sign-in lookup. It matches the column exactly rather than through
+-- lower(email), because every writer normalises before insert and a CHECK
+-- constraint holds them to it — so the plain UNIQUE index serves this read and
+-- a functional index would be a second copy of the same thing.
+SELECT * FROM users
+WHERE email = $1;
+
 -- name: GetUsersByIDs :many
 -- ANY over one array parameter rather than an IN list built by string
 -- concatenation: one prepared statement whatever the batch size, and nothing
