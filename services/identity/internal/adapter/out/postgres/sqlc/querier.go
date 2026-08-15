@@ -11,16 +11,41 @@ import (
 )
 
 type Querier interface {
+	// revoked_at is left to its NULL default: a token is born live, and there is no
+	// caller that wants to store one already spent.
+	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	// The unique constraint on email is the guard, not a preceding SELECT. Reading
 	// first and inserting second leaves a window in which two requests both find
 	// nothing and both proceed; the repository maps the resulting unique violation
 	// to a conflict instead.
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	// The only way a presented token becomes a row. The UNIQUE index on token_hash
+	// is what serves this, so there is at most one match by construction.
+	GetRefreshTokenByHash(ctx context.Context, tokenHash []byte) (RefreshToken, error)
+	// The sign-in lookup. It matches the column exactly rather than through
+	// lower(email), because every writer normalises before insert and a CHECK
+	// constraint holds them to it — so the plain UNIQUE index serves this read and
+	// a functional index would be a second copy of the same thing.
+	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	// ANY over one array parameter rather than an IN list built by string
 	// concatenation: one prepared statement whatever the batch size, and nothing
 	// to escape. Fewer rows than ids is the ordinary case and not an error.
 	GetUsersByIDs(ctx context.Context, ids []uuid.UUID) ([]User, error)
+	// Ends a whole rotation chain: what a logout does, and what a token presented
+	// twice earns. Already-revoked rows are excluded rather than rewritten, so the
+	// timestamp on each one stays the moment it actually stopped working.
+	RevokeRefreshTokenFamily(ctx context.Context, arg RevokeRefreshTokenFamilyParams) error
+	// Marks a live token spent, and the row count is the answer the caller needs:
+	// `revoked_at IS NULL` makes this the whole concurrency guard, so two refreshes
+	// racing with the same token produce one success and one zero. Checking first
+	// and updating second would let both read a live row and both proceed.
+	//
+	// Deliberately not filtered on version. The transition that has to be safe is
+	// live → spent, and this states it directly; an optimistic lock would only say
+	// that nobody else had written, which is a weaker claim and a redundant one
+	// here.
+	SpendRefreshToken(ctx context.Context, arg SpendRefreshTokenParams) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)

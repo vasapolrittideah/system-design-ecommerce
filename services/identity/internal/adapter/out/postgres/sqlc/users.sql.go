@@ -48,6 +48,30 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id, email, password_hash, roles, created_at, updated_at, version FROM users
+WHERE email = $1
+`
+
+// The sign-in lookup. It matches the column exactly rather than through
+// lower(email), because every writer normalises before insert and a CHECK
+// constraint holds them to it — so the plain UNIQUE index serves this read and
+// a functional index would be a second copy of the same thing.
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByEmail, email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Roles,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
 const getUserByID = `-- name: GetUserByID :one
 SELECT id, email, password_hash, roles, created_at, updated_at, version FROM users
 WHERE id = $1
