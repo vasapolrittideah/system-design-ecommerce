@@ -24,11 +24,10 @@ type SignerConfig struct {
 
 	// KeyID names the key, and is stamped on every token as the "kid" header.
 	//
-	// It buys nothing today, with one key in play, and cannot be added later:
-	// rotating a key means running two of them while the tokens signed by the
-	// old one drain, and a verifier can only pick between them if the token says
-	// which one it was signed with. Retrofitting it would mean invalidating
-	// every token already in a user's browser.
+	// It buys nothing with one key in play, and cannot be added later: rotating
+	// means running two keys while the old tokens drain, and a verifier can only
+	// pick between them if the token says which one signed it. Retrofitting that
+	// would invalidate every token already in a browser.
 	KeyID string `env:"KEY_ID,required"`
 
 	// Issuer is the "iss" claim — who signed this. It should name the
@@ -90,10 +89,9 @@ func MustNewSigner(cfg SignerConfig) *Signer {
 
 // Sign issues an access token for subject carrying roles.
 //
-// The claims are assembled here rather than taken from the caller so that every
-// token in the system agrees on issuer, audience, and lifetime. What identity
-// decides is who gets a token and which roles go on it; the shape of the token
-// is not a per-call decision.
+// The claims are assembled here rather than taken from the caller, so every
+// token agrees on issuer, audience, and lifetime. Identity decides who gets a
+// token and which roles go on it; the shape is not a per-call decision.
 func (s *Signer) Sign(subject string, roles []string) (Token, error) {
 	if subject == "" {
 		return Token{}, fmt.Errorf("auth: sign requires a subject")
@@ -114,7 +112,7 @@ func (s *Signer) Sign(subject string, roles []string) (Token, error) {
 		Roles: roles,
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	token := jwt.NewWithClaims(signingMethod, claims)
 	token.Header["kid"] = s.cfg.KeyID
 
 	signed, err := token.SignedString(s.key)

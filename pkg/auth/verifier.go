@@ -62,8 +62,8 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 	}
 
 	parser := jwt.NewParser(
-		// Pinned rather than read off the token. See [algorithm].
-		jwt.WithValidMethods([]string{algorithm}),
+		// Pinned rather than read off the token. See [signingMethod].
+		jwt.WithValidMethods([]string{signingMethod.Alg()}),
 		jwt.WithIssuer(cfg.Issuer),
 		jwt.WithAudience(cfg.Audience),
 		// A token with no exp never expires, and this package has no revocation
@@ -89,8 +89,7 @@ func MustNewVerifier(cfg VerifierConfig) *Verifier {
 
 // Verify checks a token's signature and claims and returns what it says.
 //
-// Every failure comes back as [errorx.KindUnauthenticated] — a 401, and a
-// Unauthenticated status if it is ever carried over gRPC — carrying one of the
+// Every failure comes back as [errorx.KindUnauthenticated] carrying one of the
 // three reason codes in the package doc. The underlying parser error is wrapped
 // rather than discarded, so the log keeps the detail the client is not told.
 func (v *Verifier) Verify(token string) (Claims, error) {
@@ -115,8 +114,8 @@ func (v *Verifier) Verify(token string) (Claims, error) {
 	return *claims, nil
 }
 
-// parse runs the token through the parser and translates whatever comes back
-// into the two answers a client can act on.
+// parse runs the token through the parser and reduces whatever comes back to
+// TOKEN_EXPIRED or TOKEN_INVALID.
 //
 // The message is fixed per branch rather than assembled from the token, so
 // nothing an attacker controls is reflected into the response body or the log.
