@@ -37,6 +37,12 @@ linters:
           list-mode: strict
           files:
             - "**/internal/domain/**"
+            # Test files are excluded because they are not part of the package
+            # the rule protects: `go build` never compiles them, so nothing they
+            # import can reach a binary. A domain test is also written as an
+            # external test package, which has to import the package under test
+            # — under the rule that import is the domain depending on itself.
+            - "!**/*_test.go"
           allow:
             - $gostd
           deny:
