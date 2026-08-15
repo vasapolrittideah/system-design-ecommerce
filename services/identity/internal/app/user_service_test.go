@@ -132,7 +132,7 @@ func TestGetUser(t *testing.T) {
 	t.Run("passes the parsed id through", func(t *testing.T) {
 		users, _, service := setup(t)
 
-		want := domain.Reconstitute(domain.Snapshot{ID: id, Email: "ada@example.com"})
+		want := domain.ReconstituteUser(domain.UserSnapshot{ID: id, Email: "ada@example.com"})
 		users.EXPECT().FindByID(mock.Anything, domain.UserID(id)).Return(want, nil).Once()
 
 		got, err := service.GetUser(context.Background(), id)
@@ -173,7 +173,7 @@ func TestGetUsersByIDs(t *testing.T) {
 		// deleted user must degrade the screen, not fail it.
 		users, _, service := setup(t)
 
-		found := []*domain.User{domain.Reconstitute(domain.Snapshot{ID: first})}
+		found := []*domain.User{domain.ReconstituteUser(domain.UserSnapshot{ID: first})}
 		users.EXPECT().
 			FindByIDs(mock.Anything, []domain.UserID{first, second}).
 			Return(found, nil).

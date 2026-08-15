@@ -161,7 +161,7 @@ func toDomain(row *sqlc.User) *domain.User {
 		roles = append(roles, domain.Role(role))
 	}
 
-	return domain.Reconstitute(domain.Snapshot{
+	return domain.ReconstituteUser(domain.UserSnapshot{
 		ID:           domain.UserID(row.ID.String()),
 		Email:        domain.Email(row.Email),
 		PasswordHash: domain.PasswordHash(row.PasswordHash),

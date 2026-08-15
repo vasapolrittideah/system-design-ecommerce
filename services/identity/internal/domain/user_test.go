@@ -299,7 +299,7 @@ func TestUserRolesAreCopied(t *testing.T) {
 func TestReconstituteKeepsStoredState(t *testing.T) {
 	// A row written before a rule existed still has to load: the alternative is
 	// a service that cannot read the accounts it created.
-	snapshot := domain.Snapshot{
+	snapshot := domain.UserSnapshot{
 		ID:           "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
 		Email:        "NOT-normalised@example.com",
 		PasswordHash: "hash",
@@ -307,7 +307,7 @@ func TestReconstituteKeepsStoredState(t *testing.T) {
 		Version:      7,
 	}
 
-	user := domain.Reconstitute(snapshot)
+	user := domain.ReconstituteUser(snapshot)
 
 	if user.Email() != snapshot.Email {
 		t.Errorf("Email() = %q, want the stored value %q", user.Email(), snapshot.Email)

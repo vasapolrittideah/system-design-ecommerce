@@ -1,19 +1,19 @@
 // Package domain holds the identity service's aggregates and the rules that
 // protect them.
 //
-// It imports only the standard library, which is enforced by depguard rather
-// than left to reviewers. That is why identifiers are minted here from
-// crypto/rand instead of google/uuid, why errors declare their kind through a
+// It imports libraries and never layers, which is enforced by depguard rather
+// than left to reviewers: the standard library and google/uuid are the whole
+// allow-list. That is why errors declare their kind through an ErrorKind()
 // method instead of importing pkg/errorx, and why nothing in this package knows
 // that users are stored in PostgreSQL or described to the world in protobuf.
 package domain
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Role is what a user is, never what they may do with a particular aggregate —
@@ -84,14 +84,14 @@ func NewUser(email Email, passwordHash PasswordHash) (*User, error) {
 	}, nil
 }
 
-// Snapshot is the whole state of a user as it is stored, and exists so a
+// UserSnapshot is the whole state of a user as it is stored, and exists so a
 // repository can write a row and rebuild one without the aggregate's fields
 // being exported to everything else that imports this package.
 //
 // It is the persistence shape, not the API shape: what this service tells other
 // services about a user is ecommerce.identity.v1.User, which carries neither
 // the hash nor the version.
-type Snapshot struct {
+type UserSnapshot struct {
 	ID           UserID
 	Email        Email
 	PasswordHash PasswordHash
@@ -101,14 +101,14 @@ type Snapshot struct {
 	Version      int
 }
 
-// Reconstitute rebuilds a user from storage.
+// ReconstituteUser rebuilds a user from storage.
 //
 // It validates nothing, and that is deliberate: the row was valid when it was
 // written, and a rule tightened afterwards must not make existing users
 // unreadable — a service that cannot load an account it created is worse than
 // one holding an address that a stricter validator would now reject. New values
 // come in through the constructors, which do validate.
-func Reconstitute(s Snapshot) *User {
+func ReconstituteUser(s UserSnapshot) *User {
 	return &User{
 		id:           s.ID,
 		email:        s.Email,
@@ -121,8 +121,8 @@ func Reconstitute(s Snapshot) *User {
 }
 
 // Snapshot returns the user's state for a repository to persist.
-func (u *User) Snapshot() Snapshot {
-	return Snapshot{
+func (u *User) Snapshot() UserSnapshot {
+	return UserSnapshot{
 		ID:           u.id,
 		Email:        u.email,
 		PasswordHash: u.passwordHash,
@@ -170,39 +170,18 @@ func cloneRoles(roles []Role) []Role {
 
 // UserID is a UUID in its canonical lowercase form.
 //
-// It is a string rather than a uuid.UUID because this package may not import
-// one — see the package comment. The two conversions that costs live in the
-// repository, which is already translating between this package and pgx.
+// It is a string rather than a uuid.UUID so that the form stored, the form on
+// the proto, and the form compared here are one thing. The conversion that
+// costs lives in the repository, which is already translating between this
+// package and pgx.
 type UserID string
 
-// uuidLen is the length of the canonical 8-4-4-4-12 form.
-const uuidLen = 36
-
-// NewUserID mints a random version 4 UUID.
+// NewUserID mints an identifier for a user that has never been stored.
 //
-// crypto/rand.Read is documented never to fail — it panics internally if the
-// operating system cannot supply randomness — so there is no error to return
-// and no path where an id is silently predictable.
-func NewUserID() UserID {
-	var b [16]byte
-	rand.Read(b[:]) //nolint:errcheck // documented never to return an error
-
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // RFC 9562 variant
-
-	var out [uuidLen]byte
-	hex.Encode(out[0:8], b[0:4])
-	out[8] = '-'
-	hex.Encode(out[9:13], b[4:6])
-	out[13] = '-'
-	hex.Encode(out[14:18], b[6:8])
-	out[18] = '-'
-	hex.Encode(out[19:23], b[8:10])
-	out[23] = '-'
-	hex.Encode(out[24:36], b[10:16])
-
-	return UserID(out[:])
-}
+// uuid.NewString panics only if the operating system cannot supply randomness,
+// which is the right behaviour: the alternative is a predictable identifier and
+// a process carrying on as though it were not.
+func NewUserID() UserID { return UserID(uuid.NewString()) }
 
 // ParseUserID validates an identifier that arrived from outside.
 //
@@ -214,30 +193,30 @@ func NewUserID() UserID {
 func ParseUserID(s string) (UserID, error) {
 	invalid := ValidationError{Field: "id", Message: "not a UUID"}
 
-	if len(s) != uuidLen {
+	// The length check is not redundant. uuid.Validate also accepts the braced
+	// (38 characters), urn:uuid: (45), and unhyphenated (32) spellings, which
+	// are one identifier written four ways; accepting all of them would make a
+	// row reachable under four different keys. Fixing the length at 36 leaves
+	// the canonical form as the only one that gets through.
+	if len(s) != uuidCanonicalLen {
 		return "", invalid
 	}
 
+	// Lowercased because that is how PostgreSQL renders a uuid column on the
+	// way back out, and an identifier that compares unequal to itself
+	// depending on which side of the database it came from is a bug that
+	// surfaces far from its cause.
 	s = strings.ToLower(s)
 
-	for i := range uuidLen {
-		c := s[i]
-
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if c != '-' {
-				return "", invalid
-			}
-
-			continue
-		}
-
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return "", invalid
-		}
+	if uuid.Validate(s) != nil {
+		return "", invalid
 	}
 
 	return UserID(s), nil
 }
+
+// uuidCanonicalLen is the length of the 8-4-4-4-12 form.
+const uuidCanonicalLen = 36
 
 // String returns the canonical form.
 func (id UserID) String() string { return string(id) }
