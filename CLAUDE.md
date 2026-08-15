@@ -290,3 +290,42 @@ Every component that needs configuration declares its own struct with `env` tags
 - Adding a service: copy the layering, wiring, and test structure of an existing service rather than inventing a new arrangement. Consistency across services matters more than local elegance.
 - Anything cross-cutting goes in `pkg/` and must stay free of business logic; anything business-specific stays inside its service.
 - Commits follow Conventional Commits.
+
+## Comments
+
+**A comment says what the code is for, not how it works.** The how is already on the screen, in a form that cannot go stale; a comment that narrates it is longer than the code it sits above, drifts the first time the code changes, and buries the one thing the reader came for. Write the comment a reader needs in order to *use* what follows — what it is, what it guarantees, and where they must be careful.
+
+In that order, a comment is worth having when it carries:
+
+1. **What this is for** — the job it does in the service, in one sentence. Every exported name gets this much.
+2. **What it promises or demands** — the invariant a caller may rely on, the precondition it must meet, the thing that is deliberately *not* done here. `Roles returns a copy` is this; so is `It validates nothing`.
+3. **Why it is this way**, and only where the choice would otherwise look like an accident. A decision a later reader would "fix" needs its reason recorded next to it; a decision nobody would question needs nothing.
+
+What does not belong:
+
+- **A restatement of the mechanism.** `// loop over the roles and copy each one` explains nothing the loop did not.
+- **Rules that live in this file.** The depguard allow-list, the interceptor order, the outbox contract, the error-kind table — a package comment repeating them creates a second copy that drifts, and the package is not where anyone looks for them. Reference the rule if it is genuinely surprising in context; do not re-derive it.
+- **Structure the layout already states.** `internal/domain` is a domain package because of where it sits.
+
+A doc comment is a sentence or two. It grows to a paragraph only when there is a real decision to defend, and a decision worth a paragraph is usually worth being the *only* paragraph. Inside a function, comment the line whose reason is invisible — a length check that looks redundant, a `ToLower` that exists because of how PostgreSQL renders a column — not the lines that read fine on their own.
+
+The package comment in `services/identity/internal/domain/user.go` is the pattern. What it should say:
+
+```go
+// Package domain holds the identity service's aggregates and the rules that
+// protect them: who a user is, what makes an email or a password hash valid,
+// and which of those rules the database is also holding.
+package domain
+```
+
+What it should not go on to say — true, but a copy of rule 5 above, and it tells a reader nothing about users:
+
+```go
+// It imports libraries and never layers, which is enforced by depguard rather
+// than left to reviewers: the standard library and google/uuid are the whole
+// allow-list. That is why errors declare their kind through an ErrorKind()
+// method instead of importing pkg/errorx, and why nothing in this package knows
+// that users are stored in PostgreSQL or described to the world in protobuf.
+```
+
+Go's own conventions still hold on top of this: a doc comment begins with the name it documents, every exported identifier has one, and `//` with a space — never a decorative banner.
