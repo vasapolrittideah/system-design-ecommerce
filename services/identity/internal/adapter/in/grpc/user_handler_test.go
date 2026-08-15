@@ -16,9 +16,8 @@ import (
 )
 
 // stubUseCase records what the handler asked for and answers with what the test
-// wants. It is hand-written rather than generated because only driven ports are
-// listed in .mockery.yml — a driving port has exactly one caller, and a stub
-// that asserts on the mapping is the whole point of the test.
+// wants. Hand-written rather than generated because only driven ports are listed
+// in .mockery.yml, and what these tests assert on is the mapping.
 type stubUseCase struct {
 	command in.RegisterCommand
 	id      string
@@ -159,8 +158,8 @@ func TestHandlerMapsErrorKindsToCodes(t *testing.T) {
 				t.Errorf("status code = %s, want %s", got, tt.want)
 			}
 
-			// The reason is what a client branches on. A 409 alone cannot say
-			// whether an email was taken or an aggregate was in the wrong state.
+			// The reason is what a client branches on: a 409 alone cannot say
+			// whether an email was taken or an aggregate was in a bad state.
 			if got := errorx.Reason(err); got != tt.reason {
 				t.Errorf("Reason() = %q, want %q", got, tt.reason)
 			}

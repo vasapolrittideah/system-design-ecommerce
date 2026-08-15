@@ -26,9 +26,8 @@ const uniqueViolation = "23505"
 
 // emailConstraint is the constraint UNIQUE on users.email produces. It is
 // matched by name rather than by code alone so that a primary key collision —
-// which would mean two random UUIDs came out the same, i.e. a bug — is reported
-// as Internal instead of being answered as though the caller had done something
-// ordinary.
+// two random UUIDs coming out the same, i.e. a bug — is reported as Internal
+// rather than as something the caller did.
 const emailConstraint = "users_email_key"
 
 // UserRepository implements the driven port over pgx.
@@ -44,11 +43,9 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 }
 
 // queries binds sqlc to whichever handle is correct for this call: the
-// transaction txmanager put on the context, or the pool when there is none.
-//
-// This is what keeps use cases unaware of PostgreSQL. A use case that wraps
-// several repository calls in tx.Do gets them in one transaction, and the same
-// method called outside one still works, without either of them saying so.
+// transaction txmanager put on the context, or the pool when there is none. It
+// is what lets the same method run inside a use case's tx.Do and outside one
+// without either saying so.
 func (r *UserRepository) queries(ctx context.Context) *sqlc.Queries {
 	return sqlc.New(txmanager.From(ctx, r.pool))
 }
@@ -73,13 +70,10 @@ func (r *UserRepository) Create(ctx context.Context, user *domain.User) (*domain
 	})
 	if err != nil {
 		if isConstraintViolation(err, emailConstraint) {
-			// New rather than Wrap, and the difference is visible on the wire:
-			// only an Internal message is scrubbed by ToGRPC, so wrapping here
-			// would send `duplicate key value violates unique constraint
-			// "users_email_key" (SQLSTATE 23505)` to the client and describe
-			// the schema to anyone who can reach the API. The cause is dropped
-			// with nothing lost — a unique violation on this constraint means
-			// exactly what the message and the reason code already say.
+			// New rather than Wrap, because only an Internal message is
+			// scrubbed by ToGRPC: wrapping would describe the schema to anyone
+			// who can reach the API. Nothing is lost — a violation of this
+			// constraint means what the message and reason code already say.
 			//
 			// No metadata either: the address is the caller's own input, and it
 			// would travel from here into logs and traces.
@@ -104,9 +98,9 @@ func (r *UserRepository) FindByID(ctx context.Context, id domain.UserID) (*domai
 	row, err := r.queries(ctx).GetUserByID(ctx, parsed)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Not wrapped, for the same reason as the conflict above: a
-			// NotFound message reaches the client intact, and "no rows in
-			// result set" is pgx's vocabulary rather than this service's.
+			// Not wrapped, for the same reason as the conflict above: the
+			// message reaches the client intact, and "no rows in result set" is
+			// pgx's vocabulary rather than this service's.
 			return nil, errorx.New(errorx.KindNotFound, "user %s not found", id).
 				WithReason("USER_NOT_FOUND")
 		}
@@ -152,9 +146,8 @@ func (r *UserRepository) FindByIDs(ctx context.Context, ids []domain.UserID) ([]
 }
 
 // toDomain rebuilds the aggregate from a row. It reconstitutes rather than
-// constructs: the row was valid when it was written, and re-running today's
-// validation over yesterday's data is how a service loses the ability to read
-// accounts it created itself.
+// constructs: re-running today's validation over yesterday's data is how a
+// service loses the ability to read accounts it created itself.
 func toDomain(row *sqlc.User) *domain.User {
 	roles := make([]domain.Role, 0, len(row.Roles))
 	for _, role := range row.Roles {

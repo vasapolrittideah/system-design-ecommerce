@@ -24,10 +24,9 @@ const migrationsDir = "../../../../db/migrations"
 
 // setup gives each test its own database with the migrations applied.
 //
-// A real PostgreSQL, never a fake driver: what is being tested here is a UNIQUE
-// violation carrying a constraint name, an array column round-tripping, and
-// DEFAULT now() firing — all of them the server's behaviour, none of them a
-// mock's.
+// A real PostgreSQL, never a fake driver: a UNIQUE violation carrying a
+// constraint name, an array column round-tripping, and DEFAULT now() firing are
+// the server's behaviour, not a mock's.
 func setup(t *testing.T) (*pgxpool.Pool, *adapter.UserRepository) {
 	t.Helper()
 
@@ -153,9 +152,8 @@ func TestCreateDuplicateEmailIsAConflict(t *testing.T) {
 		}
 	}
 
-	// ToGRPC replaces the message of an Internal error and no other, so
-	// everything in this one reaches the client. Wrapping the pgx failure here
-	// would describe the schema to anyone who can call the API.
+	// Every part of a non-Internal message reaches the client, so wrapping the
+	// pgx failure would describe the schema to anyone who can call the API.
 	for _, leak := range []string{"SQLSTATE", "users_email_key", "duplicate key"} {
 		if strings.Contains(err.Error(), leak) {
 			t.Errorf("error %q leaks %q", err, leak)
@@ -214,11 +212,10 @@ func TestFindByIDsReturnsWhatExists(t *testing.T) {
 }
 
 func TestCreateJoinsTheAmbientTransaction(t *testing.T) {
-	// This is what lets a use case wrap several repository calls in tx.Do
-	// without any of their signatures mentioning PostgreSQL. If the repository
-	// reached for the pool instead, the row below would survive the rollback —
-	// and the outbox guarantee, which depends on the aggregate and its events
-	// sharing one transaction, would be silently gone.
+	// If the repository reached for the pool instead of the transaction on the
+	// context, the row below would survive the rollback — and the outbox
+	// guarantee, which needs the aggregate and its events in one transaction,
+	// would be silently gone.
 	ctx := context.Background()
 	pool, users := setup(t)
 

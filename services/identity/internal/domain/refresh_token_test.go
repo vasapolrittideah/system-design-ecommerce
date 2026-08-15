@@ -51,9 +51,8 @@ func TestIssueRefreshToken(t *testing.T) {
 			t.Error("Hash() does not match the value that was returned")
 		}
 
-		// %+v is what a struct reaches a log line through, and the hash is a
-		// [32]byte that cannot contain the base64 string in any case — this
-		// fails the day someone adds the plaintext to the aggregate.
+		// %+v is how a struct reaches a log line. This fails the day someone
+		// adds the plaintext to the aggregate.
 		if rendered := fmt.Sprintf("%+v", token.Snapshot()); strings.Contains(rendered, value.Reveal()) {
 			t.Errorf("snapshot %q contains the plaintext", rendered)
 		}
@@ -101,14 +100,13 @@ func TestIssueRefreshToken(t *testing.T) {
 }
 
 func TestTokenValueRedactsItself(t *testing.T) {
-	// The one credential in this service that is handed to a client as a
-	// bearer string. Printing it is what config.Secret exists to prevent, and
-	// this type is that pattern applied to the same problem.
+	// The one credential in this service handed to a client as a bearer string,
+	// so every path that could print it has to be covered.
 	_, value := issue(t)
 
-	// The verbs are a table rather than literals so that each one is exercised
-	// as itself: %s against a Stringer written inline is a vet finding, and
-	// rewriting it to satisfy the linter would stop testing the verb.
+	// The verbs are a table rather than literals because %s against a Stringer
+	// written inline is a vet finding, and rewriting it to satisfy the linter
+	// would stop testing the verb.
 	for _, verb := range []string{"%v", "%s", "%+v", "%#v", "%q"} {
 		if rendered := fmt.Sprintf(verb, value); strings.Contains(rendered, value.Reveal()) {
 			t.Errorf("formatted with %s it printed %q", verb, rendered)
@@ -282,10 +280,8 @@ func TestRevokeIsIdempotent(t *testing.T) {
 }
 
 func TestRefreshTokenSentinelsAreUnauthenticated(t *testing.T) {
-	// Unauthenticated rather than PermissionDenied: the credential is the
-	// problem, so the client should get a new one rather than be told it may
-	// not do this. A 403 for an expired token makes a frontend log the user out
-	// instead of refreshing.
+	// Unauthenticated rather than PermissionDenied: a 403 for an expired token
+	// makes a frontend log the user out instead of refreshing.
 	for _, err := range []error{
 		domain.ErrInvalidCredentials,
 		domain.ErrRefreshTokenExpired,

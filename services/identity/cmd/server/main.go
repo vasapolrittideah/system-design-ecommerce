@@ -38,19 +38,17 @@ func run() error {
 	log := logger.MustNew(cfg.Log)
 	defer func() { _ = logger.Sync(log) }()
 
-	// This has to come before anything that touches a global OpenTelemetry
-	// provider, which in practice means before the gRPC server exists.
-	// otelgrpc resolves otel.GetTracerProvider() when its handler is built, so
-	// a server constructed first captures the no-op provider permanently: no
-	// span is ever exported, trace_id is empty on every log line, and nothing
-	// reports an error. It is the one ordering rule here that fails silently.
+	// This has to come before the gRPC server exists. otelgrpc resolves
+	// otel.GetTracerProvider() when its handler is built, so a server
+	// constructed first captures the no-op provider permanently — no spans, no
+	// trace_id, and no error anywhere saying so.
 	obs := observability.MustStart(ctx, cfg.Obs, observability.WithLogger(log))
 	log.Info("telemetry started", zap.String("admin_addr", obs.AdminAddr()))
 
 	pool := postgres.MustNew(ctx, cfg.DB)
 
 	// Registered as the dependency is wired, not at the end: until a check is
-	// added /readyz answers ready, so a gap here is a window in which the pod
+	// added /readyz answers ready, and that gap is a window in which the pod
 	// takes traffic it may not be able to serve.
 	obs.AddReadinessCheck("postgres", pool.Ping)
 
@@ -65,7 +63,7 @@ func run() error {
 
 	// Shut down in the reverse of the order things were built, and only after
 	// Serve has returned: the pool has to outlive the calls still draining, and
-	// telemetry has to outlive both or the last spans before a shutdown — the
+	// telemetry has to outlive both, or the last spans before a shutdown — the
 	// interesting ones — are never flushed.
 	pool.Close()
 

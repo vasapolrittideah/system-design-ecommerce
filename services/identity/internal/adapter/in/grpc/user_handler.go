@@ -1,13 +1,10 @@
 // Package grpc is the driving adapter: it maps ecommerce.identity.v1 messages
 // onto use case commands and back, and nothing else.
 //
-// Two things are deliberately absent. There is no validation — the constraints
-// are declared in the proto with protovalidate and enforced by one interceptor,
-// so a handler that checks its own input is duplicating a rule that has an
-// owner. And there is no error construction: every failure arrives already
-// classified and leaves through errorx.ToGRPC, which is what keeps one kind
-// from being answered as two different codes depending on which handler it
-// passed through.
+// Two absences are deliberate. It validates nothing, because the constraints are
+// declared in the proto and enforced by an interceptor; and it constructs no
+// errors, because every failure arrives already classified and leaves through
+// errorx.ToGRPC.
 package grpc
 
 import (
@@ -23,10 +20,9 @@ import (
 
 // UserHandler serves IdentityService.
 //
-// Embedding the generated Unimplemented struct is what lets a new RPC be added
-// to the proto without breaking the build here — the method answers
-// Unimplemented until someone writes it, rather than the package failing to
-// compile against its own contract.
+// Embedding the generated Unimplemented struct lets a new RPC be added to the
+// proto without breaking the build here: the method answers Unimplemented until
+// someone writes it.
 type UserHandler struct {
 	identityv1.UnimplementedIdentityServiceServer
 
@@ -58,12 +54,10 @@ func (h *UserHandler) Register(
 
 // GetUser reads one user.
 //
-// There is no authorization check here, and its absence is a decision rather
-// than an omission: this RPC is reached over east-west gRPC, where identity was
-// settled two hops earlier at the edge, and its callers are the Composition API
-// filling a screen and other services resolving a user they already hold the id
-// of. The rule that a person may only read themselves belongs to the endpoint
-// that has a person behind it, and arrives with the Composition API.
+// The missing authorization check is a decision, not an omission: this RPC is
+// reached over east-west gRPC by the Composition API and by services resolving
+// an id they already hold. The rule that a person may only read themselves
+// belongs to the endpoint that has a person behind it.
 func (h *UserHandler) GetUser(
 	ctx context.Context,
 	req *identityv1.GetUserRequest,
@@ -96,10 +90,9 @@ func (h *UserHandler) GetUsersByIDs(
 
 // toProto maps the aggregate to what this service tells everyone else.
 //
-// The password hash and the optimistic-locking version have no field on the
-// message and are dropped here. That is the boundary doing its job: a field on
-// ecommerce.identity.v1.User is a promise to every caller, and the two omitted
-// here are internal facts that no caller should be able to come to depend on.
+// The password hash and the version are dropped here, deliberately: a field on
+// ecommerce.identity.v1.User is a promise to every caller, and neither is a fact
+// anyone outside should be able to depend on.
 func toProto(user *domain.User) *identityv1.User {
 	roles := make([]string, 0, len(user.Roles()))
 	for _, role := range user.Roles() {

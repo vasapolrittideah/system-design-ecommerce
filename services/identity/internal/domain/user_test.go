@@ -22,9 +22,9 @@ func TestNewEmail(t *testing.T) {
 			valid: true,
 		},
 		{
-			// The migration's CHECK (email = lower(email)) rejects the row
-			// otherwise, and two rows differing only in case would be two
-			// accounts one person cannot tell apart.
+			// Two rows differing only in case would be two accounts one
+			// person cannot tell apart, and the migration's CHECK rejects
+			// the row anyway.
 			name:  "uppercase is lowered",
 			input: "Ada@Example.COM",
 			want:  "ada@example.com",
@@ -200,9 +200,9 @@ func TestParseUserID(t *testing.T) {
 			input: "6ba7b810-9dad-11d1-80b4-00c04fd430cg",
 		},
 		{
-			// The braced and urn: forms are valid UUIDs to some parsers. They
-			// are not what this service stores, and accepting them would make
-			// one user reachable under three ids.
+			// A valid UUID to some parsers, but not what this service
+			// stores: accepting it would make one user reachable under
+			// several ids.
 			name:  "braced form",
 			input: "{6ba7b810-9dad-11d1-80b4-00c04fd430c8}",
 		},
@@ -274,8 +274,8 @@ func TestNewUser(t *testing.T) {
 	})
 
 	t.Run("an empty hash is refused", func(t *testing.T) {
-		// The only way to reach this is a hasher that returned success and
-		// nothing else, which must not become a row that no password matches.
+		// Only reachable from a hasher that returned success and nothing
+		// else, which must not become a row no password matches.
 		if _, err := domain.NewUser(email, ""); err == nil {
 			t.Fatal("NewUser() error = nil, want an error")
 		}

@@ -11,32 +11,29 @@ import (
 )
 
 // tokenBytes is the entropy behind a refresh token: 256 bits, which is what
-// makes the fast hash below the right choice and a guessing attack not a
-// consideration at all.
+// makes a guessing attack not a consideration and the fast hash below the right
+// choice.
 const tokenBytes = 32
 
 // redactedToken is what every formatting path prints in place of a token value.
 const redactedToken = "[REDACTED]"
 
-// TokenValue is the plaintext refresh token, and exists for the few
-// microseconds between being minted and being handed to the caller.
+// TokenValue is the plaintext refresh token, and exists for the few microseconds
+// between being minted and being handed to the caller.
 //
-// It redacts itself the way pkg/config.Secret does, and for the same reason: a
-// bearer credential that reaches a log backend is valid there for as long as it
-// would have been valid anywhere, and the leak is never a reviewed line — it is
-// one zap.Any of a struct that happens to contain it while someone is chasing
-// an unrelated failure. Reading it is Reveal, so a grep for that name lists
-// every place a token value is actually used.
+// It redacts itself on every formatting path, because a bearer credential that
+// reaches a log backend is valid there for as long as it would have been valid
+// anywhere. Reading it is Reveal, so a grep for that name lists every place a
+// token value is actually used.
 //
-// The aggregate never holds one. It holds the hash, so there is no path from a
+// The aggregate never holds one — only the hash — so there is no path from a
 // stored RefreshToken to the string that opens it.
 type TokenValue string
 
 // Reveal returns the underlying value, and is the only way to obtain it.
 func (v TokenValue) Reveal() string { return string(v) }
 
-// String covers fmt's %v and %s, including when the value is a field of a
-// struct being printed whole.
+// String covers fmt's %v and %s, including inside a struct printed whole.
 func (v TokenValue) String() string { return redactedToken }
 
 // GoString covers %#v, which ignores String entirely.
@@ -47,11 +44,9 @@ func (v TokenValue) MarshalText() ([]byte, error) { return []byte(redactedToken)
 
 // TokenHash is the SHA-256 of a token value, and is what the service stores.
 //
-// A fast hash where passwords use argon2id, which is not an inconsistency: the
-// input here is 256 bits from a CSPRNG, so there is no dictionary to run and
-// nothing a slow hash would buy. It also has to be deterministic, because the
-// lookup is by exact value — a per-row salt would make finding the row
-// impossible.
+// Fast and unsalted where passwords are argon2id, which is not an inconsistency:
+// the input is 256 bits from a CSPRNG, so there is no dictionary to run, and the
+// lookup is by exact value, which a per-row salt would make impossible.
 //
 // A fixed-size array rather than a slice, so "this is a SHA-256" is the type
 // rather than a comment, and two hashes compare with ==.
@@ -79,9 +74,9 @@ type FamilyID string
 // String returns the canonical form.
 func (id FamilyID) String() string { return string(id) }
 
-// errInvalidTTL is deliberately unclassified, so it resolves to Internal. A
+// errInvalidTTL is deliberately unclassified, so it resolves to Internal: a
 // non-positive TTL is a misconfigured process rather than a bad request, and
-// answering the caller 400 for it would point the investigation at them.
+// answering 400 would point the investigation at the caller.
 var errInvalidTTL = errors.New("refresh token ttl must be positive")
 
 // RefreshToken is one issued refresh token: a hash, the chain it belongs to,
@@ -94,10 +89,10 @@ type RefreshToken struct {
 
 	expiresAt time.Time
 
-	// revokedAt is the zero time while the token can still be presented. It is
-	// set when the token is spent by a rotation, revoked by a logout, or caught
-	// in a family revocation — three causes the schema deliberately does not
-	// distinguish, because nothing acts on the difference.
+	// revokedAt is the zero time while the token can still be presented. Spent
+	// by a rotation, revoked by a logout, and caught in a family revocation are
+	// three causes the schema deliberately does not distinguish, because nothing
+	// acts on the difference.
 	revokedAt time.Time
 
 	createdAt time.Time
@@ -109,10 +104,9 @@ type RefreshToken struct {
 // aggregate to store and the plaintext to hand back exactly once.
 //
 // The two come back separately because they have different destinations and
-// different lifetimes: one is written to a row, the other is written to a
-// response and never seen again. A constructor that returned only the aggregate
-// would have to keep the plaintext on it, and then every log line that printed
-// a token would print a working credential.
+// different lifetimes. A constructor returning only the aggregate would have to
+// keep the plaintext on it, and then every log line that printed a token would
+// print a working credential.
 func IssueRefreshToken(userID UserID, ttl time.Duration, now time.Time) (*RefreshToken, TokenValue, error) {
 	if ttl <= 0 {
 		return nil, "", errInvalidTTL
@@ -132,10 +126,10 @@ func IssueRefreshToken(userID UserID, ttl time.Duration, now time.Time) (*Refres
 
 // Rotate spends this token and returns its successor.
 //
-// The successor inherits the family and, critically, the same expiry: rotation
-// does not extend the chain's end. There is no TTL parameter here at all, so
-// there is nothing to pass that could extend it — a token refreshed every ten
-// minutes forever would otherwise outlive every policy meant to bound it.
+// The successor inherits the family and, critically, the same expiry. There is
+// no TTL parameter, so there is nothing to pass that could extend the chain's
+// end — a token refreshed every ten minutes forever would otherwise outlive
+// every policy meant to bound it.
 //
 // Rotating a token that cannot be presented fails without producing anything,
 // and the spent case is the one that matters: reaching it means the token was
@@ -164,10 +158,9 @@ func (t *RefreshToken) Rotate(now time.Time) (*RefreshToken, TokenValue, error) 
 
 // Revoke ends this token, and does nothing to one already ended.
 //
-// Idempotent because logging out is a state the caller wants to reach rather
-// than a change they are making: a client retrying after a timeout must not see
-// a failure, and the first revocation's timestamp is the true one — the moment
-// the token stopped working, not the moment someone asked again.
+// Idempotent because a client retrying after a timeout must not see a failure,
+// and because the first revocation's timestamp is the true one — the moment the
+// token stopped working, not the moment someone asked again.
 func (t *RefreshToken) Revoke(now time.Time) {
 	if !t.revokedAt.IsZero() {
 		return
@@ -179,13 +172,11 @@ func (t *RefreshToken) Revoke(now time.Time) {
 // EnsureUsable reports why this token cannot be presented, or nil.
 //
 // Expiry is checked before revocation so that a chain which ran out while
-// revoked still reads as expired: the client's next move is the same either
-// way, and the expired answer is the one that does not imply anything happened.
+// revoked still reads as expired: the client's next move is the same either way,
+// and the expired answer is the one that does not imply anything happened.
 func (t *RefreshToken) EnsureUsable(now time.Time) error {
 	// Not After: a token is dead at its expiry instant, not one nanosecond
-	// later. The boundary matters because expiresAt is compared against a
-	// clock, and "still valid at exactly the deadline" is a rule nobody
-	// intended to write.
+	// later.
 	if !now.Before(t.expiresAt) {
 		return ErrRefreshTokenExpired
 	}
@@ -274,20 +265,16 @@ func (t *RefreshToken) CreatedAt() time.Time { return t.createdAt }
 // UpdatedAt is the zero time until the row has been written.
 func (t *RefreshToken) UpdatedAt() time.Time { return t.updatedAt }
 
-// Version is the stored optimistic lock.
-//
-// It is carried rather than bumped here, because the transition this aggregate
-// actually needs to make safe is spending a token, and the guard for that is
-// `WHERE revoked_at IS NULL` in the repository. That condition is stronger than
-// a version match: it says which transition is legal, not merely that nobody
-// else has written since the row was read.
+// Version is the stored optimistic lock, carried rather than bumped here: the
+// transition this aggregate needs to make safe is spending a token, and the
+// repository's `WHERE revoked_at IS NULL` is the stronger guard — it says which
+// transition is legal, not merely that nobody else has written.
 func (t *RefreshToken) Version() int { return t.version }
 
 // newTokenValue mints the plaintext.
 //
 // base64url without padding, so the value survives a header, a URL, and a JSON
-// body without re-encoding. crypto/rand.Read is documented never to fail, so
-// there is no path here that produces a predictable token.
+// body without re-encoding.
 func newTokenValue() TokenValue {
 	var b [tokenBytes]byte
 	rand.Read(b[:]) //nolint:errcheck // documented never to return an error

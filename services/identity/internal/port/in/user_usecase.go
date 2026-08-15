@@ -1,10 +1,6 @@
 // Package in declares the driving ports: what can be asked of this service,
-// stated without reference to how the asking arrives.
-//
-// A gRPC handler maps its request into one of the commands below and calls the
-// interface. The same use case is reachable from a Kafka consumer or a CLI
-// without either one learning about protobuf, and a handler test can drive a
-// stub instead of a database.
+// stated without reference to how the asking arrives. A gRPC handler maps its
+// request into one of the commands below and calls the interface.
 package in
 
 import (
@@ -16,8 +12,7 @@ import (
 // RegisterCommand is a request to create an account.
 //
 // The fields are the raw strings that arrived, not domain types: turning them
-// into an Email is a rule, and rules are not the adapter's to apply. The
-// adapter's whole job is to notice that a RegisterRequest is a RegisterCommand.
+// into an Email is a rule, and rules are not the adapter's to apply.
 type RegisterCommand struct {
 	Email string
 
@@ -29,10 +24,8 @@ type RegisterCommand struct {
 // UserUseCase is everything that can be done to users in this slice.
 //
 // One interface rather than one per use case, because they share a lifetime and
-// a dependency set and a service split into three single-method interfaces
-// wires three objects to say the same thing. It splits when the reasons to
-// change genuinely diverge — sign-in and its token handling being the likely
-// first.
+// a dependency set. It splits when the reasons to change genuinely diverge —
+// sign-in and its token handling being the likely first.
 type UserUseCase interface {
 	// Register creates a user and returns them. It mints no token: registering
 	// and signing in are separate acts.

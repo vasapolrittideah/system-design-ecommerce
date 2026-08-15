@@ -60,9 +60,8 @@ func TestRegister(t *testing.T) {
 	})
 
 	t.Run("a malformed address costs no hashing", func(t *testing.T) {
-		// Hashing is deliberately expensive. Doing it before the cheap
-		// rejection would let anyone who can send a malformed email spend it.
-		// Neither mock is given an expectation, so any call here fails.
+		// Hashing is deliberately expensive, so a malformed address must not
+		// reach it. Neither mock is given an expectation, so any call fails.
 		_, _, service := setup(t)
 
 		_, err := service.Register(context.Background(), in.RegisterCommand{
@@ -148,7 +147,7 @@ func TestGetUser(t *testing.T) {
 	t.Run("a malformed id never reaches the repository", func(t *testing.T) {
 		// Unchecked, it would arrive as a pgx parse failure and be reported as
 		// Internal — which says this service is broken when the caller made a
-		// typo, and puts a client bug into the error rate that pages someone.
+		// typo.
 		_, _, service := setup(t)
 
 		_, err := service.GetUser(context.Background(), "nonsense")

@@ -13,11 +13,9 @@ import (
 // NewIdentityHandler assembles the user slice and returns the gRPC service to
 // register.
 //
-// The wiring is hand-written and reads in the direction of the dependency rule:
-// adapters at the edges, the use case in the middle, and the domain named by
-// none of them. It is the one place that knows the concrete types, which is
-// what lets every other package name only its ports — and what makes replacing
-// argon2 or PostgreSQL a change to these four lines.
+// This is the one place that knows the concrete types, which is what lets every
+// other package name only its ports — and what makes replacing argon2 or
+// PostgreSQL a change to these four lines.
 //
 // It returns the generated server interface rather than *grpc.UserHandler so
 // that a caller cannot reach past the contract into the adapter.
