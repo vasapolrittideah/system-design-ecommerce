@@ -4,6 +4,7 @@ package ecommerce.identity.v1;
 
 import "buf/validate/validate.proto";
 import "ecommerce/identity/v1/user.proto";
+import "google/protobuf/timestamp.proto";
 
 // IdentityService owns users, their credentials, and the tokens minted from
 // them. It is reached over east-west gRPC only — the edge is Kong and the
@@ -27,6 +28,48 @@ service IdentityService {
   // GetUsersByIDs reads many. Every service exposes one of these so the
   // Composition API can fill a screen without looping single-item calls.
   rpc GetUsersByIDs(GetUsersByIDsRequest) returns (GetUsersByIDsResponse);
+
+  // Login exchanges credentials for a token pair.
+  //
+  // Named for the act rather than for the read it resembles: the client retry
+  // policy treats Get/List/Batch/Search/Count/Check as idempotent, and every
+  // attempt here mints a refresh token that is stored, so a retried Login
+  // would leave rows nobody holds.
+  //
+  // A wrong password and an address that was never registered are answered
+  // identically — Unauthenticated with INVALID_CREDENTIALS — because any
+  // difference between them turns this RPC into a way to ask which email
+  // addresses have accounts.
+  rpc Login(LoginRequest) returns (LoginResponse);
+
+  // RefreshToken exchanges a refresh token for a new pair and invalidates the
+  // one presented.
+  //
+  // Rotation on every call is what makes a stolen refresh token detectable:
+  // the thief and the legitimate client cannot both keep using the chain, and
+  // whichever presents the spent token second reveals that a copy exists. The
+  // service then revokes the whole chain, so the answer to a theft is that
+  // both parties have to sign in again — which the real user can do and the
+  // thief cannot.
+  //
+  // That detection is also why this RPC is not idempotent and must never be
+  // retried automatically: a retry presents a token the first attempt already
+  // spent, which is indistinguishable from the theft it is designed to catch.
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+
+  // Logout revokes the presented refresh token and the rest of its rotation
+  // chain, so no further pair can be minted from it.
+  //
+  // It cannot revoke the access token already in the caller's hands — a
+  // self-contained signed token is valid until it expires, and that window is
+  // the whole reason the TTL is 15 minutes. A screen that must stop working
+  // immediately has to ask the owning service, not the token.
+  //
+  // Revoking something already revoked, expired, or never issued succeeds.
+  // Logging out is a state the caller wants to reach rather than a change they
+  // are making, a client retrying after a timeout must not see a failure, and
+  // an error here would tell a prober which tokens exist.
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
 }
 
 message RegisterRequest {
@@ -85,3 +128,90 @@ message GetUsersByIDsResponse {
   // fail the whole screen the Composition API is assembling.
   repeated User users = 1;
 }
+
+// TokenPair is what a successful sign-in or refresh hands back.
+//
+// One message shared by both responses, so a field added for one is present on
+// the other. A client that has to read two shapes to learn the same fact ends
+// up with two code paths that drift.
+message TokenPair {
+  // A signed ES256 JWT, carried as the Authorization bearer token on every
+  // subsequent request and verified by Kong and the Composition API without
+  // either of them asking this service. That is the point of the asymmetry:
+  // only identity holds the private key, and everything else holds a key that
+  // can say no.
+  string access_token = 1;
+
+  // An opaque random string, deliberately not a JWT.
+  //
+  // A refresh token has to be revocable, and a self-contained signed token
+  // cannot be — logout would have to wait out the TTL. This one means nothing
+  // on its own: the service stores a hash of it in a row, and deleting the row
+  // is what ends the session.
+  string refresh_token = 2;
+
+  // When access_token stops being accepted. Absolute rather than a duration in
+  // seconds, because the token itself carries an absolute "exp" and a client
+  // comparing the two should not have to reconstruct one from the other.
+  google.protobuf.Timestamp access_token_expires_at = 3;
+
+  // When refresh_token stops being accepted, after which the user signs in
+  // again. Rotation does not extend it: the chain has a fixed end, or a stolen
+  // token that is refreshed often enough would never expire.
+  google.protobuf.Timestamp refresh_token_expires_at = 4;
+}
+
+message LoginRequest {
+  string email = 1 [(buf.validate.field).string = {
+    email: true
+    max_bytes: 254
+  }];
+
+  // Bounded, but with no minimum length beyond one byte: the rule the caller
+  // has to satisfy is whatever their password already is, and a policy
+  // tightened after they registered must not lock them out of an account they
+  // can still open. The upper bound is here for the same reason as on
+  // RegisterRequest — the value is handed to a deliberately slow hash.
+  string password = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_bytes: 256
+  }];
+}
+
+message LoginResponse {
+  TokenPair tokens = 1;
+
+  // The user, so the screen that just signed them in does not immediately ask
+  // for what this call already loaded. Unlike RegisterResponse, which returns
+  // no tokens, there is nothing to separate here: the caller proved who they
+  // are one field ago.
+  User user = 2;
+}
+
+message RefreshTokenRequest {
+  // The opaque string from a previous TokenPair. The bound is generous rather
+  // than exact so the encoding can change without a contract change; what
+  // matters is that an unbounded string never reaches a hash function.
+  string refresh_token = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_bytes: 512
+  }];
+}
+
+message RefreshTokenResponse {
+  // A new pair every time, including a new refresh token. The one presented is
+  // spent by the time this returns.
+  TokenPair tokens = 1;
+}
+
+message LogoutRequest {
+  string refresh_token = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_bytes: 512
+  }];
+}
+
+// LogoutResponse is empty, and is a message rather than google.protobuf.Empty
+// so that the day it carries something — how many sessions were revoked, say —
+// is a field added rather than a signature changed.
+message LogoutResponse {}
