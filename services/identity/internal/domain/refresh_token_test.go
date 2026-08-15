@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/identity/internal/domain"
 )
 
@@ -292,8 +293,12 @@ func TestRefreshTokenSentinelsAreUnauthenticated(t *testing.T) {
 			t.Fatalf("%v does not declare a kind", err)
 		}
 
-		if got := kinder.ErrorKind(); got != "unauthenticated" {
-			t.Errorf("%v declares kind %q, want unauthenticated", err, got)
+		// Pinned to the constant rather than the literal the sentinels carry:
+		// domain cannot import errorx, so a kind that stops matching would
+		// otherwise resolve to Internal with nothing reporting it.
+		want := string(errorx.KindUnauthenticated)
+		if got := kinder.ErrorKind(); got != want {
+			t.Errorf("%v declares kind %q, want %q", err, got, want)
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/identity/internal/domain"
 )
 
@@ -95,9 +96,14 @@ func TestNewEmail(t *testing.T) {
 				}
 
 				// The kind is what errorx maps to InvalidArgument, and a typo
-				// answered as Internal is an alert nobody can act on.
-				if invalid.ErrorKind() != "invalid_input" {
-					t.Errorf("ErrorKind() = %q, want %q", invalid.ErrorKind(), "invalid_input")
+				// answered as Internal is an alert nobody can act on. The
+				// package under test may not import errorx, so this is the
+				// only place the two spellings can be held together: pinning
+				// the literal to the constant is what makes a change to either
+				// one fail here instead of in production.
+				want := string(errorx.KindInvalidInput)
+				if invalid.ErrorKind() != want {
+					t.Errorf("ErrorKind() = %q, want %q", invalid.ErrorKind(), want)
 				}
 
 				return
