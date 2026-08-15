@@ -59,7 +59,7 @@ func newUser(t *testing.T) *domain.User {
 
 func TestRegisterMapsRequestAndResponse(t *testing.T) {
 	stub := &stubUseCase{user: newUser(t)}
-	handler := adapter.NewUserHandler(stub)
+	handler := adapter.NewIdentityHandler(stub, nil)
 
 	resp, err := handler.Register(context.Background(), &identityv1.RegisterRequest{
 		Email:    "Ada@example.com",
@@ -92,7 +92,7 @@ func TestRegisterMapsRequestAndResponse(t *testing.T) {
 // — so what this guards is the day someone adds one for convenience.
 func TestRegisterResponseCarriesNoSecret(t *testing.T) {
 	stub := &stubUseCase{user: newUser(t)}
-	handler := adapter.NewUserHandler(stub)
+	handler := adapter.NewIdentityHandler(stub, nil)
 
 	resp, err := handler.Register(context.Background(), &identityv1.RegisterRequest{
 		Email:    "ada@example.com",
@@ -141,7 +141,7 @@ func TestHandlerMapsErrorKindsToCodes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stub := &stubUseCase{err: tt.err}
-			handler := adapter.NewUserHandler(stub)
+			handler := adapter.NewIdentityHandler(stub, nil)
 
 			_, err := handler.GetUser(context.Background(), &identityv1.GetUserRequest{Id: "any"})
 			if err == nil {
@@ -172,9 +172,9 @@ func TestHandlerMapsErrorKindsToCodes(t *testing.T) {
 func TestInternalErrorIsNotLeaked(t *testing.T) {
 	const leak = "dial tcp 10.0.3.7:5432: connection refused"
 
-	handler := adapter.NewUserHandler(&stubUseCase{
+	handler := adapter.NewIdentityHandler(&stubUseCase{
 		err: errorx.New(errorx.KindInternal, "%s", leak),
-	})
+	}, nil)
 
 	_, err := handler.GetUser(context.Background(), &identityv1.GetUserRequest{Id: "any"})
 	if err == nil {
@@ -188,7 +188,7 @@ func TestInternalErrorIsNotLeaked(t *testing.T) {
 
 func TestGetUsersByIDsReturnsWhatTheUseCaseFound(t *testing.T) {
 	stub := &stubUseCase{users: []*domain.User{newUser(t)}}
-	handler := adapter.NewUserHandler(stub)
+	handler := adapter.NewIdentityHandler(stub, nil)
 
 	ids := []string{"6ba7b810-9dad-11d1-80b4-00c04fd430c8", "6ba7b811-9dad-11d1-80b4-00c04fd430c8"}
 

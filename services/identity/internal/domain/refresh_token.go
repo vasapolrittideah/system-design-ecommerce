@@ -18,8 +18,9 @@ const tokenBytes = 32
 // redactedToken is what every formatting path prints in place of a token value.
 const redactedToken = "[REDACTED]"
 
-// TokenValue is the plaintext refresh token, and exists for the few microseconds
-// between being minted and being handed to the caller.
+// TokenValue is a bearer credential in plaintext — a refresh token as it is
+// minted, or a signed access token — and exists for the few microseconds between
+// being produced and being handed to the caller.
 //
 // It redacts itself on every formatting path, because a bearer credential that
 // reaches a log backend is valid there for as long as it would have been valid

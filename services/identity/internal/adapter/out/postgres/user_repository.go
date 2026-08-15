@@ -111,6 +111,28 @@ func (r *UserRepository) FindByID(ctx context.Context, id domain.UserID) (*domai
 	return toDomain(&row), nil
 }
 
+// FindByEmail returns one user by their login identity.
+//
+// The address is used exactly as the domain normalised it. Re-lowering it here
+// would look harmless and quietly stop the UNIQUE index from serving this
+// query.
+func (r *UserRepository) FindByEmail(ctx context.Context, email domain.Email) (*domain.User, error) {
+	row, err := r.queries(ctx).GetUserByEmail(ctx, email.String())
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The address is deliberately absent from the message: the one
+			// caller answers this with invalid credentials and must not be able
+			// to leak it, and it would otherwise travel into logs and traces.
+			return nil, errorx.New(errorx.KindNotFound, "no user with that email").
+				WithReason("USER_NOT_FOUND")
+		}
+
+		return nil, errorx.Wrap(err, errorx.KindInternal, "get user by email")
+	}
+
+	return toDomain(&row), nil
+}
+
 // FindByIDs returns the users that exist, and no error for the ones that do
 // not.
 func (r *UserRepository) FindByIDs(ctx context.Context, ids []domain.UserID) ([]*domain.User, error) {

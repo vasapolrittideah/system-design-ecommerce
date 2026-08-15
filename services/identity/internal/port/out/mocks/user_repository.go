@@ -106,6 +106,74 @@ func (_c *MockUserRepository_Create_Call) RunAndReturn(run func(ctx context.Cont
 	return _c
 }
 
+// FindByEmail provides a mock function for the type MockUserRepository
+func (_mock *MockUserRepository) FindByEmail(ctx context.Context, email domain.Email) (*domain.User, error) {
+	ret := _mock.Called(ctx, email)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindByEmail")
+	}
+
+	var r0 *domain.User
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, domain.Email) (*domain.User, error)); ok {
+		return returnFunc(ctx, email)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, domain.Email) *domain.User); ok {
+		r0 = returnFunc(ctx, email)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*domain.User)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, domain.Email) error); ok {
+		r1 = returnFunc(ctx, email)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockUserRepository_FindByEmail_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByEmail'
+type MockUserRepository_FindByEmail_Call struct {
+	*mock.Call
+}
+
+// FindByEmail is a helper method to define mock.On call
+//   - ctx context.Context
+//   - email domain.Email
+func (_e *MockUserRepository_Expecter) FindByEmail(ctx any, email any) *MockUserRepository_FindByEmail_Call {
+	return &MockUserRepository_FindByEmail_Call{Call: _e.mock.On("FindByEmail", ctx, email)}
+}
+
+func (_c *MockUserRepository_FindByEmail_Call) Run(run func(ctx context.Context, email domain.Email)) *MockUserRepository_FindByEmail_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 domain.Email
+		if args[1] != nil {
+			arg1 = args[1].(domain.Email)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockUserRepository_FindByEmail_Call) Return(user *domain.User, err error) *MockUserRepository_FindByEmail_Call {
+	_c.Call.Return(user, err)
+	return _c
+}
+
+func (_c *MockUserRepository_FindByEmail_Call) RunAndReturn(run func(ctx context.Context, email domain.Email) (*domain.User, error)) *MockUserRepository_FindByEmail_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // FindByID provides a mock function for the type MockUserRepository
 func (_mock *MockUserRepository) FindByID(ctx context.Context, id domain.UserID) (*domain.User, error) {
 	ret := _mock.Called(ctx, id)

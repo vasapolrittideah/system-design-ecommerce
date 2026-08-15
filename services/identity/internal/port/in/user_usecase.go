@@ -23,9 +23,9 @@ type RegisterCommand struct {
 
 // UserUseCase is everything that can be done to users in this slice.
 //
-// One interface rather than one per use case, because they share a lifetime and
-// a dependency set. It splits when the reasons to change genuinely diverge —
-// sign-in and its token handling being the likely first.
+// One interface rather than one per use case, because these share a lifetime and
+// a dependency set — a repository and a hasher. Sign-in does not, which is why
+// it is [SessionUseCase] instead of three more methods here.
 type UserUseCase interface {
 	// Register creates a user and returns them. It mints no token: registering
 	// and signing in are separate acts.

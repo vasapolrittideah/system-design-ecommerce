@@ -57,7 +57,7 @@ func run() error {
 		server.WithRegisterer(obs.Registry()),
 	)
 
-	identityv1.RegisterIdentityServiceServer(srv.Registrar(), bootstrap.NewIdentityHandler(pool))
+	identityv1.RegisterIdentityServiceServer(srv.Registrar(), bootstrap.NewIdentityHandler(cfg, pool))
 
 	serveErr := srv.Serve(ctx)
 

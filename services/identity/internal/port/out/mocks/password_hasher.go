@@ -95,3 +95,69 @@ func (_c *MockPasswordHasher_Hash_Call) RunAndReturn(run func(plain string) (dom
 	_c.Call.Return(run)
 	return _c
 }
+
+// Verify provides a mock function for the type MockPasswordHasher
+func (_mock *MockPasswordHasher) Verify(hash domain.PasswordHash, plain string) (bool, error) {
+	ret := _mock.Called(hash, plain)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Verify")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(domain.PasswordHash, string) (bool, error)); ok {
+		return returnFunc(hash, plain)
+	}
+	if returnFunc, ok := ret.Get(0).(func(domain.PasswordHash, string) bool); ok {
+		r0 = returnFunc(hash, plain)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(domain.PasswordHash, string) error); ok {
+		r1 = returnFunc(hash, plain)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockPasswordHasher_Verify_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Verify'
+type MockPasswordHasher_Verify_Call struct {
+	*mock.Call
+}
+
+// Verify is a helper method to define mock.On call
+//   - hash domain.PasswordHash
+//   - plain string
+func (_e *MockPasswordHasher_Expecter) Verify(hash any, plain any) *MockPasswordHasher_Verify_Call {
+	return &MockPasswordHasher_Verify_Call{Call: _e.mock.On("Verify", hash, plain)}
+}
+
+func (_c *MockPasswordHasher_Verify_Call) Run(run func(hash domain.PasswordHash, plain string)) *MockPasswordHasher_Verify_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 domain.PasswordHash
+		if args[0] != nil {
+			arg0 = args[0].(domain.PasswordHash)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockPasswordHasher_Verify_Call) Return(b bool, err error) *MockPasswordHasher_Verify_Call {
+	_c.Call.Return(b, err)
+	return _c
+}
+
+func (_c *MockPasswordHasher_Verify_Call) RunAndReturn(run func(hash domain.PasswordHash, plain string) (bool, error)) *MockPasswordHasher_Verify_Call {
+	_c.Call.Return(run)
+	return _c
+}

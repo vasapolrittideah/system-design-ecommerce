@@ -26,6 +26,15 @@ type UserRepository interface {
 	// FindByID returns the user, or a not-found error when there is none.
 	FindByID(ctx context.Context, id domain.UserID) (*domain.User, error)
 
+	// FindByEmail is the sign-in lookup, and reports not found the same way
+	// FindByID does.
+	//
+	// That the caller must not pass the distinction on is the caller's rule, not
+	// this one's: a repository that answered "no such user" with the same error
+	// as a wrong password would be hiding, from the use case, the difference
+	// between an unknown address and a broken query.
+	FindByEmail(ctx context.Context, email domain.Email) (*domain.User, error)
+
 	// FindByIDs returns the users that exist, in no guaranteed order and
 	// possibly fewer than were asked for.
 	//

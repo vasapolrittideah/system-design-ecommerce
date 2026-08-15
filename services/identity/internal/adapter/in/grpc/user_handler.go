@@ -1,10 +1,3 @@
-// Package grpc is the driving adapter: it maps ecommerce.identity.v1 messages
-// onto use case commands and back, and nothing else.
-//
-// Two absences are deliberate. It validates nothing, because the constraints are
-// declared in the proto and enforced by an interceptor; and it constructs no
-// errors, because every failure arrives already classified and leaves through
-// errorx.ToGRPC.
 package grpc
 
 import (
@@ -18,26 +11,8 @@ import (
 	"github.com/vasapolrittideah/system-design-ecommerce/services/identity/internal/port/in"
 )
 
-// UserHandler serves IdentityService.
-//
-// Embedding the generated Unimplemented struct lets a new RPC be added to the
-// proto without breaking the build here: the method answers Unimplemented until
-// someone writes it.
-type UserHandler struct {
-	identityv1.UnimplementedIdentityServiceServer
-
-	users in.UserUseCase
-}
-
-var _ identityv1.IdentityServiceServer = (*UserHandler)(nil)
-
-// NewUserHandler builds the handler over the driving port.
-func NewUserHandler(users in.UserUseCase) *UserHandler {
-	return &UserHandler{users: users}
-}
-
 // Register creates an account.
-func (h *UserHandler) Register(
+func (h *IdentityHandler) Register(
 	ctx context.Context,
 	req *identityv1.RegisterRequest,
 ) (*identityv1.RegisterResponse, error) {
@@ -58,7 +33,7 @@ func (h *UserHandler) Register(
 // reached over east-west gRPC by the Composition API and by services resolving
 // an id they already hold. The rule that a person may only read themselves
 // belongs to the endpoint that has a person behind it.
-func (h *UserHandler) GetUser(
+func (h *IdentityHandler) GetUser(
 	ctx context.Context,
 	req *identityv1.GetUserRequest,
 ) (*identityv1.GetUserResponse, error) {
@@ -71,7 +46,7 @@ func (h *UserHandler) GetUser(
 }
 
 // GetUsersByIDs reads many, returning only the users that exist.
-func (h *UserHandler) GetUsersByIDs(
+func (h *IdentityHandler) GetUsersByIDs(
 	ctx context.Context,
 	req *identityv1.GetUsersByIDsRequest,
 ) (*identityv1.GetUsersByIDsResponse, error) {
