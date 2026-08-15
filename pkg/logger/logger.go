@@ -154,11 +154,10 @@ func SetGlobal(log *zap.Logger) (restore func()) {
 
 // Sync flushes buffered lines. It is meant to be deferred in main.
 //
-// Syncing stdout when it is a terminal, a pipe, or a container's log stream
-// fails on Linux and macOS with EINVAL, ENOTTY, or EBADF depending on what is
-// on the other end. None of those say anything about whether the logs were
-// written, and reporting them trains people to ignore shutdown errors, so they
-// are swallowed here and everything else is returned.
+// Syncing stdout fails with EINVAL, ENOTTY, or EBADF depending on what is on the
+// other end. None of those say anything about whether the logs were written, and
+// reporting them trains people to ignore shutdown errors, so they are swallowed
+// here and everything else is returned.
 func Sync(log *zap.Logger) error {
 	err := log.Sync()
 	if err == nil || isBenignSyncError(err) {

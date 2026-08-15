@@ -14,13 +14,11 @@ const languageKey contextKey = iota
 // Localize resolves the response language from Accept-Language and puts it in
 // the request context, where [Validator.Struct] picks it up.
 //
-// It is a method on Validator rather than a free middleware because the set of
-// languages this API can answer in is exactly the set of translation catalogues
-// the validator was built with. Negotiating against any other list would let a
-// request settle on a language nothing can be written in.
+// It is a method on Validator because the languages this API can answer in are
+// exactly the catalogues the validator was built with; negotiating against any
+// other list would settle on a language nothing can be written in.
 //
-// The negotiated language goes back as Content-Language, so a caller can see
-// what it actually got rather than assume its first choice was honoured.
+// The result goes back as Content-Language, so a caller can see what it got.
 // Anything unparseable, unsupported, or absent resolves to [DefaultLanguage].
 //
 // It must run before any handler that calls [Validator.Bind] or

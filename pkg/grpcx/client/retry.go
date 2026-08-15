@@ -15,28 +15,20 @@ import (
 // readOnlyPrefixes are the method-name prefixes treated as idempotent without
 // being listed in Config.IdempotentMethods.
 //
-// The convention this leans on is the one the repo already follows: reads are
-// GetX, ListX, and the batch GetXByIDs the Composition API fans out over.
-// Anything that changes state is named for the change — PlaceOrder, ReserveStock,
-// MarkPaid — and is not retried.
-//
-// The hazard is a method that reads like a read but is not: a GetOrCreateCart
-// would be retried on the strength of its name. Name such a method for what it
-// does, or the retry is silently wrong.
+// Method names are what decide retries here, so the hazard is a method that
+// reads like a read and is not: a GetOrCreateCart would be retried on the
+// strength of its name. Name a mutation for the mutation, or list it explicitly.
 var readOnlyPrefixes = []string{"Get", "List", "Batch", "Search", "Count", "Check"}
 
 // retryUnary retries a failed call when retrying is both useful and safe.
 //
-// Useful means the failure says nothing about whether the request was valid:
-// Unavailable (the connection was refused, or the pod went away mid-deploy) and
-// DeadlineExceeded reported by the server, meaning its own downstream ran out
-// of time while we still have budget. Every other code is an answer — NotFound
-// stays NotFound however many times it is asked.
+// Useful means the failure says nothing about whether the request was valid,
+// which is Unavailable and a server-reported DeadlineExceeded. Every other code
+// is an answer — NotFound stays NotFound however many times it is asked.
 //
 // Safe means the method can run twice without doing anything twice. Retrying
 // PlaceOrder after a timeout of unknown outcome is how a customer gets charged
-// for two orders; that case is handled by an idempotency key at the entry
-// point, not by a transport retry.
+// twice; that case belongs to an idempotency key at the entry point.
 func retryUnary(cfg Config) grpc.UnaryClientInterceptor {
 	explicit := make(map[string]struct{}, len(cfg.IdempotentMethods))
 	for _, m := range cfg.IdempotentMethods {

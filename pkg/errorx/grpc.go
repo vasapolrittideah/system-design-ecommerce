@@ -13,11 +13,8 @@ import (
 
 // codeForKind is the mapping the whole system agrees on.
 //
-// Unauthenticated and PermissionDenied stay apart even though both are a
-// refusal, because they ask the caller for different things: one to present a
-// credential, the other to stop asking. Everything finer-grained than that —
-// which precondition failed, which resource was missing — is the reason code's
-// job, not the status code's.
+// Anything finer-grained than these six — which precondition failed, which
+// resource was missing — is the reason code's job, not the status code's.
 var codeForKind = map[Kind]codes.Code{
 	KindNotFound:        codes.NotFound,
 	KindInvalidInput:    codes.InvalidArgument,
@@ -39,20 +36,14 @@ var codeForKind = map[Kind]codes.Code{
 //     Unavailable into Internal would hide from the caller's circuit breaker
 //     exactly what it exists to detect.
 //  3. A cancelled or expired context becomes Canceled or DeadlineExceeded.
-//     These arrive as bare context errors from pgx and from anything selecting
-//     on ctx.Done, and reporting a caller who hung up as an Internal error
-//     would inflate the error rate with client behaviour and count against
-//     breakers that should not have been touched.
+//     These arrive bare from pgx and from anything selecting on ctx.Done, and
+//     reporting a caller who hung up as Internal would put client behaviour into
+//     the error rate and into breakers that should not have been touched.
 //  4. Anything else becomes Internal with a fixed message.
 //
-// Only the Internal message is replaced. Every other kind is a fact the caller
-// asked for and can act on, so its message goes out as written; an
-// unclassified failure is a bug whose text could be anything from a driver, and
-// none of it belongs on the wire.
-//
-// The returned error still wraps the original, so the access log written by
-// pkg/grpcx/server records the full chain while the client receives only the
-// status.
+// Only the Internal message is replaced; every other kind is a fact the caller
+// asked for. The returned error still wraps the original, so the access log
+// records the full chain while the client receives only the status.
 func ToGRPC(err error) error {
 	if err == nil {
 		return nil
@@ -103,10 +94,10 @@ func statusFor(kind Kind, err error) *status.Status {
 // wireReason returns the reason code an incoming gRPC status reports, and
 // whether err was a status at all.
 //
-// A status raised below the handlers — Unavailable from a tripped circuit
-// breaker, Unimplemented from a version skew — carries no ErrorInfo, so the
-// code name stands in as the reason. Falling back to INTERNAL there would have
-// the Composition API answer 503 while naming the failure an internal error.
+// A status raised below the handlers — Unavailable from a tripped breaker,
+// Unimplemented from a version skew — carries no ErrorInfo, so the code name
+// stands in. Falling back to INTERNAL there would have the Composition API
+// answer 503 while naming the failure an internal error.
 func wireReason(err error) (string, bool) {
 	st, ok := status.FromError(err)
 	if !ok {
@@ -155,13 +146,12 @@ func errorInfo(err error) (*errdetails.ErrorInfo, bool) {
 	return nil, false
 }
 
-// grpcError reports one thing to the client and another to the log.
+// grpcError reports one thing to the client and another to the log: grpc-go
+// serialises it through GRPCStatus, while Error and Unwrap keep the original
+// chain for the logging interceptor and for errors.Is in a test.
 //
-// grpc-go serialises a returned error through its GRPCStatus method, so the
-// wire sees only st. Error and Unwrap keep the original chain, which is what
-// the logging interceptor writes and what errors.Is in a test can still reach.
-// Without this, scrubbing an Internal message would also erase the only record
-// of what actually broke.
+// Without it, scrubbing an Internal message would also erase the only record of
+// what broke.
 type grpcError struct {
 	st    *status.Status
 	cause error

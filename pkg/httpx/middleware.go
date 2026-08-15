@@ -15,16 +15,14 @@ import (
 // CorrelationID adopts the caller's correlation ID or mints one, puts it in the
 // request context, and echoes it back as a response header.
 //
-// This is where the ID that ties a user-visible operation together enters the
-// system. Kong stamps it on the way in; from here pkg/grpcx/client reads it off
-// the context and forwards it to every service the request fans out to, and
-// those services put it on the outbox rows for the Kafka events they raise. A
-// BFF that skips this middleware breaks that chain at its first link: the
-// context has no ID to forward, every downstream service mints its own, and one
-// operation shows up in the logs as a handful of unrelated ones.
+// This is where the ID enters the system: pkg/grpcx/client reads it off the
+// context and forwards it to every service the request fans out to, and those
+// services put it on the outbox rows for the events they raise. Skipping this
+// middleware breaks that chain at its first link, and one operation shows up in
+// the logs as several unrelated ones — with no error anywhere.
 //
-// It is chi-compatible, and belongs at the top of the chain so that everything
-// after it — including a panic — is recorded under the same ID.
+// It belongs at the top of the chain, so everything after it, a panic included,
+// is recorded under the same ID.
 func CorrelationID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(grpcx.MetadataCorrelationID)
@@ -40,10 +38,9 @@ func CorrelationID(next http.Handler) http.Handler {
 
 // Recover turns a panic into the same error body every other failure produces.
 //
-// chi's own recoverer answers text/plain and re-prints the stack into the
-// response, which hands an attacker the source layout and hands the frontend a
-// body it cannot parse — the one response shape it is allowed not to handle.
-// The stack goes to the log, under the correlation ID the caller was given, and
+// chi's own recoverer answers text/plain and prints the stack into the response,
+// which hands an attacker the source layout and the frontend a body it cannot
+// parse. Here the stack goes to the log under the caller's correlation ID, and
 // the client gets an ordinary 500.
 //
 // http.ErrAbortHandler is re-panicked untouched: it is the standard library's

@@ -15,13 +15,10 @@ const pemPrefix = "-----BEGIN"
 // decodeKey normalises the two ways a PEM key arrives in an environment
 // variable, because 12-factor config and PEM disagree about newlines.
 //
-// A PEM block is multi-line. A Kubernetes Secret holds that fine, so keys are
-// accepted verbatim. A .env file read by docker compose does not — the value
-// stops at the first newline and the process starts with a truncated key — so
-// base64 of the whole block is accepted too, which is the shape that survives
-// both. Which one arrived is decided by looking at it rather than by a flag,
-// since the two are trivially distinguishable and a flag is one more thing to
-// set wrong.
+// A Kubernetes Secret carries a multi-line PEM block fine, so one is accepted
+// verbatim; base64 of the whole block is accepted too, being the shape that
+// survives any delivery that keeps a value on one line. Which one arrived is
+// decided by looking at it, because a flag is one more thing to set wrong.
 func decodeKey(encoded string) ([]byte, error) {
 	encoded = strings.TrimSpace(encoded)
 	if encoded == "" {

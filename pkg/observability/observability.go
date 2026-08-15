@@ -1,12 +1,10 @@
 // Package observability starts the telemetry a process needs before it can be
 // operated: traces, metrics, and the admin endpoints Kubernetes probes.
 //
-// It exists because every other package here reads telemetry from a global.
-// pkg/grpcx hands otelgrpc to the server, and otelgrpc resolves
-// otel.GetTracerProvider at the moment the handler is built — so a process that
-// wires its server before its telemetry captures the no-op provider for good.
-// No span is ever exported, trace_id is empty on every log line, and nothing
-// reports an error. Start therefore runs first, before anything else in main:
+// Start runs first in main, before anything else is constructed. otelgrpc
+// resolves otel.GetTracerProvider at the moment its handler is built, so a
+// process that wires its server first captures the no-op provider permanently:
+// no spans, an empty trace_id on every log line, and no error reported anywhere.
 //
 //	obs := observability.MustStart(ctx, obsCfg, observability.WithLogger(log))
 //	defer obs.Shutdown(context.WithoutCancel(ctx))
@@ -99,8 +97,7 @@ type options struct {
 // WithLogger sets the logger telemetry failures are reported through — a
 // collector that cannot be reached, a metric that cannot be registered. Without
 // it those go to zap's global, which is a no-op until logger.SetGlobal has been
-// called, and silent telemetry failures are the whole problem this package
-// exists to avoid.
+// called.
 func WithLogger(log *zap.Logger) Option {
 	return func(o *options) {
 		o.logger = log
@@ -121,9 +118,8 @@ type Provider struct {
 //
 // It must be called before any package that reads a global provider is
 // constructed — in practice, first in main. It does not verify that the
-// collector is reachable: spans are exported in the background by a batch
-// processor, and a process that refuses to start because a telemetry backend is
-// down has turned an observability outage into a service outage.
+// collector is reachable: a process that refuses to start because a telemetry
+// backend is down has turned an observability outage into a service outage.
 func Start(ctx context.Context, cfg Config, opts ...Option) (*Provider, error) {
 	o := options{logger: zap.L()}
 	for _, opt := range opts {

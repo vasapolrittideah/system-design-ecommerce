@@ -14,16 +14,13 @@ import (
 
 // recoveryUnary turns a panic into an Internal status instead of a dead process.
 //
-// It is the outermost interceptor so it also catches a panic thrown by logging,
-// metrics, auth, or validation — a chain that can take the process down with it
-// is worse than no chain. The cost of that position is that recovery runs
-// before the logging interceptor has put a request logger in the context, so
-// panic lines carry trace_id (the otel stats handler has already opened the
-// span) but not correlation_id. Join them to the access log line by trace_id.
+// It is outermost so it also catches a panic thrown by any other interceptor.
+// The cost of that position is that it runs before logging has put a request
+// logger in the context, so panic lines carry trace_id but not correlation_id —
+// join them to the access line by trace_id.
 //
-// The status message is fixed text. Whatever the panic value says — a nil map
-// write, an index out of range, a DSN in a wrapped error — it describes our
-// internals, and internals do not go over the wire.
+// The status message is fixed text: whatever the panic value says, it describes
+// our internals, and internals do not go over the wire.
 func recoveryUnary(log *zap.Logger, m *metrics) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		defer func() {

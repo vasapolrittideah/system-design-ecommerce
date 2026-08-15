@@ -1,10 +1,9 @@
 // Package errorx is the one place an error changes vocabulary.
 //
-// An error is born inside a domain package as a business fact — this order does
-// not exist, this transition is not allowed — and has to leave the process as a
-// gRPC status code, and sometimes as an HTTP status after that. Doing the
-// translation in each handler produces a different answer in each handler, so
-// it happens here and nowhere else:
+// An error is born inside a domain package as a business fact and has to leave
+// the process as a gRPC status code, and sometimes as an HTTP status after that.
+// Doing that translation in each handler produces a different answer in each
+// handler, so it happens here and nowhere else:
 //
 //	func (h *Handler) GetOrder(ctx context.Context, req *orderv1.GetOrderRequest) (*orderv1.GetOrderResponse, error) {
 //		order, err := h.svc.Get(ctx, req.GetOrderId())
@@ -27,10 +26,10 @@
 //		return nil, errorx.New(errorx.KindNotFound, "order %s not found", id)
 //	}
 //
-// A domain package cannot do that: internal/domain imports only the standard
-// library, so it cannot import this package either. It declares its kind
-// structurally instead, by implementing [Kinder] — one method returning one of
-// the [Kind] strings, no imports involved:
+// A domain package cannot do that, because it imports only the standard library.
+// It declares its kind structurally instead, by implementing [Kinder] — one
+// method returning one of the [Kind] strings, which is a signature rather than a
+// dependency:
 //
 //	// internal/domain/errors.go
 //	package domain
@@ -43,28 +42,20 @@
 //	func (e *Error) Error() string     { return e.msg }
 //	func (e *Error) ErrorKind() string { return e.kind }
 //
-//	var (
-//		ErrNotFound          = &Error{kind: "not_found", msg: "order not found"}
-//		ErrInvalidTransition = &Error{kind: "conflict", msg: "invalid status transition"}
-//		ErrOutOfStock        = &Error{kind: "conflict", msg: "out of stock"}
-//	)
+//	var ErrOutOfStock = &Error{kind: "conflict", msg: "out of stock"}
 //
-// This is the same trick the standard library plays with Unwrap and Stringer:
-// the contract is a method signature, so the dependency points at nothing. A
-// service's own vocabulary — out of stock, already refunded, cart expired —
-// stays in that service, and this package stays free of business concepts while
-// still mapping them correctly.
+// A service's own vocabulary stays in that service, and this package maps it
+// without learning what a SKU is.
 //
-// An error that declares no kind at all maps to Internal. That is deliberate:
-// an unrecognised failure is a bug until someone classifies it, and defaulting
-// the other way would hand clients a 400 for a broken database.
+// An error that declares no kind at all maps to Internal: an unrecognised
+// failure is a bug until someone classifies it, and defaulting the other way
+// would hand clients a 400 for a broken database.
 //
 // # Reasons and metadata
 //
-// A status code says how the caller should react; it does not say what
-// happened. A client that needs to tell "sold out" apart from "order already
-// paid" — both FailedPrecondition, both 409 — reads the machine-stable reason
-// and its metadata, which travel as an ErrorInfo detail on the status:
+// A status code says how the caller should react, not what happened. A client
+// that needs to tell "sold out" apart from "order already paid" — both 409 —
+// reads the reason code and its metadata, which travel as an ErrorInfo detail:
 //
 //	return nil, errorx.New(errorx.KindConflict, "sku %s is sold out", sku).
 //		WithReason("OUT_OF_STOCK").
@@ -103,26 +94,18 @@ const (
 	// changes.
 	KindConflict Kind = "conflict"
 
-	// KindUnauthenticated is a caller this process cannot identify: no token,
-	// an expired one, a signature that does not check out. It says nothing
-	// about what they would have been allowed to do.
+	// KindUnauthenticated is a caller this process cannot identify: no token, an
+	// expired one, a signature that does not check out.
 	//
-	// It exists separately from [KindUnauthorized] because the two ask the
-	// client for opposite things. 401 means the credential is the problem and
-	// the refresh flow should run; 403 means the credential was fine and the
-	// answer is still no. A frontend handed 403 for an expired token logs the
-	// user out instead of quietly renewing.
-	//
-	// Only a process that verifies tokens itself raises this — Kong at the
-	// edge, and the Composition API re-verifying behind it. A service reached
-	// over east-west gRPC never does: by then identity was settled two hops
-	// ago, and the only question left is authorization.
+	// It never stands in for [KindUnauthorized]: 401 tells a client to run its
+	// refresh flow, and a frontend handed 403 for an expired token logs the user
+	// out instead. Only a process that verifies tokens itself raises this, which
+	// is Kong and the Composition API — never a service reached east-west.
 	KindUnauthenticated Kind = "unauthenticated"
 
-	// KindUnauthorized is an identified caller reaching for something that is
-	// not theirs. Who they are is already settled; whether this particular
-	// aggregate is theirs is a business rule, and it belongs to the service
-	// that owns the data rather than to the gateway.
+	// KindUnauthorized is an identified caller reaching for something that is not
+	// theirs. Only the service that owns the data can raise it, because only it
+	// knows whose the aggregate is.
 	KindUnauthorized Kind = "unauthorized"
 
 	// KindInternal is everything else — the failures no client can act on.
@@ -130,15 +113,13 @@ const (
 	KindInternal Kind = "internal"
 )
 
-// Kinder is implemented by an error that names its own kind.
+// Kinder is implemented by an error that names its own kind, which is how a
+// domain package classifies its errors without importing anything: the method
+// returns one of the [Kind] values as a plain string, and a value outside that
+// set counts as unclassified.
 //
-// It exists so a domain package can classify its errors without importing
-// anything: the method returns one of the [Kind] values as a plain string. A
-// value outside that set is treated as unclassified, and therefore Internal.
-//
-// Domain code never references this interface by name — it only has to have the
-// method. The declaration is here so there is one place that documents the
-// contract.
+// Domain code never names this interface — it only has to have the method. The
+// declaration is here so the contract is written down somewhere.
 type Kinder interface {
 	error
 	ErrorKind() string
@@ -273,14 +254,13 @@ func KindOf(err error) Kind {
 	return KindInternal
 }
 
-// declaredKind returns the kind err declares and whether it declared one at
-// all. The distinction matters to ToGRPC, which has somewhere better to look —
-// an already-formed gRPC status, a cancelled context — before falling back to
-// Internal.
+// declaredKind returns the kind err declares and whether it declared one at all.
+// The distinction matters to ToGRPC, which has somewhere better to look before
+// falling back to Internal.
 //
-// One errors.As walk finds both an *Error and a domain error, because *Error
-// implements Kinder too, so the outermost declaration in the chain wins rather
-// than whichever type happened to be searched for first.
+// One walk finds both an *Error and a domain error, because *Error implements
+// Kinder too, so the outermost declaration in the chain wins rather than
+// whichever type happened to be searched for first.
 func declaredKind(err error) (Kind, bool) {
 	kinder, ok := errors.AsType[Kinder](err)
 	if !ok {
@@ -295,19 +275,16 @@ func declaredKind(err error) (Kind, bool) {
 	return kind, true
 }
 
-// Reason returns the machine-stable reason code for err, resolved in the same
-// order the rest of the package resolves everything: what the error says about
-// itself first, what the wire said second.
+// Reason returns the machine-stable reason code for err, and "" for nil. It
+// resolves what the error says about itself before what the wire said:
 //
 //  1. The reason set with [Error.WithReason].
-//  2. The default for a declared kind. This outranks anything found on the wire
-//     because an error that was reclassified on the way out must not keep
-//     announcing the reason of the failure it was built from — a downstream
-//     NotFound rewrapped as invalid input answers INVALID_INPUT, not NOT_FOUND.
+//  2. The default for a declared kind. This outranks the wire so that an error
+//     reclassified on the way out stops announcing the reason of the failure it
+//     was built from — a downstream NotFound rewrapped as invalid input answers
+//     INVALID_INPUT.
 //  3. The reason on an incoming status, which is how a caller reads back what a
-//     service attached on the other side of the wire.
-//
-// It returns "" for a nil error.
+//     service attached on the other side.
 func Reason(err error) string {
 	if err == nil {
 		return ""
@@ -329,12 +306,12 @@ func Reason(err error) string {
 }
 
 // Metadata returns the facts attached to err — set with [Error.WithMetadata] or
-// carried on the ErrorInfo detail of an incoming gRPC status — and nil when
-// there are none.
+// carried on the ErrorInfo detail of an incoming status — and nil when there are
+// none.
 //
-// It resolves in the same order as [Reason], so metadata and reason always
-// describe the same failure rather than the reason describing the outer error
-// and the metadata describing the one it wrapped.
+// It resolves in the same order as [Reason], so the two always describe the same
+// failure rather than the reason describing the outer error and the metadata the
+// one it wrapped.
 func Metadata(err error) map[string]string {
 	if err == nil {
 		return nil

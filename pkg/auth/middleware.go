@@ -18,23 +18,18 @@ const bearerScheme = "bearer "
 
 // Authenticate verifies the bearer token and puts the caller on the context.
 //
-// It rejects a request that arrives without a valid token, so it is mounted on
-// the route groups that require a user and left off the ones that cannot have
-// one yet — login, register, refresh, health. chi's per-group middleware is how
-// that split is expressed; there is deliberately no "optional" mode, because a
-// middleware that sometimes authenticates puts the decision about whether this
-// route needs a user inside the handler, one handler at a time.
+// It rejects a request without a valid token, so it is mounted on the route
+// groups that require a user and left off the ones that cannot have one yet —
+// login, register, refresh, health. There is deliberately no "optional" mode: a
+// middleware that sometimes authenticates moves the decision into the handlers,
+// one at a time.
 //
-// What it does not do is trust anything the request already claims about who is
-// calling. Kong forwards X-User-ID and X-User-Roles after verifying the token at
-// the edge, and this middleware ignores both: the identity it installs is
-// derived from the signature it checked itself. That is the whole content of the
-// zero-trust rule — Kong being compromised, or a client simply setting those
-// headers on a route Kong did not strip them from, changes nothing here.
+// It ignores X-User-ID and X-User-Roles entirely. The identity it installs comes
+// from the signature it verified itself, which is the whole content of the
+// zero-trust rule — a client setting those headers by hand is a non-event.
 //
-// The identity goes on the context rather than into headers because that is
-// where pkg/grpcx/client looks for it. From there it reaches every service the
-// request fans out to, and a client-supplied header never enters the picture.
+// The identity goes on the context because that is where pkg/grpcx/client looks
+// for it, and from there it reaches every service the request fans out to.
 func Authenticate(v *Verifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

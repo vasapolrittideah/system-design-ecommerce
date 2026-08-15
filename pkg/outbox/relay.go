@@ -35,11 +35,9 @@ type Message struct {
 
 // Publisher hands messages to the broker.
 //
-// It is an interface so this package never imports a Kafka client: the relay's
-// job is draining a table in order and exactly the transactional dance around
-// it, none of which has anything to do with the transport. Publish must return
-// an error unless every message reached the broker — the relay marks the whole
-// batch published on nil.
+// It is an interface so this package never imports a Kafka client. Publish must
+// return an error unless every message reached the broker — the relay marks the
+// whole batch published on nil.
 type Publisher interface {
 	Publish(ctx context.Context, messages []Message) error
 }
@@ -63,10 +61,9 @@ type RelayConfig struct {
 	MaxBackoff time.Duration `env:"MAX_BACKOFF" envDefault:"30s"`
 
 	// StatsInterval is how often the backlog is measured. Counting unpublished
-	// rows walks the partial index, which is cheap while the relay is keeping
-	// up and progressively less so when it is not — exactly when the loop can
-	// least afford to do it every cycle. Measuring on its own cadence, near the
-	// scrape interval, keeps the cost flat.
+	// rows walks the partial index, which costs more the further behind the
+	// relay is — exactly when the loop can least afford it every cycle — so the
+	// measurement runs on its own cadence, near the scrape interval.
 	StatsInterval time.Duration `env:"STATS_INTERVAL" envDefault:"15s"`
 }
 
@@ -90,11 +87,10 @@ func WithRegisterer(reg prometheus.Registerer) RelayOption {
 // Relay publishes outbox rows and marks them published.
 //
 // One instance per service is the intended deployment. SKIP LOCKED is not there
-// to scale the relay out: it is there so the old and new pods overlapping
-// during a rolling restart cannot publish the same row twice. Running several
-// permanently would let one instance publish an aggregate's later event while
-// another is still holding the earlier one, which is precisely the ordering the
-// message key exists to preserve.
+// to scale the relay out but so that two pods overlapping during a rolling
+// restart cannot publish the same row twice; running several permanently would
+// let one publish an aggregate's later event while another still holds the
+// earlier one, losing the ordering the message key exists to preserve.
 type Relay struct {
 	pool      *pgxpool.Pool
 	publisher Publisher
@@ -144,10 +140,9 @@ func NewRelay(pool *pgxpool.Pool, publisher Publisher, cfg RelayConfig, opts ...
 // cycle that fails is retried with a doubling wait: the row is still there and
 // still unpublished, so the only thing a failure costs is time.
 //
-// Errors are logged rather than returned because there is nobody to return them
-// to — the relay is the thing that makes a committed event eventually reach the
-// broker, and giving up would silently strand every event behind it. What
-// notices a relay that is failing forever is the alert on outbox backlog.
+// Errors are logged rather than returned because giving up would silently strand
+// every event behind the one that failed. What notices a relay failing forever
+// is the alert on outbox backlog.
 func (r *Relay) Run(ctx context.Context) error {
 	log := logger.From(ctx)
 	backoff := r.cfg.PollInterval

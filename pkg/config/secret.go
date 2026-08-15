@@ -4,18 +4,14 @@ package config
 // attribute, or an error message: a signing key, a database password, a
 // payment provider's API key.
 //
-// It parses exactly like a string — its kind is string, so Load fills it from
-// the environment with no special handling — and it redacts itself on every
-// path a value normally escapes by: fmt's verbs, encoding/json, and zap's
-// reflection encoder, which is what zap.Any falls back to for a struct.
+// It parses exactly like a string — its kind is string, so Load fills it with no
+// special handling — and redacts itself on every path a value escapes by: fmt's
+// verbs, encoding/json, and the reflection encoder zap.Any falls back to.
 //
-// It exists because nothing else stops that leak. A private key held in a
-// plain string field is one zap.Any("cfg", cfg) — typed during a debugging
-// session, deleted the next day — away from being written to stdout and
-// shipped to a log backend that keeps it for a year. Nobody reviews that line
-// closely, no error is raised, and the only record that it happened is the
-// backend nobody greps for their own private key. The field being a type that
-// cannot print itself is the only defence that survives being forgotten.
+// It exists because the leak is never a reviewed line: it is one
+// zap.Any("cfg", cfg) added while chasing a startup failure, raising no error
+// and leaving a log backend holding a signing key for a year. A type that cannot
+// print itself is the only defence that survives being forgotten.
 //
 // Reading the value is deliberate and reads that way at the call site:
 //
@@ -41,20 +37,17 @@ func (s Secret) String() string {
 	return redacted
 }
 
-// GoString covers %#v, which ignores String entirely and would otherwise print
-// the raw value. That verb is worth its own method because it is precisely
-// what gets typed when someone wants to see a config struct in full.
+// GoString covers %#v, which ignores String entirely — and is precisely what
+// gets typed when someone wants to see a config struct in full.
 func (s Secret) GoString() string {
 	return redacted
 }
 
-// MarshalText covers encoding/json, which prefers a TextMarshaler when there is
-// no MarshalJSON, and with it zap.Any and zap.Reflect: both encode an arbitrary
-// value through the JSON encoder.
+// MarshalText covers encoding/json, and with it zap.Any and zap.Reflect.
 //
-// There is deliberately no UnmarshalText. Round-tripping a config struct
-// through JSON would otherwise restore "[REDACTED]" as the value and fail at
-// the point of use rather than at the point of the mistake.
+// There is deliberately no UnmarshalText: round-tripping a config struct through
+// JSON would restore "[REDACTED]" as the value and fail at the point of use
+// rather than at the point of the mistake.
 func (s Secret) MarshalText() ([]byte, error) {
 	return []byte(redacted), nil
 }

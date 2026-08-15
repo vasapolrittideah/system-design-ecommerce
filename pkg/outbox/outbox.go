@@ -2,11 +2,10 @@
 // database, and in the same transaction, as the change that produced them.
 //
 // Committing an aggregate and publishing to Kafka are two systems and cannot be
-// made atomic. Whichever order they are attempted in, a process that dies in
-// between leaves either an order nobody was told about or a payment for an
-// order that was rolled back. Writing the event as a row removes the second
-// system from the critical path: the commit either takes the aggregate and its
-// events or neither, and a relay drains the table afterwards.
+// made atomic: whichever order they are attempted in, a process that dies in
+// between leaves either an order nobody was told about or a payment for an order
+// that was rolled back. Writing the event as a row takes the second system off
+// the critical path, and a relay drains the table afterwards.
 //
 // A repository writes the events its aggregate accumulated:
 //
@@ -19,10 +18,9 @@
 // Both writes go through the same txmanager.DBTX, which is the whole point: run
 // them on separate connections and the guarantee is gone.
 //
-// The table lives in the service's own migrations; schema.sql in this package
-// is the definition to copy. What this package deliberately does not know is
-// what any of the events mean — it never unmarshals a payload, and the day it
-// needs to, business logic has leaked into infrastructure.
+// The table lives in the service's own migrations; schema.sql here is the
+// definition to copy. This package never unmarshals a payload — the day it needs
+// to, business logic has leaked into infrastructure.
 package outbox
 
 import (
@@ -98,12 +96,10 @@ const columns = 6
 // Write appends records to the outbox through db.
 //
 // Callers pass the txmanager.DBTX they are already writing the aggregate with,
-// so the events land in that transaction. Writing no records is not an error —
-// an aggregate that changed nothing worth announcing is ordinary.
+// so the events land in that transaction. Writing no records is not an error.
 //
-// All records go in one statement rather than one round trip each: an aggregate
-// commonly raises several events, and the transaction holds its locks for the
-// whole exchange.
+// All records go in one statement rather than a round trip each, because the
+// transaction holds its locks for the whole exchange.
 func Write(ctx context.Context, db txmanager.DBTX, records ...Record) error {
 	if len(records) == 0 {
 		return nil

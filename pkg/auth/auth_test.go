@@ -178,8 +178,7 @@ func TestVerifyRejections(t *testing.T) {
 				t.Errorf("Reason() = %q, want %q", got, tt.wantReason)
 			}
 			// Unauthenticated, not Unauthorized: the caller has not been
-			// identified, which is a 401 and a prompt to re-authenticate,
-			// rather than an identified caller being refused.
+			// identified, which is a 401 and a prompt to re-authenticate.
 			if got := errorx.KindOf(err); got != errorx.KindUnauthenticated {
 				t.Errorf("KindOf() = %q, want %q", got, errorx.KindUnauthenticated)
 			}

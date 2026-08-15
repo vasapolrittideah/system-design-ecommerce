@@ -19,10 +19,9 @@ import (
 // adminServer serves the endpoints the platform talks to, on a port of their
 // own: /metrics for Prometheus, /healthz and /readyz for the kubelet.
 //
-// It is deliberately not on the service's own port. Scraping and probing should
-// not queue behind traffic, a stuck request path should not take the liveness
-// probe down with it, and this port exposes internals — it must never be routed
-// to from outside the cluster.
+// It is deliberately not on the service's own port: scraping and probing should
+// not queue behind traffic, and this port exposes internals, so it must never be
+// routed to from outside the cluster.
 type adminServer struct {
 	http    *http.Server
 	lis     net.Listener
@@ -95,11 +94,10 @@ func (s *adminServer) shutdown(ctx context.Context) error {
 
 // handleLive answers whether the process is still running at all.
 //
-// It checks nothing. Liveness failure means the kubelet restarts the pod, and
-// restarting because a database is unreachable turns one outage into a
-// crash-loop across every replica that depends on it. Dependencies belong in
-// readiness, which takes the pod out of rotation and puts it back when they
-// recover.
+// It checks nothing. A liveness failure restarts the pod, and restarting because
+// a database is unreachable turns one outage into a crash-loop across every
+// replica. Dependencies belong in readiness, which takes the pod out of rotation
+// and puts it back when they recover.
 func (s *adminServer) handleLive(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

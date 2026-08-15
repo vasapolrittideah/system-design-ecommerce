@@ -144,8 +144,7 @@ func TestMetricsEndpointServesRuntimeMetrics(t *testing.T) {
 	}
 }
 
-// Liveness must not check dependencies. A failing liveness probe restarts the
-// pod, and restarting because a database is unreachable turns one outage into a
+// Liveness must not check dependencies, or an unreachable database becomes a
 // crash-loop across every replica.
 func TestLivenessIgnoresFailingDependencies(t *testing.T) {
 	p := start(t, nil)

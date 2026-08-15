@@ -14,22 +14,17 @@ import (
 // Authenticator establishes who is calling and returns a context carrying them.
 //
 // Returning an error rejects the call, so the error must already be a gRPC
-// status — Unauthenticated for "we do not know who you are", PermissionDenied
-// for "we do, and no". Deciding whether this caller may touch this particular
-// order is not this function's job; that rule depends on the aggregate and
-// lives in the service that owns it.
+// status. It establishes who is calling and nothing more — whether they may
+// touch a particular aggregate is a rule that lives with that aggregate.
 type Authenticator func(ctx context.Context, fullMethod string) (context.Context, error)
 
 // MetadataIdentity is the default authenticator: it reads the identity Kong
 // verified at the edge and the Composition API forwarded on.
 //
-// It never rejects a call. Inside the cluster there is no anonymous caller to
-// defend against at this layer — every path in reaches through Kong, which
-// verifies the JWT, and through the BFF, which verifies it again rather than
-// trusting the headers Kong set. A service also serves plenty of legitimately
-// user-less traffic: outbox relays, saga timeout workers, and the sync gRPC
-// calls one service makes to another on its own behalf. Rejecting those here
-// would break the system while protecting nothing.
+// It never rejects a call, because every path into the cluster has already had
+// its token verified twice, and because outbox relays, saga timeout workers, and
+// service-to-service reads legitimately arrive with no user behind them.
+// Rejecting those here would break the system while protecting nothing.
 func MetadataIdentity(ctx context.Context, _ string) (context.Context, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {

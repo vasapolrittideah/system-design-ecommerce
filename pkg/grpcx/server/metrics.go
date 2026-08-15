@@ -28,10 +28,9 @@ type metrics struct {
 
 // newMetrics builds and registers the collectors.
 //
-// The duration histogram deliberately carries no code label. Rate and errors
-// come off the counter, which is cheap; multiplying a thirteen-bucket histogram
-// by every status code a service can return is how a metrics backend ends up
-// holding more series for one endpoint than the endpoint has users.
+// The duration histogram deliberately carries no code label: rate and errors
+// come off the counter, and multiplying thirteen buckets by every status code a
+// service can return is how a metrics backend drowns.
 func newMetrics(reg prometheus.Registerer) (*metrics, error) {
 	m := &metrics{
 		handled: prometheus.NewCounterVec(prometheus.CounterOpts{

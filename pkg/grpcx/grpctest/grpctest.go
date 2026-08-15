@@ -7,11 +7,10 @@
 // hand-called interceptor can reach. This package exists so those tests can
 // make that call without waiting for a service to define the first .proto.
 //
-// Method names are fixed rather than free-form because the client's retry
-// policy reads them: a Get* method is retried and a Do* method is not, and
-// tests need both to exist. That is also why the service is only worth
-// importing to exercise grpcx itself: a service testing its own handlers has
-// generated stubs and should use those.
+// Method names are fixed rather than free-form because the client's retry policy
+// reads them: a Get* method is retried and a Do* method is not, and tests need
+// both. Nothing outside grpcx should import this — a service testing its own
+// handlers has generated stubs.
 package grpctest
 
 import (

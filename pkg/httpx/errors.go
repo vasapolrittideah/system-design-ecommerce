@@ -21,10 +21,9 @@ type ErrorResponse struct {
 // ErrorBody is what the frontend actually reads.
 type ErrorBody struct {
 	// Code is the machine-stable reason a client branches on — OUT_OF_STOCK,
-	// NOT_FOUND, INVALID_INPUT. It is deliberately finer-grained than the HTTP
-	// status: 409 alone cannot say whether an order was already paid or a SKU
-	// was sold out, and a client that has to tell those apart would otherwise
-	// be left matching on prose.
+	// NOT_FOUND, INVALID_INPUT. It is finer-grained than the HTTP status on
+	// purpose: 409 alone cannot say whether an order was already paid or a SKU
+	// was sold out.
 	Code string `json:"code"`
 
 	// Message is a human-readable explanation, in English. It is a developer
@@ -81,10 +80,10 @@ var errEncodeResponse = errorx.New(errorx.KindInternal, "encode response body")
 // WriteError answers err in the shape every client of this API expects.
 //
 // The status comes from [Statuser] when the error names one and from
-// [errorx.HTTPStatus] otherwise, so an error that crossed the wire as a gRPC
-// status and one raised locally land on the same code. The reason and metadata
-// come from errorx either way, which is what lets a service attach
-// OUT_OF_STOCK and a SKU on one side of the wire and have them arrive here.
+// [errorx.HTTPStatus] otherwise, so an error that crossed the wire and one
+// raised locally land on the same code. The reason and metadata come from errorx
+// either way, which is what lets a service attach OUT_OF_STOCK and a SKU on the
+// other side of the wire and have them arrive here.
 //
 // A 5xx body carries a fixed message. Everything below 500 is a fact the caller
 // asked for and gets the real one.
@@ -132,10 +131,9 @@ func messageOf(err error, httpStatus int) string {
 // detail on a status returned by a service, which is what protovalidate
 // produces when a proto's own constraints reject a request.
 //
-// The second kind arrives already worded in English and cannot be translated —
-// it was written against a proto field this API does not expose. It is passed
-// through rather than dropped, because a field the frontend can name is worth
-// more than a bare 400.
+// The second kind cannot be translated — it was worded against a proto field
+// this API does not expose — and is passed through rather than dropped, because
+// a field the frontend can name is worth more than a bare 400.
 func fieldsOf(err error) []FieldError {
 	if invalid, ok := errors.AsType[*ValidationError](err); ok {
 		return invalid.Fields

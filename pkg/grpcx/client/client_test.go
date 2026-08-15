@@ -110,8 +110,7 @@ func TestRetriesIdempotentMethod(t *testing.T) {
 }
 
 // A method that changes state is not retried, whatever the failure looked like.
-// Retrying PlaceOrder after an ambiguous failure is how a customer ends up with
-// two orders; that case belongs to an idempotency key, not to the transport.
+// An ambiguous failure belongs to an idempotency key, not to the transport.
 func TestDoesNotRetryStateChangingMethod(t *testing.T) {
 	var calls atomic.Int32
 	target := serve(t, map[string]grpctest.Handler{
@@ -342,8 +341,7 @@ func TestBreakerIgnoresBusinessErrors(t *testing.T) {
 }
 
 // A target that does not resolve must not stop the process from starting: during
-// a rolling deploy every dependency is briefly unreachable, and a service that
-// refuses to boot then turns one failure into two.
+// a rolling deploy every dependency is briefly unreachable.
 func TestDialDoesNotBlockOnUnreachableTarget(t *testing.T) {
 	conn, err := client.Dial(testConfig(t, "dns:///nonexistent.invalid:50051", nil))
 	if err != nil {

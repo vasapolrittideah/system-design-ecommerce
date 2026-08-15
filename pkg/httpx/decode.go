@@ -26,8 +26,7 @@ const unknownFieldPrefix = `json: unknown field `
 
 // Failures that mean the client sent something this API cannot read. They carry
 // a reason code and no translated prose on purpose: each one is a bug in the
-// caller, and a message rendered to a person would only suggest they could fix
-// it by typing something different.
+// caller, not something a person can fix by typing something different.
 var (
 	errUnsupportedMediaType = withStatus(http.StatusUnsupportedMediaType,
 		errorx.New(errorx.KindInvalidInput, "content type must be %s", contentTypeJSON).

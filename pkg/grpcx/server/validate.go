@@ -14,11 +14,9 @@ import (
 
 // validateUnary enforces the rules declared on the request message itself.
 //
-// Validation is a property of the contract, so it is written in the .proto with
-// protovalidate options and enforced here for every method at once. Hand-written
-// checks in handlers are the thing this replaces: they drift from the proto,
-// they differ between two handlers that accept the same message, and they push
-// the contract out of the file that is supposed to be the source of truth.
+// Validation is a property of the contract, so it is declared in the .proto with
+// protovalidate options and enforced here for every method at once. That is what
+// makes a hand-written check in a handler a bug wherever it appears.
 func validateUnary(v protovalidate.Validator) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if err := validate(v, req); err != nil {

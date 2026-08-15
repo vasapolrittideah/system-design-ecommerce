@@ -20,15 +20,14 @@ import (
 // loggingUnary puts the request logger and the correlation ID into the context,
 // then writes one access line per call.
 //
-// The correlation ID is adopted from the caller when there is one and minted
-// when there is not, so the ID that Kong stamped on an inbound HTTP request
-// survives every gRPC hop and every Kafka event it eventually causes. It also
-// goes back out as a response header, which is what lets a caller quote it in a
-// bug report.
+// The correlation ID is adopted from the caller or minted here, so the ID Kong
+// stamped on an inbound request survives every gRPC hop and every Kafka event it
+// causes. It goes back out as a response header, which is what lets a caller
+// quote it in a bug report.
 //
-// The access line does not carry user_id: the auth interceptor runs inside this
-// one, so the identity it resolves is not in the context this line is written
-// from. Handler logs have it, and trace_id joins the two.
+// The access line carries no user_id: auth runs inside this interceptor, so the
+// identity it resolves is not in the context this line is written from. Handler
+// logs have it, and trace_id joins the two.
 func loggingUnary(base *zap.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		ctx = requestContext(ctx, base)
@@ -102,10 +101,9 @@ func logCall(ctx context.Context, fullMethod, callType string, err error, elapse
 
 // levelForCode keeps expected outcomes out of the error stream.
 //
-// A NotFound or a FailedPrecondition is the system working: someone asked for
-// an order that does not exist, or tried to pay one twice. Logging those at
+// A NotFound or a FailedPrecondition is the system working, and logging those at
 // error makes the error rate a measure of user behaviour rather than of service
-// health, and an alert on it fires forever. Only codes that mean "this service
+// health — an alert on it never stops firing. Only codes that mean "this service
 // is broken" get error level.
 func levelForCode(code codes.Code) zapcore.Level {
 	switch code {

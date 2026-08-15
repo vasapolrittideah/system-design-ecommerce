@@ -53,11 +53,9 @@ func newBreaker(cfg Config, log *zap.Logger) *gobreaker.CircuitBreaker[struct{}]
 
 // unhealthy reports whether err says the target itself is in trouble.
 //
-// This is the distinction the breaker lives or dies on. NotFound,
-// InvalidArgument, and FailedPrecondition are the service working — an order
-// that does not exist, a malformed request, a sold-out SKU. Counting those as
-// failures means a burst of customers ordering an out-of-stock item trips the
-// breaker and takes down the checkout path for everyone.
+// This is the distinction the breaker lives or dies on. NotFound and
+// FailedPrecondition are the service working correctly, and counting them would
+// let a run of sold-out SKUs trip the breaker and take checkout down.
 func unhealthy(err error) bool {
 	if err == nil {
 		return false

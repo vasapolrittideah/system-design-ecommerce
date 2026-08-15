@@ -1,18 +1,15 @@
 // Package server builds the gRPC server every service in this repo listens on.
 //
-// The point is that no service assembles its own interceptor chain. Order
-// matters — recovery has to be able to catch a panic thrown by the logging
-// interceptor, and validation has to run before a handler ever sees the request
-// — and an order that drifts per service is a class of bug nobody finds until
-// production. Here it is decided once:
+// No service assembles its own interceptor chain, because an order that drifts
+// per service is a class of bug nobody finds until production. It is decided
+// once, here:
 //
 //	recovery → otel → logging → metrics → auth → validate → handler
 //
-// otel is installed as a stats handler rather than an interceptor, because the
-// interceptor form is deprecated upstream. That places it outside the chain
-// instead of second in it, which is the better position anyway: the span exists
-// before recovery runs, so a panic is recorded on the trace rather than beside
-// it, and every log line the request emits already carries trace_id.
+// otel is installed as a stats handler rather than an interceptor, its
+// interceptor form being deprecated upstream. That wraps the chain instead of
+// sitting inside it, which is the better position anyway: the span exists before
+// recovery runs, so a panic lands on the trace rather than beside it.
 //
 // Typical wiring in cmd/server/main.go:
 //

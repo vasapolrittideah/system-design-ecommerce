@@ -10,10 +10,9 @@ import (
 // statusForCode is the second half of the journey: the Composition API holds
 // gRPC errors from the services it fanned out to and has to answer in HTTP.
 //
-// It is keyed on the code rather than on [Kind] because by then the kind is
-// gone — what crossed the wire was a status. Codes a service never produces
-// are still listed, because a call can fail in the transport below the handler
-// and the BFF has to answer something sane for those too.
+// Keyed on the code rather than on [Kind] because by then the kind is gone —
+// what crossed the wire was a status. Codes a service never produces are listed
+// too, because a call can fail in the transport below the handler.
 var statusForCode = map[codes.Code]int{
 	codes.OK:                 http.StatusOK,
 	codes.NotFound:           http.StatusNotFound,
@@ -37,10 +36,9 @@ var statusForCode = map[codes.Code]int{
 
 // HTTPStatus returns the HTTP status code err should be answered with.
 //
-// It accepts both sides of the boundary: an error still carrying a [Kind],
-// which it maps through the same table [ToGRPC] uses, and a gRPC status
-// returned by a downstream service, which it maps from the code. Anything it
-// cannot place is a 500, for the same reason an unclassified error is Internal.
+// It accepts both sides of the boundary: an error still carrying a [Kind], and a
+// gRPC status from a downstream service. Anything it cannot place is a 500, for
+// the same reason an unclassified error is Internal.
 func HTTPStatus(err error) int {
 	if err == nil {
 		return http.StatusOK

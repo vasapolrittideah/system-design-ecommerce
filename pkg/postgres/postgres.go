@@ -57,11 +57,10 @@ type Config struct {
 	// development sets it to disable explicitly.
 	SSLMode string `env:"SSLMODE" envDefault:"require"`
 
-	// MaxConns is the pool ceiling per process, not per service. The number
-	// that reaches the server is replicas × MaxConns, summed over every service
-	// sharing the instance, and it has to stay under max_connections with room
-	// for migrations and operators. A low ceiling queues requests; a high one
-	// locks everyone out of the database at the worst possible moment.
+	// MaxConns is the pool ceiling per process, not per service: what reaches
+	// the server is replicas × MaxConns, and it has to stay under
+	// max_connections with room for migrations and operators. A low ceiling
+	// queues requests; a high one locks everyone out at the worst moment.
 	MaxConns int32 `env:"MAX_CONNS" envDefault:"10"`
 
 	// MinConns is how many connections stay open while idle, so a burst after a
@@ -165,9 +164,8 @@ func poolConfig(cfg Config) (*pgxpool.Config, error) {
 // the string at the first "@" or "/".
 //
 // The result carries the password in clear, and pgxpool keeps it reachable
-// afterwards through pool.Config().ConnString(). Nothing here logs either, but
-// that is a property of this file rather than something the type system
-// enforces once the string has left it.
+// through pool.Config().ConnString() — the redaction config.Secret gives is gone
+// once the string has left this function.
 func dsn(cfg Config) string {
 	u := url.URL{
 		Scheme:   "postgres",

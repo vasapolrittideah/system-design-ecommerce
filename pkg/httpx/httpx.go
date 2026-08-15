@@ -35,12 +35,10 @@
 //
 // # Two kinds of bad request
 //
-// The split runs through the whole package. A body that will not decode —
-// malformed JSON, a field of the wrong type, an unknown field — is a bug in the
-// client, so it comes back as a reason code with no translated prose; nobody
-// should be showing it to a person. A body that decodes but breaks a rule is a
-// person's mistake, so every failing field comes back with a message translated
-// into the language they asked for. See [Validator].
+// A body that will not decode is a bug in the client, so it comes back as a
+// reason code with no translated prose. A body that decodes but breaks a rule is
+// a person's mistake, so every failing field comes back with a message in the
+// language they asked for. See [Validator].
 package httpx
 
 import (
@@ -59,11 +57,9 @@ const contentTypeJSON = "application/json"
 
 // WriteJSON writes v as the response body under status.
 //
-// The body is encoded into memory before anything is written, because the
-// status line goes out with the first byte: encoding straight into the
-// ResponseWriter and failing halfway would send a 200 followed by a truncated
-// object that the client can neither parse nor tell apart from a dropped
-// connection.
+// The body is encoded into memory before anything is written, because the status
+// line goes out with the first byte: encoding straight into the ResponseWriter
+// and failing halfway would send a 200 followed by a truncated object.
 //
 // A nil v writes the status and no body.
 func WriteJSON(w http.ResponseWriter, r *http.Request, status int, v any) {

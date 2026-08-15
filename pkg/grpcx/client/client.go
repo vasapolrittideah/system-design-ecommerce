@@ -1,11 +1,9 @@
 // Package client dials the gRPC connections services use to talk to each other.
 //
-// East-west calls are the ones that turn a single slow dependency into an
-// outage, so the defensive parts are not left to the caller. A connection built
-// here already carries a deadline it cannot exceed, retries that only fire where
-// they are safe, a circuit breaker that stops hammering a service that is
-// already down, and round-robin balancing across every replica rather than
-// whichever one the first connection landed on.
+// East-west calls are what turn a single slow dependency into an outage, so the
+// defensive parts are not left to the caller. A connection built here carries a
+// deadline it cannot exceed, retries that fire only where they are safe, a
+// circuit breaker per target, and round-robin balancing across every replica.
 //
 // Typical wiring in bootstrap:
 //

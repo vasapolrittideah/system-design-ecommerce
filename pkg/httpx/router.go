@@ -17,16 +17,14 @@ import (
 //  3. [Validator.Localize] — so validation failures come back in the language
 //     the caller asked for.
 //
-// This is the reverse of the order pkg/grpcx/server uses, where recovery is
-// outermost and the correlation ID is minted inside it. There the ID is minted
-// by the logging interceptor, which cannot run before recovery without losing
-// panics thrown by the interceptors above it; here the ID is a header the
-// caller already sent, so reading it first costs nothing and buys a correlation
-// ID on the panic line.
+// This is the reverse of pkg/grpcx/server's order, where recovery is outermost.
+// There the ID is minted by the logging interceptor, which cannot run before
+// recovery without losing panics thrown above it; here the ID is a header the
+// caller already sent, so reading it first buys a correlation ID on the panic
+// line for nothing.
 //
-// Everything else is left to the caller. Routes, timeouts, and CORS belong to
-// the service mounting this, and TLS, rate limiting, and body size limits are
-// already handled at the edge by Kong.
+// Everything else is left to the caller: routes, timeouts, and CORS belong to
+// the service mounting this, and Kong already handles the edge concerns.
 func NewRouter(v *Validator) *chi.Mux {
 	r := chi.NewRouter()
 

@@ -28,9 +28,8 @@ const DefaultLanguage = "en"
 // matcher falls back to.
 //
 // The set is fixed at compile time rather than configured, because adding a
-// language means importing its locale and its translation catalogue — a code
-// change either way. A config key that could only ever select a subset of what
-// was already linked in would suggest a freedom that does not exist.
+// language means importing its locale and catalogue — a code change either way,
+// and a config key would suggest a freedom that does not exist.
 var supported = []struct {
 	name       string
 	tag        language.Tag
@@ -57,8 +56,8 @@ type Validator struct {
 // translation catalogue fails to register.
 //
 // It panics rather than returning an error because the only way that happens is
-// a mismatch between linked-in packages — a startup fault with no runtime
-// remedy, in the same class as a bad regexp constant.
+// a mismatch between linked-in packages, which is a startup fault with no
+// runtime remedy.
 func MustNewValidator() *Validator {
 	translators := make([]locales.Translator, 0, len(supported))
 	tags := make([]language.Tag, 0, len(supported))
@@ -159,13 +158,11 @@ func (v *Validator) translator(ctx context.Context) ut.Translator {
 }
 
 // jsonFieldName makes the validator report a field by the name the client sent
-// rather than the Go name it was decoded into, so a failure on unitPrice comes
-// back as unitPrice and the frontend can attach it to the input the user typed
-// in without a translation table of its own.
+// rather than the Go name it was decoded into, so the frontend can attach a
+// failure to the input the user typed in.
 //
-// An empty result tells the validator to keep the Go field name, which is what
-// a field with no json tag, or one excluded from JSON entirely, should fall
-// back to.
+// An empty result tells the validator to keep the Go field name, which is the
+// right fallback for a field with no json tag.
 func jsonFieldName(field reflect.StructField) string {
 	name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 	if name == "-" {
