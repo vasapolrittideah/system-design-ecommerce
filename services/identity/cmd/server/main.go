@@ -11,6 +11,7 @@ import (
 
 	"go.uber.org/zap"
 
+	identityv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/identity/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/config"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/grpcx/server"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/logger"
@@ -58,10 +59,7 @@ func run() error {
 		server.WithRegisterer(obs.Registry()),
 	)
 
-	// No IdentityServiceServer yet. This binary exists first so that a failure
-	// during the next slice is a failure in a handler, and not in the wiring
-	// underneath it — the gRPC health service, /healthz, /readyz, and /metrics
-	// are all already answering.
+	identityv1.RegisterIdentityServiceServer(srv.Registrar(), bootstrap.NewIdentityHandler(pool))
 
 	serveErr := srv.Serve(ctx)
 
