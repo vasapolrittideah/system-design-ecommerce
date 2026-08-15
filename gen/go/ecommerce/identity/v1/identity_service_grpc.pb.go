@@ -22,6 +22,9 @@ const (
 	IdentityService_Register_FullMethodName      = "/ecommerce.identity.v1.IdentityService/Register"
 	IdentityService_GetUser_FullMethodName       = "/ecommerce.identity.v1.IdentityService/GetUser"
 	IdentityService_GetUsersByIDs_FullMethodName = "/ecommerce.identity.v1.IdentityService/GetUsersByIDs"
+	IdentityService_Login_FullMethodName         = "/ecommerce.identity.v1.IdentityService/Login"
+	IdentityService_RefreshToken_FullMethodName  = "/ecommerce.identity.v1.IdentityService/RefreshToken"
+	IdentityService_Logout_FullMethodName        = "/ecommerce.identity.v1.IdentityService/Logout"
 )
 
 // IdentityServiceClient is the client API for IdentityService service.
@@ -48,6 +51,45 @@ type IdentityServiceClient interface {
 	// GetUsersByIDs reads many. Every service exposes one of these so the
 	// Composition API can fill a screen without looping single-item calls.
 	GetUsersByIDs(ctx context.Context, in *GetUsersByIDsRequest, opts ...grpc.CallOption) (*GetUsersByIDsResponse, error)
+	// Login exchanges credentials for a token pair.
+	//
+	// Named for the act rather than for the read it resembles: the client retry
+	// policy treats Get/List/Batch/Search/Count/Check as idempotent, and every
+	// attempt here mints a refresh token that is stored, so a retried Login
+	// would leave rows nobody holds.
+	//
+	// A wrong password and an address that was never registered are answered
+	// identically — Unauthenticated with INVALID_CREDENTIALS — because any
+	// difference between them turns this RPC into a way to ask which email
+	// addresses have accounts.
+	Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error)
+	// RefreshToken exchanges a refresh token for a new pair and invalidates the
+	// one presented.
+	//
+	// Rotation on every call is what makes a stolen refresh token detectable:
+	// the thief and the legitimate client cannot both keep using the chain, and
+	// whichever presents the spent token second reveals that a copy exists. The
+	// service then revokes the whole chain, so the answer to a theft is that
+	// both parties have to sign in again — which the real user can do and the
+	// thief cannot.
+	//
+	// That detection is also why this RPC is not idempotent and must never be
+	// retried automatically: a retry presents a token the first attempt already
+	// spent, which is indistinguishable from the theft it is designed to catch.
+	RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*RefreshTokenResponse, error)
+	// Logout revokes the presented refresh token and the rest of its rotation
+	// chain, so no further pair can be minted from it.
+	//
+	// It cannot revoke the access token already in the caller's hands — a
+	// self-contained signed token is valid until it expires, and that window is
+	// the whole reason the TTL is 15 minutes. A screen that must stop working
+	// immediately has to ask the owning service, not the token.
+	//
+	// Revoking something already revoked, expired, or never issued succeeds.
+	// Logging out is a state the caller wants to reach rather than a change they
+	// are making, a client retrying after a timeout must not see a failure, and
+	// an error here would tell a prober which tokens exist.
+	Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error)
 }
 
 type identityServiceClient struct {
@@ -88,6 +130,36 @@ func (c *identityServiceClient) GetUsersByIDs(ctx context.Context, in *GetUsersB
 	return out, nil
 }
 
+func (c *identityServiceClient) Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LoginResponse)
+	err := c.cc.Invoke(ctx, IdentityService_Login_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *identityServiceClient) RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*RefreshTokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RefreshTokenResponse)
+	err := c.cc.Invoke(ctx, IdentityService_RefreshToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *identityServiceClient) Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LogoutResponse)
+	err := c.cc.Invoke(ctx, IdentityService_Logout_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IdentityServiceServer is the server API for IdentityService service.
 // All implementations must embed UnimplementedIdentityServiceServer
 // for forward compatibility.
@@ -112,6 +184,45 @@ type IdentityServiceServer interface {
 	// GetUsersByIDs reads many. Every service exposes one of these so the
 	// Composition API can fill a screen without looping single-item calls.
 	GetUsersByIDs(context.Context, *GetUsersByIDsRequest) (*GetUsersByIDsResponse, error)
+	// Login exchanges credentials for a token pair.
+	//
+	// Named for the act rather than for the read it resembles: the client retry
+	// policy treats Get/List/Batch/Search/Count/Check as idempotent, and every
+	// attempt here mints a refresh token that is stored, so a retried Login
+	// would leave rows nobody holds.
+	//
+	// A wrong password and an address that was never registered are answered
+	// identically — Unauthenticated with INVALID_CREDENTIALS — because any
+	// difference between them turns this RPC into a way to ask which email
+	// addresses have accounts.
+	Login(context.Context, *LoginRequest) (*LoginResponse, error)
+	// RefreshToken exchanges a refresh token for a new pair and invalidates the
+	// one presented.
+	//
+	// Rotation on every call is what makes a stolen refresh token detectable:
+	// the thief and the legitimate client cannot both keep using the chain, and
+	// whichever presents the spent token second reveals that a copy exists. The
+	// service then revokes the whole chain, so the answer to a theft is that
+	// both parties have to sign in again — which the real user can do and the
+	// thief cannot.
+	//
+	// That detection is also why this RPC is not idempotent and must never be
+	// retried automatically: a retry presents a token the first attempt already
+	// spent, which is indistinguishable from the theft it is designed to catch.
+	RefreshToken(context.Context, *RefreshTokenRequest) (*RefreshTokenResponse, error)
+	// Logout revokes the presented refresh token and the rest of its rotation
+	// chain, so no further pair can be minted from it.
+	//
+	// It cannot revoke the access token already in the caller's hands — a
+	// self-contained signed token is valid until it expires, and that window is
+	// the whole reason the TTL is 15 minutes. A screen that must stop working
+	// immediately has to ask the owning service, not the token.
+	//
+	// Revoking something already revoked, expired, or never issued succeeds.
+	// Logging out is a state the caller wants to reach rather than a change they
+	// are making, a client retrying after a timeout must not see a failure, and
+	// an error here would tell a prober which tokens exist.
+	Logout(context.Context, *LogoutRequest) (*LogoutResponse, error)
 	mustEmbedUnimplementedIdentityServiceServer()
 }
 
@@ -130,6 +241,15 @@ func (UnimplementedIdentityServiceServer) GetUser(context.Context, *GetUserReque
 }
 func (UnimplementedIdentityServiceServer) GetUsersByIDs(context.Context, *GetUsersByIDsRequest) (*GetUsersByIDsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetUsersByIDs not implemented")
+}
+func (UnimplementedIdentityServiceServer) Login(context.Context, *LoginRequest) (*LoginResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Login not implemented")
+}
+func (UnimplementedIdentityServiceServer) RefreshToken(context.Context, *RefreshTokenRequest) (*RefreshTokenResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RefreshToken not implemented")
+}
+func (UnimplementedIdentityServiceServer) Logout(context.Context, *LogoutRequest) (*LogoutResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Logout not implemented")
 }
 func (UnimplementedIdentityServiceServer) mustEmbedUnimplementedIdentityServiceServer() {}
 func (UnimplementedIdentityServiceServer) testEmbeddedByValue()                         {}
@@ -206,6 +326,60 @@ func _IdentityService_GetUsersByIDs_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IdentityService_Login_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LoginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IdentityServiceServer).Login(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IdentityService_Login_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IdentityServiceServer).Login(ctx, req.(*LoginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IdentityService_RefreshToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefreshTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IdentityServiceServer).RefreshToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IdentityService_RefreshToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IdentityServiceServer).RefreshToken(ctx, req.(*RefreshTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IdentityService_Logout_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LogoutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IdentityServiceServer).Logout(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IdentityService_Logout_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IdentityServiceServer).Logout(ctx, req.(*LogoutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IdentityService_ServiceDesc is the grpc.ServiceDesc for IdentityService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -224,6 +398,18 @@ var IdentityService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetUsersByIDs",
 			Handler:    _IdentityService_GetUsersByIDs_Handler,
+		},
+		{
+			MethodName: "Login",
+			Handler:    _IdentityService_Login_Handler,
+		},
+		{
+			MethodName: "RefreshToken",
+			Handler:    _IdentityService_RefreshToken_Handler,
+		},
+		{
+			MethodName: "Logout",
+			Handler:    _IdentityService_Logout_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

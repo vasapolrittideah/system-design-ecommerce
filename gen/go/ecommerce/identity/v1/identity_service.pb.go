@@ -10,6 +10,7 @@ import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -312,11 +313,390 @@ func (x *GetUsersByIDsResponse) GetUsers() []*User {
 	return nil
 }
 
+// TokenPair is what a successful sign-in or refresh hands back.
+//
+// One message shared by both responses, so a field added for one is present on
+// the other. A client that has to read two shapes to learn the same fact ends
+// up with two code paths that drift.
+type TokenPair struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// A signed ES256 JWT, carried as the Authorization bearer token on every
+	// subsequent request and verified by Kong and the Composition API without
+	// either of them asking this service. That is the point of the asymmetry:
+	// only identity holds the private key, and everything else holds a key that
+	// can say no.
+	AccessToken string `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	// An opaque random string, deliberately not a JWT.
+	//
+	// A refresh token has to be revocable, and a self-contained signed token
+	// cannot be — logout would have to wait out the TTL. This one means nothing
+	// on its own: the service stores a hash of it in a row, and deleting the row
+	// is what ends the session.
+	RefreshToken string `protobuf:"bytes,2,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
+	// When access_token stops being accepted. Absolute rather than a duration in
+	// seconds, because the token itself carries an absolute "exp" and a client
+	// comparing the two should not have to reconstruct one from the other.
+	AccessTokenExpiresAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=access_token_expires_at,json=accessTokenExpiresAt,proto3" json:"access_token_expires_at,omitempty"`
+	// When refresh_token stops being accepted, after which the user signs in
+	// again. Rotation does not extend it: the chain has a fixed end, or a stolen
+	// token that is refreshed often enough would never expire.
+	RefreshTokenExpiresAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=refresh_token_expires_at,json=refreshTokenExpiresAt,proto3" json:"refresh_token_expires_at,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *TokenPair) Reset() {
+	*x = TokenPair{}
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TokenPair) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TokenPair) ProtoMessage() {}
+
+func (x *TokenPair) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TokenPair.ProtoReflect.Descriptor instead.
+func (*TokenPair) Descriptor() ([]byte, []int) {
+	return file_ecommerce_identity_v1_identity_service_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *TokenPair) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *TokenPair) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+func (x *TokenPair) GetAccessTokenExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AccessTokenExpiresAt
+	}
+	return nil
+}
+
+func (x *TokenPair) GetRefreshTokenExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.RefreshTokenExpiresAt
+	}
+	return nil
+}
+
+type LoginRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Email string                 `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
+	// Bounded, but with no minimum length beyond one byte: the rule the caller
+	// has to satisfy is whatever their password already is, and a policy
+	// tightened after they registered must not lock them out of an account they
+	// can still open. The upper bound is here for the same reason as on
+	// RegisterRequest — the value is handed to a deliberately slow hash.
+	Password      string `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoginRequest) Reset() {
+	*x = LoginRequest{}
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoginRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoginRequest) ProtoMessage() {}
+
+func (x *LoginRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoginRequest.ProtoReflect.Descriptor instead.
+func (*LoginRequest) Descriptor() ([]byte, []int) {
+	return file_ecommerce_identity_v1_identity_service_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *LoginRequest) GetEmail() string {
+	if x != nil {
+		return x.Email
+	}
+	return ""
+}
+
+func (x *LoginRequest) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+type LoginResponse struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Tokens *TokenPair             `protobuf:"bytes,1,opt,name=tokens,proto3" json:"tokens,omitempty"`
+	// The user, so the screen that just signed them in does not immediately ask
+	// for what this call already loaded. Unlike RegisterResponse, which returns
+	// no tokens, there is nothing to separate here: the caller proved who they
+	// are one field ago.
+	User          *User `protobuf:"bytes,2,opt,name=user,proto3" json:"user,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoginResponse) Reset() {
+	*x = LoginResponse{}
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoginResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoginResponse) ProtoMessage() {}
+
+func (x *LoginResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoginResponse.ProtoReflect.Descriptor instead.
+func (*LoginResponse) Descriptor() ([]byte, []int) {
+	return file_ecommerce_identity_v1_identity_service_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *LoginResponse) GetTokens() *TokenPair {
+	if x != nil {
+		return x.Tokens
+	}
+	return nil
+}
+
+func (x *LoginResponse) GetUser() *User {
+	if x != nil {
+		return x.User
+	}
+	return nil
+}
+
+type RefreshTokenRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The opaque string from a previous TokenPair. The bound is generous rather
+	// than exact so the encoding can change without a contract change; what
+	// matters is that an unbounded string never reaches a hash function.
+	RefreshToken  string `protobuf:"bytes,1,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RefreshTokenRequest) Reset() {
+	*x = RefreshTokenRequest{}
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefreshTokenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshTokenRequest) ProtoMessage() {}
+
+func (x *RefreshTokenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshTokenRequest.ProtoReflect.Descriptor instead.
+func (*RefreshTokenRequest) Descriptor() ([]byte, []int) {
+	return file_ecommerce_identity_v1_identity_service_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RefreshTokenRequest) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+type RefreshTokenResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// A new pair every time, including a new refresh token. The one presented is
+	// spent by the time this returns.
+	Tokens        *TokenPair `protobuf:"bytes,1,opt,name=tokens,proto3" json:"tokens,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RefreshTokenResponse) Reset() {
+	*x = RefreshTokenResponse{}
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefreshTokenResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshTokenResponse) ProtoMessage() {}
+
+func (x *RefreshTokenResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshTokenResponse.ProtoReflect.Descriptor instead.
+func (*RefreshTokenResponse) Descriptor() ([]byte, []int) {
+	return file_ecommerce_identity_v1_identity_service_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RefreshTokenResponse) GetTokens() *TokenPair {
+	if x != nil {
+		return x.Tokens
+	}
+	return nil
+}
+
+type LogoutRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RefreshToken  string                 `protobuf:"bytes,1,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogoutRequest) Reset() {
+	*x = LogoutRequest{}
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogoutRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogoutRequest) ProtoMessage() {}
+
+func (x *LogoutRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogoutRequest.ProtoReflect.Descriptor instead.
+func (*LogoutRequest) Descriptor() ([]byte, []int) {
+	return file_ecommerce_identity_v1_identity_service_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *LogoutRequest) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+// LogoutResponse is empty, and is a message rather than google.protobuf.Empty
+// so that the day it carries something — how many sessions were revoked, say —
+// is a field added rather than a signature changed.
+type LogoutResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogoutResponse) Reset() {
+	*x = LogoutResponse{}
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogoutResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogoutResponse) ProtoMessage() {}
+
+func (x *LogoutResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_identity_v1_identity_service_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogoutResponse.ProtoReflect.Descriptor instead.
+func (*LogoutResponse) Descriptor() ([]byte, []int) {
+	return file_ecommerce_identity_v1_identity_service_proto_rawDescGZIP(), []int{12}
+}
+
 var File_ecommerce_identity_v1_identity_service_proto protoreflect.FileDescriptor
 
 const file_ecommerce_identity_v1_identity_service_proto_rawDesc = "" +
 	"\n" +
-	",ecommerce/identity/v1/identity_service.proto\x12\x15ecommerce.identity.v1\x1a\x1bbuf/validate/validate.proto\x1a ecommerce/identity/v1/user.proto\"[\n" +
+	",ecommerce/identity/v1/identity_service.proto\x12\x15ecommerce.identity.v1\x1a\x1bbuf/validate/validate.proto\x1a ecommerce/identity/v1/user.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"[\n" +
 	"\x0fRegisterRequest\x12 \n" +
 	"\x05email\x18\x01 \x01(\tB\n" +
 	"\xbaH\ar\x05(\xfe\x01`\x01R\x05email\x12&\n" +
@@ -331,11 +711,36 @@ const file_ecommerce_identity_v1_identity_service_proto_rawDesc = "" +
 	"\x14GetUsersByIDsRequest\x12%\n" +
 	"\x03ids\x18\x01 \x03(\tB\x13\xbaH\x10\x92\x01\r\b\x01\x10d\x18\x01\"\x05r\x03\xb0\x01\x01R\x03ids\"J\n" +
 	"\x15GetUsersByIDsResponse\x121\n" +
-	"\x05users\x18\x01 \x03(\v2\x1b.ecommerce.identity.v1.UserR\x05users2\xb4\x02\n" +
+	"\x05users\x18\x01 \x03(\v2\x1b.ecommerce.identity.v1.UserR\x05users\"\xfb\x01\n" +
+	"\tTokenPair\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12#\n" +
+	"\rrefresh_token\x18\x02 \x01(\tR\frefreshToken\x12Q\n" +
+	"\x17access_token_expires_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x14accessTokenExpiresAt\x12S\n" +
+	"\x18refresh_token_expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x15refreshTokenExpiresAt\"X\n" +
+	"\fLoginRequest\x12 \n" +
+	"\x05email\x18\x01 \x01(\tB\n" +
+	"\xbaH\ar\x05(\xfe\x01`\x01R\x05email\x12&\n" +
+	"\bpassword\x18\x02 \x01(\tB\n" +
+	"\xbaH\ar\x05\x10\x01(\x80\x02R\bpassword\"z\n" +
+	"\rLoginResponse\x128\n" +
+	"\x06tokens\x18\x01 \x01(\v2 .ecommerce.identity.v1.TokenPairR\x06tokens\x12/\n" +
+	"\x04user\x18\x02 \x01(\v2\x1b.ecommerce.identity.v1.UserR\x04user\"F\n" +
+	"\x13RefreshTokenRequest\x12/\n" +
+	"\rrefresh_token\x18\x01 \x01(\tB\n" +
+	"\xbaH\ar\x05\x10\x01(\x80\x04R\frefreshToken\"P\n" +
+	"\x14RefreshTokenResponse\x128\n" +
+	"\x06tokens\x18\x01 \x01(\v2 .ecommerce.identity.v1.TokenPairR\x06tokens\"@\n" +
+	"\rLogoutRequest\x12/\n" +
+	"\rrefresh_token\x18\x01 \x01(\tB\n" +
+	"\xbaH\ar\x05\x10\x01(\x80\x04R\frefreshToken\"\x10\n" +
+	"\x0eLogoutResponse2\xc8\x04\n" +
 	"\x0fIdentityService\x12[\n" +
 	"\bRegister\x12&.ecommerce.identity.v1.RegisterRequest\x1a'.ecommerce.identity.v1.RegisterResponse\x12X\n" +
 	"\aGetUser\x12%.ecommerce.identity.v1.GetUserRequest\x1a&.ecommerce.identity.v1.GetUserResponse\x12j\n" +
-	"\rGetUsersByIDs\x12+.ecommerce.identity.v1.GetUsersByIDsRequest\x1a,.ecommerce.identity.v1.GetUsersByIDsResponseB\x84\x02\n" +
+	"\rGetUsersByIDs\x12+.ecommerce.identity.v1.GetUsersByIDsRequest\x1a,.ecommerce.identity.v1.GetUsersByIDsResponse\x12R\n" +
+	"\x05Login\x12#.ecommerce.identity.v1.LoginRequest\x1a$.ecommerce.identity.v1.LoginResponse\x12g\n" +
+	"\fRefreshToken\x12*.ecommerce.identity.v1.RefreshTokenRequest\x1a+.ecommerce.identity.v1.RefreshTokenResponse\x12U\n" +
+	"\x06Logout\x12$.ecommerce.identity.v1.LogoutRequest\x1a%.ecommerce.identity.v1.LogoutResponseB\x84\x02\n" +
 	"\x19com.ecommerce.identity.v1B\x14IdentityServiceProtoP\x01Z[github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/identity/v1;identityv1\xa2\x02\x03EIX\xaa\x02\x15Ecommerce.Identity.V1\xca\x02\x15Ecommerce\\Identity\\V1\xe2\x02!Ecommerce\\Identity\\V1\\GPBMetadata\xea\x02\x17Ecommerce::Identity::V1b\x06proto3"
 
 var (
@@ -350,7 +755,7 @@ func file_ecommerce_identity_v1_identity_service_proto_rawDescGZIP() []byte {
 	return file_ecommerce_identity_v1_identity_service_proto_rawDescData
 }
 
-var file_ecommerce_identity_v1_identity_service_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_ecommerce_identity_v1_identity_service_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_ecommerce_identity_v1_identity_service_proto_goTypes = []any{
 	(*RegisterRequest)(nil),       // 0: ecommerce.identity.v1.RegisterRequest
 	(*RegisterResponse)(nil),      // 1: ecommerce.identity.v1.RegisterResponse
@@ -358,23 +763,42 @@ var file_ecommerce_identity_v1_identity_service_proto_goTypes = []any{
 	(*GetUserResponse)(nil),       // 3: ecommerce.identity.v1.GetUserResponse
 	(*GetUsersByIDsRequest)(nil),  // 4: ecommerce.identity.v1.GetUsersByIDsRequest
 	(*GetUsersByIDsResponse)(nil), // 5: ecommerce.identity.v1.GetUsersByIDsResponse
-	(*User)(nil),                  // 6: ecommerce.identity.v1.User
+	(*TokenPair)(nil),             // 6: ecommerce.identity.v1.TokenPair
+	(*LoginRequest)(nil),          // 7: ecommerce.identity.v1.LoginRequest
+	(*LoginResponse)(nil),         // 8: ecommerce.identity.v1.LoginResponse
+	(*RefreshTokenRequest)(nil),   // 9: ecommerce.identity.v1.RefreshTokenRequest
+	(*RefreshTokenResponse)(nil),  // 10: ecommerce.identity.v1.RefreshTokenResponse
+	(*LogoutRequest)(nil),         // 11: ecommerce.identity.v1.LogoutRequest
+	(*LogoutResponse)(nil),        // 12: ecommerce.identity.v1.LogoutResponse
+	(*User)(nil),                  // 13: ecommerce.identity.v1.User
+	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
 }
 var file_ecommerce_identity_v1_identity_service_proto_depIdxs = []int32{
-	6, // 0: ecommerce.identity.v1.RegisterResponse.user:type_name -> ecommerce.identity.v1.User
-	6, // 1: ecommerce.identity.v1.GetUserResponse.user:type_name -> ecommerce.identity.v1.User
-	6, // 2: ecommerce.identity.v1.GetUsersByIDsResponse.users:type_name -> ecommerce.identity.v1.User
-	0, // 3: ecommerce.identity.v1.IdentityService.Register:input_type -> ecommerce.identity.v1.RegisterRequest
-	2, // 4: ecommerce.identity.v1.IdentityService.GetUser:input_type -> ecommerce.identity.v1.GetUserRequest
-	4, // 5: ecommerce.identity.v1.IdentityService.GetUsersByIDs:input_type -> ecommerce.identity.v1.GetUsersByIDsRequest
-	1, // 6: ecommerce.identity.v1.IdentityService.Register:output_type -> ecommerce.identity.v1.RegisterResponse
-	3, // 7: ecommerce.identity.v1.IdentityService.GetUser:output_type -> ecommerce.identity.v1.GetUserResponse
-	5, // 8: ecommerce.identity.v1.IdentityService.GetUsersByIDs:output_type -> ecommerce.identity.v1.GetUsersByIDsResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	13, // 0: ecommerce.identity.v1.RegisterResponse.user:type_name -> ecommerce.identity.v1.User
+	13, // 1: ecommerce.identity.v1.GetUserResponse.user:type_name -> ecommerce.identity.v1.User
+	13, // 2: ecommerce.identity.v1.GetUsersByIDsResponse.users:type_name -> ecommerce.identity.v1.User
+	14, // 3: ecommerce.identity.v1.TokenPair.access_token_expires_at:type_name -> google.protobuf.Timestamp
+	14, // 4: ecommerce.identity.v1.TokenPair.refresh_token_expires_at:type_name -> google.protobuf.Timestamp
+	6,  // 5: ecommerce.identity.v1.LoginResponse.tokens:type_name -> ecommerce.identity.v1.TokenPair
+	13, // 6: ecommerce.identity.v1.LoginResponse.user:type_name -> ecommerce.identity.v1.User
+	6,  // 7: ecommerce.identity.v1.RefreshTokenResponse.tokens:type_name -> ecommerce.identity.v1.TokenPair
+	0,  // 8: ecommerce.identity.v1.IdentityService.Register:input_type -> ecommerce.identity.v1.RegisterRequest
+	2,  // 9: ecommerce.identity.v1.IdentityService.GetUser:input_type -> ecommerce.identity.v1.GetUserRequest
+	4,  // 10: ecommerce.identity.v1.IdentityService.GetUsersByIDs:input_type -> ecommerce.identity.v1.GetUsersByIDsRequest
+	7,  // 11: ecommerce.identity.v1.IdentityService.Login:input_type -> ecommerce.identity.v1.LoginRequest
+	9,  // 12: ecommerce.identity.v1.IdentityService.RefreshToken:input_type -> ecommerce.identity.v1.RefreshTokenRequest
+	11, // 13: ecommerce.identity.v1.IdentityService.Logout:input_type -> ecommerce.identity.v1.LogoutRequest
+	1,  // 14: ecommerce.identity.v1.IdentityService.Register:output_type -> ecommerce.identity.v1.RegisterResponse
+	3,  // 15: ecommerce.identity.v1.IdentityService.GetUser:output_type -> ecommerce.identity.v1.GetUserResponse
+	5,  // 16: ecommerce.identity.v1.IdentityService.GetUsersByIDs:output_type -> ecommerce.identity.v1.GetUsersByIDsResponse
+	8,  // 17: ecommerce.identity.v1.IdentityService.Login:output_type -> ecommerce.identity.v1.LoginResponse
+	10, // 18: ecommerce.identity.v1.IdentityService.RefreshToken:output_type -> ecommerce.identity.v1.RefreshTokenResponse
+	12, // 19: ecommerce.identity.v1.IdentityService.Logout:output_type -> ecommerce.identity.v1.LogoutResponse
+	14, // [14:20] is the sub-list for method output_type
+	8,  // [8:14] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_ecommerce_identity_v1_identity_service_proto_init() }
@@ -389,7 +813,7 @@ func file_ecommerce_identity_v1_identity_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ecommerce_identity_v1_identity_service_proto_rawDesc), len(file_ecommerce_identity_v1_identity_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
