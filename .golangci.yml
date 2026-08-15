@@ -27,7 +27,46 @@ linters:
     depguard:
       rules:
         # --------------------------------------------------------------------
-        # internal/domain imports only the standard library.
+        # internal/domain imports libraries, never layers, and shares no code
+        # with another service.
+        #
+        # Half of what people expect this rule to do is already done by the Go
+        # compiler and needs no linter: port, app, and adapter all import
+        # domain, so an import pointing back at any of them is an import cycle
+        # and does not build. Inward dependencies are therefore free. What
+        # depguard adds is the other direction — imports pointing *out*, at
+        # this repo's own pkg/ and at third-party infrastructure, which compile
+        # perfectly well and are exactly what hexagonal forbids.
+        #
+        # The line drawn is between a library and a layer, not between
+        # first-party and third-party code:
+        #
+        #   - A library has no domain semantics and nobody here can change it.
+        #     The standard library is one; so is google/uuid, which implements
+        #     an RFC that was frozen years ago. Importing one couples this
+        #     package to nothing that will ever move underneath it, and it is
+        #     why domain may use time, crypto/sha256, and a UUID generator
+        #     without any of them being smuggled in behind a port.
+        #
+        #   - A layer is anything that reaches the world — pgx, grpc, kafka,
+        #     and nearly all of pkg/, which today pulls pgxpool, otel,
+        #     Prometheus, and net/http behind eight of its ten packages.
+        #
+        # pkg/ is denied even where a particular package looks harmless,
+        # because "harmless" is a judgment that has to be made again on every
+        # pull request, and because a package we own can grow: today's UUID
+        # helper is next quarter's shared Money type, and by then two services
+        # import it and changing it for one changes it for both. A shared
+        # domain concept is the thing this rule exists to prevent, and it
+        # arrives disguised as a utility.
+        #
+        # The price is real: identical code is copied per service wherever a
+        # library does not already exist. That is the right trade where two
+        # services diverging would harm nobody. Where divergence would instead
+        # be a *bug* — two services rounding money differently — the answer is
+        # a deliberate shared kernel with an owner and a policy for changing
+        # it, argued as an architecture decision, never one more line in
+        # `allow` below.
         #
         # `allow` is a whitelist: anything not listed is denied, so this rule
         # needs no maintenance as new libraries enter the repo. If a domain
@@ -45,9 +84,18 @@ linters:
             - "!**/*_test.go"
           allow:
             - $gostd
+            # An RFC 9562 implementation and nothing else. It is here so that
+            # identifier minting is not hand-written once per service — the
+            # version and variant bit-twiddling is exactly the kind of code
+            # that is easy to get subtly wrong and impossible to notice.
+            #
+            # Adding to this list is a decision about one library, not a
+            # precedent: what qualifies is that it carries no domain meaning
+            # and that nobody in this repo can change it.
+            - github.com/google/uuid
           deny:
             - pkg: github.com/vasapolrittideah/system-design-ecommerce/pkg
-              desc: domain must not depend on infrastructure; declare the error kind structurally with ErrorKind() string instead of importing errorx
+              desc: domain imports libraries, not layers, and pkg/ is layers; copy the helper into this service, and declare error kinds structurally with ErrorKind() string rather than importing errorx
             - pkg: github.com/vasapolrittideah/system-design-ecommerce/gen
               desc: domain must not depend on generated proto; adapters map proto to domain
             - pkg: google.golang.org/grpc
