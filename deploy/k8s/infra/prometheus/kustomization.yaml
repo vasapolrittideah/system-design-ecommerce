@@ -8,6 +8,7 @@ resources:
   - rbac.yaml
   - deployment.yaml
   - service.yaml
+  - networkpolicy.yaml
 
 # A fixed name, as everywhere else in this repo. Kustomize's content hash would
 # roll the Deployment by renaming the object, but it gets there by creating a

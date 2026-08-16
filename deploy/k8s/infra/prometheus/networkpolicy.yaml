@@ -1,0 +1,26 @@
+# Prometheus is reached by Grafana and by nothing else in the namespace. Its
+# own /alerts and /graph pages are read through `make port-forward`, which
+# arrives from the node rather than from a pod and is not what this filters.
+#
+# No egress rules: the scraper has to reach the API server for pod discovery and
+# every pod's admin port for the scrape itself, and expressing the first means
+# writing the API server's ClusterIP into a manifest. What each scrape target
+# accepts is stated on the target, which is the side that knows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 9090

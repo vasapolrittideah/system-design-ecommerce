@@ -1,0 +1,67 @@
+# Who may reach bff-web, and what bff-web may reach.
+#
+# The egress list is where "east-west calls never go through the gateway" stops
+# being a convention. Kong is not on it, so a fan-out call addressed to the
+# gateway instead of to a service fails to connect here, on a laptop, rather
+# than working and quietly routing internal traffic through the front door.
+#
+# It is also the list a new downstream service has to join. A BFF that starts
+# calling `order` and does not get a rule here fails every call to it — loudly,
+# at the first request, which is the point.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bff-web
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bff-web
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # HTTP, from Kong alone. Everything a person sends arrives this way, and
+    # nothing inside the namespace has a reason to call a BFF — a service that
+    # needs an answer from another service asks it over gRPC.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kong
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: identity
+      ports:
+        - protocol: TCP
+          port: 50051
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jaeger
+      ports:
+        - protocol: TCP
+          port: 4317

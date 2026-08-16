@@ -9,6 +9,7 @@ resources:
   - service.yaml
   - migration-job.yaml
   - hpa.yaml
+  - networkpolicy.yaml
 
 # includeSelectors stays off: every selector in this directory is written by
 # hand, and a transformer that edits a Job's auto-generated selector produces

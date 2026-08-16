@@ -6,6 +6,7 @@ namespace: ecommerce
 resources:
   - ../../../base/identity
   - postgres.yaml
+  - networkpolicy.yaml
 
 configMapGenerator:
   - name: identity-config

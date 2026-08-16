@@ -2,3 +2,42 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: ecommerce
+---
+# The namespace's default posture: nothing may be reached unless something says
+# so. Every allow-list sits next to the workload it protects — a service's in
+# base/, a database's in the overlay that declares it, an infra component's
+# beside its Deployment.
+#
+# This is what turns two rules from CLAUDE.md into manifests instead of
+# conventions. "Never query another service's tables" is enforced from the
+# side that owns the table: identity-postgres accepts connections from identity
+# and from nothing else, so a second service reaching for it fails to connect
+# rather than reading rows it should not. "East-west calls never go through the
+# gateway" is the mirror image and cannot be enforced here, because it is a rule
+# about who may *call* — it lives on the egress allow-lists that the service
+# workloads carry.
+#
+# It lives with the Namespace, and not in the kustomization beside Kong and
+# Jaeger, because `make down` removes that kustomization while the services it
+# was protecting keep running. A default that can be lifted by removing the
+# monitoring stack is not a default.
+#
+# The cost, stated plainly: a new service that ships no policy of its own is
+# unreachable, and the first thing to notice will be `make deploy` failing its
+# smoke test. That is the better of the two failures — the other default is a
+# service reachable by everything in the namespace, which nothing ever reports.
+#
+# Egress is deliberately not denied here. Doing it namespace-wide would need a
+# rule for the API server on every policy, written as a hardcoded ClusterIP,
+# for Prometheus's pod discovery and Reloader's watch — a fragile rule in
+# service of no architectural rule. What egress is for is on the two service
+# workloads, where the rule it enforces actually exists.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: ecommerce
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress

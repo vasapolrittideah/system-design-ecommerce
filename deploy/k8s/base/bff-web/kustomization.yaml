@@ -11,6 +11,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - hpa.yaml
+  - networkpolicy.yaml
 
 # includeSelectors stays off: every selector in this directory is written by
 # hand, and a transformer that edits an auto-generated selector produces an

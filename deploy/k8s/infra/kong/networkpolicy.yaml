@@ -1,0 +1,38 @@
+# The one workload in the namespace that accepts traffic from outside it, which
+# is what the empty `from` below says: the proxy ports are the front door and a
+# request arriving there has not been anywhere else yet.
+#
+# That leaves the gateway reachable from inside the namespace as well, and the
+# rule against calling it from inside is not enforced here on purpose. It is a
+# rule about who may call, so it belongs on the caller — each service's egress
+# list omits Kong, which is what actually stops an east-west call from taking
+# the front door.
+#
+# Egress is unrestricted for the same reason it is on every other infra
+# component: what Kong may reach is its upstream, and that is already decided by
+# kong.yml rather than by a policy that would have to be kept in step with it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kong
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kong
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8443
+    # The status port, deliberately absent from Kong's Service and reachable
+    # only on the pod. The scraper is the only pod with a reason to be here.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8100
