@@ -18,8 +18,8 @@ proto/                  # single source of truth for API + event contracts
 gen/go/                 # buf generate output — committed to the repo, never hand-edited
 pkg/                    # cross-cutting infrastructure — no business logic allowed
 services/<name>/        # one service per directory
-deploy/kong/kong.yml    # declarative DB-less Kong config
 deploy/k8s/
+  infra/kong/kong.yml    # declarative DB-less Kong config
 ```
 
 Single `go.mod` for the whole repo. Do not introduce per-service modules or a `go.work` unless explicitly asked.
@@ -103,7 +103,7 @@ KindInternal         → codes.Internal            → 500 (never leak internals
 
 The kinds are transport-shaped, never business-shaped: `KindConflict`, not `ErrOutOfStock`. A service names its own failures in its own vocabulary and points them at a kind — `pkg/` may not learn what a SKU is.
 
-`KindUnauthenticated` and `KindUnauthorized` are never interchangeable, and only the second one is a service's to raise. 401 says the credential is the problem, so the client should run its refresh flow; 403 says the credential was fine and the answer is still no. A frontend handed 403 for an expired token logs the user out instead of quietly renewing. Only a process that verifies tokens itself produces the first — Kong, and the BFF re-verifying behind it. A service reached over east-west gRPC has had identity settled two hops earlier and only ever answers the authorization question.
+`KindUnauthenticated` and `KindUnauthorized` are never interchangeable, and only the second one is a service's to raise. 401 says the credential is the problem, so the client should run its refresh flow; 403 says the credential was fine and the answer is still no. A frontend handed 403 for an expired token logs the user out instead of quietly renewing. Only a process that verifies tokens itself produces the first, and that is the BFF alone. A service reached over east-west gRPC has had identity settled a hop earlier and only ever answers the authorization question.
 
 **A domain package declares its kind structurally, never by importing `errorx`.** It implements `ErrorKind() string` returning one of the kind strings (`"conflict"`, `"not_found"`, …), which is a method signature and therefore no dependency at all — the same trick as `Unwrap` and `Stringer`. This is what keeps `internal/domain` free of `pkg/` while its errors still map correctly. Code outside `domain` builds errors directly instead: `errorx.New(errorx.KindNotFound, "order %s not found", id)`, or `errorx.Wrap` where a lower layer's failure is the explanation. An error declaring no kind is Internal — an unclassified failure is a bug until someone classifies it, and defaulting the other way would answer 400 for a broken database.
 
@@ -192,19 +192,38 @@ That router's chain is correlation → logging → metrics → recovery → loca
 
 **`httpx.CorrelationID` is mandatory, and omitting it fails silently.** It is where the ID enters the system: `pkg/grpcx/client` reads it off the context and forwards it to every service the request fans out to, and those services put it on the outbox rows for the events they raise. Without the middleware the context holds nothing, every downstream service mints its own ID, and one user-visible operation appears in the logs as several unrelated ones — with no error anywhere.
 
-Every non-2xx answer is one shape, `httpx.ErrorResponse`, and JSON is **camelCase** throughout. Clients branch on `error.code` — the reason code from `errorx` — never on the HTTP status: 409 alone cannot say whether an order was already paid or a SKU was sold out. Renaming a reason code is a breaking change.
+**Every failure the application decided on is one shape**, `httpx.ErrorResponse`, and JSON is **camelCase** throughout. Clients branch on `error.code` — the reason code from `errorx` — never on the HTTP status: 409 alone cannot say whether an order was already paid or a SKU was sold out. Renaming a reason code is a breaking change.
+
+The qualifier is load-bearing, because three answers come from the gateway and cannot carry that shape: Kong short-circuits them before any plugin could rewrite the body, which is why the plugin that would is Enterprise. They are JSON — `error_default_type` sees to that — but they carry `message` and no `error.code`:
+
+| Status | When | Why it cannot move behind Kong |
+| --- | --- | --- |
+| 429 | rate limit | limiting at the edge is the point; a limiter the BFF runs has already accepted the request |
+| 413 | body over Kong's hard cap | Kong's cap is 8× `httpx.MaxBodyBytes` on purpose, so a merely-oversized body is refused by the BFF as `BODY_TOO_LARGE` and only an absurd one lands here |
+| 502/503/504 | bff-web unreachable or too slow | nothing behind Kong is left to answer |
+
+Everything else that used to belong on this list was moved rather than accepted: 404 and 405 because Kong routes `/` as a catch-all and lets `httpx` answer, 401 because Kong no longer verifies tokens. A client needs one rule for the remainder — *no `error.code` means derive it from the status* (429 → `RATE_LIMITED`, 5xx → `UPSTREAM_UNAVAILABLE`) — which it needs regardless, since a CDN or load balancer above Kong answers in its own shape too.
+
+**Read the correlation ID from the `X-Correlation-ID` response header, not from `error.correlationId`.** Kong echoes the header on every answer including its own; the body field exists only when the BFF wrote the body. One source works for both.
 
 Responses are localised from `Accept-Language`, defaulting to `en`, with the negotiated language echoed as `Content-Language`. Only `error.fields[].message` is translated. `error.message` is a developer aid and a last-resort string — never render it to a user, or a Thai screen shows English prose the moment anything but validation fails.
 
 ## Gateway and auth
 
-Kong is declarative and DB-less (`deploy/kong/kong.yml`, version-controlled). It handles TLS termination, JWT signature/expiry verification, rate limiting, CORS, body size limits, correlation ID, and metrics.
+Kong is declarative and DB-less (`deploy/k8s/infra/kong/kong.yml`, version-controlled — it sits with Jaeger and Reloader because nothing here builds its image). It handles TLS termination, rate limiting, CORS, body size limits, correlation ID, and metrics.
 
-Kong must **not** perform business authorization ("does this user own this order?") — that belongs in the owning service. Kong forwards claims via `X-User-ID` / `X-User-Roles`.
+**Kong does not verify JWTs, and no plugin forwards claims.** Authentication happens once, in the BFF, which re-verifies every token itself under zero-trust — so a verifier at the edge would be a second copy of the public key to rotate, a second `iss`/`aud` policy to keep in step, and a 401 in Kong's error shape rather than this API's. `pkg/auth`'s middleware ignores `X-User-ID` / `X-User-Roles` anyway, so a forwarded claim would have no reader. Kong's `jwt` plugin could not do the job as specified regardless: it checks `exp` and `nbf` and never `aud`, and it forwards `X-Consumer-*` rather than claims.
 
-Zero-trust: the BFF re-verifies the JWT itself and never trusts upstream headers alone.
+What is deliberately left out, each for a reason that is easy to undo by accident:
 
-Tokens are **ES256**, and the asymmetry is what makes zero-trust affordable: the identity service holds the private key and is the only thing that can mint a token; Kong and every BFF hold a public key that can only ever say no. A shared secret would put the credential that forges any user's identity inside the process most exposed to the outside. ES256 over RS256 for size — a P-256 key is 32 bytes against 256, on a header that rides every request.
+- **No `opentelemetry` plugin.** The BFF is where a trace begins; a span started at this hop makes Kong the root and silently takes the sampling decision away from `OBS_SAMPLE_RATIO`.
+- **No route per endpoint.** One catch-all route on `/` sends everything to bff-web, so adding an endpoint touches one repo and a mistyped path is answered by `httpx`'s own `ROUTE_NOT_FOUND` instead of Kong's "no Route matched". Longest prefix wins, so a route that exists only to carry a tighter rate limit — `/api/v1/auth/login`, `/api/v1/auth/register` — still takes precedence.
+- **`retries: 0`.** `pkg/grpcx/client` already retries what is safe to; a gateway retrying on top turns one slow `POST /auth/register` into two accounts.
+- **The upstream is a ring balancer over a headless Service, not the Service itself.** Kong holds keep-alive connections, so a cluster IP pins every request to whichever pod answered first and a replica the HPA adds receives nothing.
+
+Kong must **not** perform business authorization ("does this user own this order?") — that belongs in the owning service.
+
+Tokens are **ES256**, and the asymmetry is what makes zero-trust affordable: the identity service holds the private key and is the only thing that can mint a token; every BFF holds a public key that can only ever say no. A shared secret would put the credential that forges any user's identity inside the process most exposed to the outside. ES256 over RS256 for size — a P-256 key is 32 bytes against 256, on a header that rides every request.
 
 `pkg/auth` is the one place a token becomes an identity. It owns the `Claims` shape both ends must agree on, the `Signer` (identity only), the `Verifier`, and the `Authenticate` HTTP middleware that puts a `grpcx.Identity` on the request context — where `pkg/grpcx/client` picks it up and forwards it to every hop. It owns nothing else: TTL policy, role assignment, and refresh-token storage are the identity service's, and authorization belongs to whoever owns the aggregate.
 
@@ -260,7 +279,7 @@ make up                 # apply deploy/k8s/infra into the cluster
 make deploy SVC=x       # build image, run the migration Job, roll out
 ```
 
-The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies every service shares (Jaeger, Reloader; Kafka in KRaft mode and Kong DB-less as the phases needing them arrive) and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/local/<name>` for the services.
+The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies every service shares (Jaeger, Kong DB-less, Reloader; Kafka in KRaft mode as the phase needing it arrives) and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/local/<name>` for the services.
 
 **Databases are not shared infrastructure.** Each service's local overlay declares its own single-database Postgres instance, so "database per service" is structural rather than a matter of grants. One instance holding a database per service is cheaper and was what this stack ran first, but Postgres grants `CONNECT` on every new database to `PUBLIC`, so each service role could open a connection to every other service's database and list its tables through `pg_catalog` — closing that needed a `REVOKE` in an init script whose absence nothing would report. With an instance per service there is nothing to revoke, and reaching another service's data would mean reaching another Service. Every dependency a service needs must be startable this way; nothing may require a shared remote environment to develop against.
 

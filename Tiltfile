@@ -79,6 +79,19 @@ k8s_resource(
     labels=['infra'],
 )
 
+# No port_forward: the gateway is reached on localhost:8000 through the k3d load
+# balancer, which is the same path a browser takes and the only one that
+# exercises the Service, the upstream, and the routes. Forwarding straight to
+# the pod would skip all three.
+#
+# Editing deploy/k8s/infra/kong/kong.yml is enough to apply a routing change —
+# Tilt re-runs kustomize, the ConfigMap content changes, and Reloader restarts
+# the pod.
+k8s_resource(
+    'kong',
+    labels=['infra'],
+)
+
 # ------------------------------------------------------------------------------
 # identity
 # ------------------------------------------------------------------------------

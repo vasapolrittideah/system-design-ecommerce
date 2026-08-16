@@ -1,0 +1,166 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+  annotations:
+    # kong.yml is a mounted ConfigMap read once at startup, and DB-less Kong has
+    # no way to be told the file underneath it changed. Without this an edited
+    # route or rate limit applies to nothing until somebody deletes a pod.
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kong
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kong
+    spec:
+      # 5s preStop + Kong's own drain, inside the kubelet's grace period. The
+      # front door is the one pod where a connection cut mid-request is visible
+      # to a person rather than to a retry.
+      terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kong
+          image: kong:3.9.3
+          ports:
+            - name: proxy
+              containerPort: 8000
+            - name: proxy-ssl
+              containerPort: 8443
+            # Probes and metrics. Never routed to from outside the cluster, the
+            # same arrangement every service here uses for its admin port.
+            - name: status
+              containerPort: 8100
+          env:
+            - name: KONG_DATABASE
+              value: "off"
+            - name: KONG_DECLARATIVE_CONFIG
+              value: /kong/declarative/kong.yml
+            # Kong writes its nginx configuration, sockets, and a self-signed
+            # certificate into the prefix at every start, so it cannot live on
+            # the read-only root filesystem. An emptyDir means the certificate
+            # is regenerated per pod — fine for a browser warning nobody was
+            # going to avoid locally, and the reason this is not how TLS is done
+            # anywhere else.
+            - name: KONG_PREFIX
+              value: /kong_prefix/
+            - name: KONG_PROXY_LISTEN
+              value: "0.0.0.0:8000, 0.0.0.0:8443 ssl"
+            # Loopback, so nothing in the cluster can reach the Admin API. It is
+            # read-only under DB-less anyway; binding it to an interface would
+            # still publish the whole routing table to anything that can open a
+            # socket.
+            - name: KONG_ADMIN_LISTEN
+              value: "127.0.0.1:8001"
+            - name: KONG_STATUS_LISTEN
+              value: "0.0.0.0:8100"
+            # Errors Kong answers itself cannot carry httpx.ErrorResponse — a
+            # short-circuited response never reaches a plugin that could rewrite
+            # it, which is why the plugin that does exist for it is Enterprise.
+            # This at least makes them JSON rather than an HTML page chosen from
+            # the Accept header, so a client parses one thing and fails on the
+            # missing error.code rather than on the syntax.
+            - name: KONG_ERROR_DEFAULT_TYPE
+              value: application/json
+            # A and CNAME only, never SRV, and this is load-bearing rather than
+            # tuning. bff-web's Service is headless and publishes two ports, so
+            # CoreDNS answers an SRV query for it with one record per port per
+            # pod — 8080 and 9090 alike — and Kong prefers the port on the SRV
+            # record over the one on its own upstream target. Kong's default
+            # order tries SRV first, which sent half of every request to the
+            # admin port to be answered by its mux with a plain-text 404.
+            - name: KONG_DNS_ORDER
+              value: "LAST,A,CNAME"
+            - name: KONG_NGINX_WORKER_PROCESSES
+              value: "2"
+            - name: KONG_LOG_LEVEL
+              value: notice
+            # Kong's access log is nginx text, not the JSON every Go process
+            # here emits, and it is left that way on purpose: the request record
+            # worth reading — with correlation_id, trace_id, and a user — comes
+            # from the BFF, which sees every request this one forwarded.
+            - name: KONG_PROXY_ACCESS_LOG
+              value: /dev/stdout
+            - name: KONG_PROXY_ERROR_LOG
+              value: /dev/stderr
+            - name: KONG_ADMIN_ACCESS_LOG
+              value: /dev/stdout
+            - name: KONG_ADMIN_ERROR_LOG
+              value: /dev/stderr
+          volumeMounts:
+            - name: declarative
+              mountPath: /kong/declarative
+              readOnly: true
+            - name: prefix
+              mountPath: /kong_prefix
+            - name: tmp
+              mountPath: /tmp
+          lifecycle:
+            preStop:
+              # Endpoint removal and SIGTERM race here exactly as they do for a
+              # service pod, except the caller that has not been told yet is the
+              # node's load balancer.
+              sleep:
+                seconds: 5
+          # /status/ready answers only once the declarative config has been
+          # loaded, so a malformed kong.yml leaves this pod out of the endpoint
+          # list rather than serving 404 for the whole API.
+          startupProbe:
+            httpGet:
+              path: /status/ready
+              port: status
+            periodSeconds: 2
+            failureThreshold: 30
+          # Liveness checks the process and nothing else — the same rule the
+          # services follow. bff-web being unreachable is a 502 to answer, not a
+          # reason to restart the only thing that can answer it.
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: status
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /status/ready
+              port: status
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # Memory only, as everywhere else here. Throttling the process
+              # every request in the system passes through would add latency to
+              # all of them at once, and the burst it would clip is the one
+              # moment the gateway most needs the CPU.
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: declarative
+          configMap:
+            name: kong-declarative
+        - name: prefix
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

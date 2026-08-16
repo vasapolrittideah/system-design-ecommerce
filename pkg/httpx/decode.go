@@ -14,8 +14,11 @@ import (
 
 // MaxBodyBytes caps a request body at 1 MiB.
 //
-// Kong already limits body size at the edge; this is the second line, so a call
-// that reaches the BFF another way cannot make it allocate without bound.
+// This is the limit a client actually meets. Kong's cap at the edge is set
+// deliberately higher, so that a body which is merely too large is refused here
+// and answered as BODY_TOO_LARGE — an error Kong would have to answer in its
+// own shape, having no way to produce this API's. Kong's remains the backstop
+// for a body too big to be worth buffering at all.
 const MaxBodyBytes int64 = 1 << 20
 
 // unknownFieldPrefix is how encoding/json reports a field that is not in the

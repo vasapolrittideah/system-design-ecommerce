@@ -1,0 +1,152 @@
+# The gateway's entire configuration. DB-less and declarative, so what Kong
+# does is decided in this file and reviewed in a diff, rather than reconstructed
+# from the Admin API of a process someone once configured by hand.
+#
+# Kong is deliberately thin here: TLS, how much and how often a client may ask,
+# CORS, a correlation ID, and the hand-off to bff-web. It does not verify JWTs,
+# which is a decision and not an omission — the BFF re-verifies every token
+# itself under zero-trust, so a second verifier at the edge would put the public
+# key in two places to rotate and would answer 401 in Kong's own error shape
+# instead of the one every client of this API already parses.
+_format_version: "3.0"
+
+services:
+  - name: bff-web
+    # An upstream's name, not a hostname, which is what puts the ring balancer
+    # below into the path. Naming the Service directly would work and would send
+    # every request to one pod: Kong holds keep-alive connections, and whatever
+    # a hostname resolved to when one was opened is where it stays.
+    host: bff-web
+    port: 8080
+    protocol: http
+
+    # Kong retries nothing. pkg/grpcx/client already retries what is safe to
+    # retry — idempotent method names, on Unavailable and DeadlineExceeded only —
+    # and a gateway retrying on top of that turns one slow POST /auth/register
+    # into two accounts.
+    retries: 0
+
+    connect_timeout: 2000
+    # The outermost step of the cascading budget: 5s here, 800ms in the BFF,
+    # 300ms per downstream call. It exists to sever a connection nothing is
+    # coming back on, not to bound a request — by the time it fires the BFF has
+    # long since answered with its own timeout and a readable body.
+    read_timeout: 5000
+    write_timeout: 5000
+
+    routes:
+      # Signing in and signing up are the two endpoints worth guessing at, so
+      # they carry their own limit. A route-scoped rate-limiting plugin replaces
+      # the global one rather than stacking with it, which is why this number is
+      # the whole allowance for these paths.
+      - name: bff-web-auth-write
+        paths:
+          - /api/v1/auth/login
+          - /api/v1/auth/register
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 10
+              policy: local
+              limit_by: ip
+              fault_tolerant: true
+
+      # Everything else, including paths that match no handler at all.
+      #
+      # A catch-all rather than a list of prefixes, for two reasons. Adding an
+      # endpoint stays a change in the BFF alone, and a mistyped path is
+      # answered by httpx's own 404 — ROUTE_NOT_FOUND, in the shape every other
+      # failure uses — instead of Kong's "no Route matched". The longer prefix
+      # wins in the router, so the route above still takes precedence.
+      - name: bff-web-catch-all
+        paths:
+          - /
+        strip_path: false
+
+upstreams:
+  # The ring balancer over bff-web's pods. Its target is a hostname and not an
+  # address: Kong re-resolves it when the DNS record's TTL expires, which is
+  # what lets a pod the HPA just added receive anything. bff-web's Service is
+  # headless so that answer is the pod IPs rather than one virtual IP.
+  - name: bff-web
+    algorithm: round-robin
+    targets:
+      - target: bff-web.ecommerce.svc.cluster.local:8080
+        weight: 100
+
+plugins:
+  # Where a correlation ID enters the system when the client did not bring one.
+  # httpx.CorrelationID adopts this header rather than minting over it, and
+  # pkg/grpcx/client carries the value to every service the request fans out to,
+  # so the name has to stay exactly what pkg/grpcx expects.
+  #
+  # echo_downstream matters more than it looks. It is the only way a client can
+  # quote an ID for a failure Kong answered itself, where there is no response
+  # body from the BFF to carry one.
+  - name: correlation-id
+    config:
+      header_name: X-Correlation-ID
+      generator: uuid
+      echo_downstream: true
+
+  - name: cors
+    config:
+      origins:
+        - http://localhost:3000
+      methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+      headers: [Accept, Accept-Language, Authorization, Content-Type, X-Correlation-ID]
+      # A browser cannot read a response header it was not handed: the language
+      # actually negotiated, and the ID to quote in a bug report.
+      exposed_headers: [Content-Language, X-Correlation-ID]
+      # Tokens travel in the response body rather than a cookie, so the browser
+      # has no credential to attach and nothing here needs to permit one. The
+      # day a refresh token moves into an httpOnly cookie this becomes true, and
+      # origins stops being allowed to hold a wildcard.
+      credentials: false
+      max_age: 3600
+
+  - name: rate-limiting
+    config:
+      minute: 300
+      # local rather than cluster or redis: DB-less Kong cannot use the cluster
+      # policy at all, and there is no Redis in this stack yet. The counter is
+      # therefore per Kong pod — exact while there is one, approximate after
+      # that. Revisit when Kong scales out, or when Redis arrives for
+      # idempotency keys, whichever comes first.
+      policy: local
+      # Locally this counts something other than a client. k3s's servicelb
+      # masquerades the source address to the node's, and k3d's load balancer
+      # spreads connections over all three nodes, so one caller looks like three
+      # and every limit here is worth three times its number — measured, not
+      # assumed. Behind a load balancer that sets X-Forwarded-For it counts per
+      # client, which is what it is for; a 429 is reachable either way, which is
+      # what matters for testing one locally.
+      limit_by: ip
+      # A limiter that cannot reach its store lets the request through instead
+      # of failing it: losing a rate limit is a smaller failure than losing the
+      # API. With the local policy there is no store to lose.
+      fault_tolerant: true
+
+  # The hard cap, deliberately eight times httpx.MaxBodyBytes. A body that is
+  # merely too large is meant to reach the BFF and be refused there, where the
+  # answer is BODY_TOO_LARGE in the shape every client already parses. This one
+  # only stops a body too big to be worth buffering, which Kong has no choice
+  # but to answer in its own shape.
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 8
+      size_unit: megabytes
+
+  # Kong's own RED metrics, served on the status port. Nothing scrapes them yet;
+  # the plugin is here because the requests it measures are the ones Kong
+  # answered itself, and those are precisely the requests no service ever sees.
+  - name: prometheus
+    config:
+      status_code_metrics: true
+      latency_metrics: true
+  # There is deliberately no opentelemetry plugin. The BFF is where a trace
+  # begins — sampling is parent-based everywhere else, so OBS_SAMPLE_RATIO there
+  # governs how many traces the whole system has. A span started at this hop
+  # would make Kong the root and take that decision away with nothing reporting
+  # that it had moved.

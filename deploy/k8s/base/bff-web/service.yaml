@@ -1,19 +1,18 @@
-# A normal ClusterIP, not the headless Service identity uses.
+# Headless, for the same reason identity's Service is, arrived at from the other
+# direction.
 #
-# Headless exists there because gRPC holds one long-lived HTTP/2 connection per
-# caller, so a virtual IP would pin every caller to one replica. This service is
-# reached over HTTP/1.1 from one place — the gateway — and Kong does its own
-# upstream balancing.
-#
-# The pinning problem does return the moment Kong holds keep-alive connections
-# here, and the answer then is a Kong upstream with a DNS-based ring balancer
-# pointed at this Service, not a change on this side. Worth revisiting when Kong
-# lands and not before.
+# There the caller is gRPC, holding one long-lived HTTP/2 connection. Here it is
+# Kong, holding a pool of keep-alive HTTP/1.1 connections — and a pool pinned to
+# one address is pinned just as firmly. With no cluster IP the record answers
+# with the pod IPs, which is what Kong's upstream ring balancer needs in order
+# to have anything to balance across, and what makes a replica the HPA just
+# added receive requests instead of waiting for something to reconnect.
 apiVersion: v1
 kind: Service
 metadata:
   name: bff-web
 spec:
+  clusterIP: None
   selector:
     app.kubernetes.io/name: bff-web
   ports:

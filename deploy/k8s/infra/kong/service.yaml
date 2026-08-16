@@ -1,0 +1,29 @@
+# The cluster's front door, and the only Service here reachable from outside it.
+#
+# type: LoadBalancer, which k3s answers with its built-in servicelb: it binds
+# ports 80 and 443 on every node, and k3d forwards the host's 8000 and 8443 to
+# them. Those two mappings were declared at cluster creation because k3d cannot
+# add one to a running cluster — see the note in `make cluster-create`.
+#
+# The status port is deliberately absent. Probes reach it on the pod, and a
+# scraper will too; putting it here would publish Kong's metrics on the node
+# alongside the API.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: kong
+  ports:
+    - name: proxy
+      port: 80
+      targetPort: proxy
+    # Terminated with the self-signed certificate Kong generates at startup, so
+    # curl needs -k and a browser will object. TLS with a real certificate is a
+    # production concern; what this port proves locally is that the listener,
+    # the routes, and the timeout budget behave the same on both schemes.
+    - name: proxy-ssl
+      port: 443
+      targetPort: proxy-ssl
