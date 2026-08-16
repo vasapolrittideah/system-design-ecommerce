@@ -52,6 +52,15 @@ REGISTRY  ?= ecommerce-registry:5001
 DB_PASSWORD ?= insecure-local-only
 DSN ?= postgres://$(SVC):$(DB_PASSWORD)@localhost:5432/$(SVC)?sslmode=disable
 
+# Where `make smoke` points. The gateway on the k3d load balancer, never a
+# port-forward: reaching bff-web directly would skip Kong's routes, its
+# upstream, and the Service behind it, which is most of what a deploy breaks.
+BASE_URL ?= http://localhost:8000
+
+# `make deploy SVC=x SMOKE=0` skips the smoke test, for the one case where it is
+# a false alarm: rolling out a service into a cluster that has no bff-web yet.
+SMOKE ?= 1
+
 # `buf breaking` baseline. CI on a PR may want '.git\#branch=origin/trunk'.
 # The backslash is required: an unescaped # starts a Make comment.
 BREAKING_AGAINST ?= .git\#branch=trunk
@@ -469,6 +478,15 @@ deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity)
 		}; \
 	fi
 	kubectl -n $(NAMESPACE) rollout status deployment/$(SVC) --timeout=180s
+	@# rollout status means the new pods are Ready, which is a claim each pod
+	@# makes about itself. Whether the system still serves is a different
+	@# question, and this is where it gets asked.
+	@if [ "$(SMOKE)" = "1" ]; then $(MAKE) smoke; else echo "smoke skipped (SMOKE=0)"; fi
+
+.PHONY: smoke
+smoke: ## Smoke-test the deployed stack through the gateway (BASE_URL=...)
+	$(call need_bin,jq,brew install jq)
+	@BASE_URL="$(BASE_URL)" scripts/smoke.sh
 
 .PHONY: undeploy
 undeploy: ## Remove a service from the cluster (SVC=identity)

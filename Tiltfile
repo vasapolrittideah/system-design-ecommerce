@@ -254,3 +254,19 @@ local_resource(
     auto_init=False,
     labels=['check'],
 )
+
+# The one check here that runs on its own, because it is what turns a dashboard
+# of green boxes into a claim worth reading: the boxes say the pods are Ready,
+# and this says the API answered. It goes through the gateway on 8000 rather
+# than the port-forwards above, so it exercises the routes and the Service too.
+#
+# It waits for the gateway itself, so ordering it after bff-web is enough — a
+# pod that just became Ready is not in Kong's ring balancer until the record it
+# resolved expires.
+local_resource(
+    'smoke',
+    'make smoke',
+    resource_deps=['kong', 'bff-web'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['check'],
+)
