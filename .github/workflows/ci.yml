@@ -1,0 +1,254 @@
+name: CI
+
+# A merge into trunk is a push to trunk, so the push trigger is the one that was
+# asked for. The pull_request trigger is what turns this from a report into a
+# gate: by the time a push to trunk fails, the broken commit is already the
+# branch everyone else builds on. Point branch protection at the `ci` job below.
+on:
+  push:
+    branches: [trunk]
+  pull_request:
+    branches: [trunk]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A superseded pull request run tells nobody anything. A superseded trunk run is
+# the only record that a particular commit was green, so those are left alone.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint and formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Tool versions are read out of the Makefile rather than repeated here, so
+      # a bump there moves CI with it instead of leaving two pins to notice.
+      - name: Read pinned tool versions
+        id: tools
+        run: echo "golangci-lint=$(make print-GOLANGCI_LINT_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ steps.tools.outputs.golangci-lint }}
+
+      # always(): unformatted code and a lint failure are separate answers, and
+      # fixing one blind to the other costs a second round trip.
+      - name: Formatting
+        if: always()
+        run: make fmt-check
+
+  proto:
+    name: Proto contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # buf breaking compares against a ref that has to exist locally.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Read pinned tool versions
+        id: tools
+        run: echo "buf=$(make print-BUF_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: make proto-lint
+
+      # On a pull request the baseline is trunk. On a push to trunk the baseline
+      # cannot be trunk — that is the commit under test — so it is the state
+      # trunk was in before this push, which for a merge commit is its first
+      # parent. The very first commit has neither and is skipped.
+      - name: Choose the breaking-change baseline
+        id: baseline
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "against=.git#branch=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then
+            echo "against=.git#ref=HEAD~1" >> "$GITHUB_OUTPUT"
+          else
+            echo "against=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Breaking changes
+        if: steps.baseline.outputs.against != ''
+        run: make proto-breaking BREAKING_AGAINST='${{ steps.baseline.outputs.against }}'
+
+      - name: gen/ is in step with proto/
+        run: make proto-check
+
+  generated:
+    name: Generated code and modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Read pinned tool versions
+        id: tools
+        run: |
+          {
+            echo "sqlc=$(make print-SQLC_VERSION)"
+            echo "mockery=$(make print-MOCKERY_VERSION)"
+          } >> "$GITHUB_OUTPUT"
+
+      # Installed straight rather than through `make tools`, which would also
+      # build buf and golangci-lint that this job never runs.
+      - name: Install generators
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@${{ steps.tools.outputs.sqlc }}
+          go install github.com/vektra/mockery/v3@${{ steps.tools.outputs.mockery }}
+
+      - run: make sqlc-vet
+
+      - name: sqlc output is in step with db/
+        run: make sqlc-check
+
+      - name: Mocks are in step with port/
+        run: make mock-check
+
+      - name: go.mod and go.sum are tidy
+        run: make tidy-check
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    # The adapter and outbox tests start real PostgreSQL containers through
+    # testcontainers, using the Docker daemon the runner already provides. The
+    # whole suite is about two minutes; the ceiling is for a hung container.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - run: make cover
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '### Coverage'
+            echo
+            echo '```'
+            go tool cover -func=coverage.out | tail -1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.html
+          retention-days: 14
+          if-no-files-found: ignore
+
+  vulnerabilities:
+    name: Vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Unpinned on purpose: a scanner's job is to know about advisories that
+      # did not exist when a version would have been pinned. It reports only
+      # vulnerabilities reachable from this code, so it is quiet enough to block.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - run: govulncheck ./...
+
+  # The image list is discovered rather than written down, so a new service is
+  # built for having a Dockerfile. A hardcoded matrix would leave the third
+  # service unbuilt with nothing saying so.
+  discover:
+    name: Discover services
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      services: ${{ steps.list.outputs.services }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: list
+        run: |
+          services=$(find services -mindepth 2 -maxdepth 2 -name Dockerfile -printf '%h\n' \
+            | xargs -n1 basename | sort | jq -R . | jq -sc .)
+          echo "services=$services" >> "$GITHUB_OUTPUT"
+          echo "$services"
+
+  images:
+    name: Image (${{ matrix.service }})
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.discover.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Read pinned tool versions
+        id: tools
+        run: echo "goose=$(make print-GOOSE_VERSION)" >> "$GITHUB_OUTPUT"
+
+      # Built and thrown away: this proves the Dockerfile still builds, which no
+      # Go test covers. Publishing belongs to a release workflow, not here.
+      - uses: docker/build-push-action@v6
+        with:
+          # The build context is the repository root — one go.mod covers every
+          # service, so a context scoped to the service cannot see its module.
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          build-args: GOOSE_VERSION=${{ steps.tools.outputs.goose }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  # One status check to require in branch protection. Without it, protection has
+  # to name every job above, and a job added here would not be required until
+  # someone remembered to add it there too.
+  ci:
+    name: CI
+    if: always()
+    needs: [lint, proto, generated, test, vulnerabilities, images]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every job succeeded
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "job results: $results"
+          [[ "$results" != *failure* && "$results" != *cancelled* ]] || exit 1
