@@ -292,6 +292,18 @@ The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for
 
 **Databases are not shared infrastructure.** Each service's local overlay declares its own single-database Postgres instance, so "database per service" is structural rather than a matter of grants. One instance holding a database per service is cheaper and was what this stack ran first, but Postgres grants `CONNECT` on every new database to `PUBLIC`, so each service role could open a connection to every other service's database and list its tables through `pg_catalog` — closing that needed a `REVOKE` in an init script whose absence nothing would report. With an instance per service there is nothing to revoke, and reaching another service's data would mean reaching another Service. Every dependency a service needs must be startable this way; nothing may require a shared remote environment to develop against.
 
+**The namespace denies ingress by default, and each workload carries the allow-list of who may reach it.** `deploy/k8s/infra/namespace.yaml` holds the deny — with the Namespace rather than in the infra kustomization, because `make down` removes that kustomization while the services it was protecting keep running. Everything else sits beside the thing it protects: a service's in `base/<name>/networkpolicy.yaml`, a database's in the overlay that declares the database, an infra component's next to its Deployment.
+
+This is what makes two rules above manifests instead of conventions. "Never query another service's tables" is enforced from the side that owns them — `identity-postgres` accepts connections from pods labelled `identity` and from nothing else, so a second service reaching for it fails to connect rather than reading rows. "East-west calls never go through the gateway" is a rule about who may *call*, so it lives on the other side: each service's egress list names DNS, Jaeger, its own database, and the services it calls, and Kong is absent from every one of them.
+
+Three things about it are easy to get wrong:
+
+- **Ports are numeric, not the port names the Services and the scrape config use.** A NetworkPolicy may name a port, but resolving it is the CNI's to implement, and a rule the CNI ignores is a rule that is not there.
+- **Egress is denied only on the service workloads**, never namespace-wide. Prometheus's pod discovery and Reloader's watch both reach the API server, and allowing that means writing a ClusterIP into a manifest — a fragile rule in service of no architectural rule.
+- **A new service that ships no policy is unreachable**, and the first sign is `make deploy` failing its smoke test. That is the better of the two failures; the other default is a service reachable by everything in the namespace, which nothing ever reports.
+
+Probes and `make port-forward` arrive from the node rather than from a pod and are not filtered, so neither needs a rule.
+
 Kubernetes locally rather than compose because the rules this repo cares about most are the ones compose cannot express: a headless Service with client-side gRPC balancing, `MAX_CONNECTION_AGE` forcing callers to re-resolve, `SHUTDOWN_TIMEOUT` fitting inside `terminationGracePeriodSeconds`, migrations as a Job, and readiness removing a pod from the endpoint list. Manifests that are never run before production are three bugs discovered on the same afternoon.
 
 The cost is the inner loop, and `make dev` is the whole answer to it: Tilt watches the tree and rebuilds and redeploys into the cluster — about eleven seconds from a Go edit to the new binary serving. Editing any file the image is built from is enough; nothing else needs running.
