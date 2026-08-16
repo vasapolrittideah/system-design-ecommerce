@@ -1,6 +1,6 @@
 module github.com/vasapolrittideah/system-design-ecommerce
 
-go 1.26.3
+go 1.26.6
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260709200747-435963d16310.1
