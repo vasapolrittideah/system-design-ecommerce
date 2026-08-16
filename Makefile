@@ -306,7 +306,7 @@ cluster-delete: ## Delete the k3d cluster and everything inside it
 ##@ Local stack
 
 .PHONY: up
-up: ## Start the shared local infra in the cluster (Jaeger, Kong, Reloader)
+up: ## Start the shared local infra in the cluster (Jaeger, Kong, Prometheus, Reloader)
 	$(need_cluster)
 	@# Databases are not here: each service brings its own Postgres instance in
 	@# its own overlay, so `make deploy SVC=x` is what starts x's database.
@@ -314,6 +314,7 @@ up: ## Start the shared local infra in the cluster (Jaeger, Kong, Reloader)
 	kubectl apply -k $(K8S_DIR)/infra
 	kubectl -n $(NAMESPACE) rollout status deployment/jaeger --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/kong --timeout=180s
+	kubectl -n $(NAMESPACE) rollout status deployment/prometheus --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/reloader-reloader --timeout=180s
 	@echo "gateway: http://localhost:8000 (https://localhost:8443 — self-signed)"
 
@@ -336,7 +337,7 @@ logs: ## Tail a service's logs across every replica (make logs SVC=identity)
 		-l app.kubernetes.io/name=$(SVC)
 
 .PHONY: port-forward
-port-forward: ## Expose a service's database and Jaeger on localhost (SVC=identity)
+port-forward: ## Expose a service's database, Jaeger, and Prometheus on localhost (SVC=identity)
 	$(need_svc)
 	@if [ ! -d services/$(SVC)/db/migrations ]; then \
 		echo "$(SVC) owns no database — nothing to forward. Use: make port-forward SVC=identity"; \
@@ -344,12 +345,16 @@ port-forward: ## Expose a service's database and Jaeger on localhost (SVC=identi
 	fi
 	@echo "$(SVC) postgres -> localhost:5432"
 	@echo "jaeger UI       -> http://localhost:16686"
+	@# 9092, because 9090 and 9091 are where the Tiltfile forwards the admin
+	@# ports Prometheus is scraping.
+	@echo "prometheus      -> http://localhost:9092 (alerts: /alerts)"
 	@# One database at a time on 5432, because that is what DSN and every
 	@# psql invocation assume. Forwarding a second service means a second
 	@# terminal with SVC set to it and a port of its own.
 	@trap 'kill 0' EXIT; \
 	kubectl -n $(NAMESPACE) port-forward svc/$(SVC)-postgres 5432:5432 >/dev/null & \
 	kubectl -n $(NAMESPACE) port-forward svc/jaeger 16686:16686 >/dev/null & \
+	kubectl -n $(NAMESPACE) port-forward svc/prometheus 9092:9090 >/dev/null & \
 	wait
 
 ##@ Develop

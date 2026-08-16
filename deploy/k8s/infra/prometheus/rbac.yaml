@@ -1,0 +1,30 @@
+# Pod discovery needs the API server's permission to list pods, and nothing
+# else. A Role rather than a ClusterRole, because the scrape config restricts
+# discovery to this namespace: the grant and the config say the same thing, so a
+# scrape config widened by accident fails with a 403 instead of quietly
+# collecting the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus

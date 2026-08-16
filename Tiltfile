@@ -79,6 +79,16 @@ k8s_resource(
     labels=['infra'],
 )
 
+# 9092 on the host, because 9090 and 9091 are taken by the admin ports this pod
+# is scraping. Editing prometheus.yml or alerts.yml is enough to apply a change
+# — Tilt re-runs kustomize, the ConfigMap content changes, and Reloader restarts
+# the pod, the same path a Kong routing change takes.
+k8s_resource(
+    'prometheus',
+    port_forwards=[port_forward(9092, 9090, name='prometheus')],
+    labels=['infra'],
+)
+
 # The proxy is deliberately not forwarded: the gateway is reached on
 # localhost:8000 through the k3d load balancer, which is the same path a browser
 # takes and the only one that exercises the Service, the upstream, and the

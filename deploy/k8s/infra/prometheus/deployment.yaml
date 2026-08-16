@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  annotations:
+    # prometheus.yml and alerts.yml are a mounted ConfigMap read at startup.
+    # Without this, an edited scrape config or a new alert applies to nothing
+    # until somebody deletes the pod — the same failure the Kong Deployment
+    # carries this annotation for.
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: the TSDB is an emptyDir owned by one pod, and a
+  # surge replica would come up scraping the same targets into a second, shorter
+  # history for however long the rollout takes.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prometheus
+          # The LTS line. This is infrastructure nobody wants to spend a morning
+          # bumping, and the query language a dashboard is written against
+          # should not move underneath it.
+          image: prom/prometheus:v3.5.5
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            # Storage is an emptyDir, so a restart loses the history regardless
+            # — the same trade Jaeger's in-memory store makes, and just as wrong
+            # anywhere but a laptop. The retention bound is what keeps a cluster
+            # left running over a weekend from filling the node's disk.
+            - --storage.tsdb.retention.time=24h
+            # No --web.enable-lifecycle: a reload endpoint reachable by anything
+            # in the namespace, to do what Reloader already does by restarting
+            # the pod.
+          ports:
+            - name: web
+              containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+          # /-/healthy is the process; /-/ready is the process with its TSDB
+          # replayed and its config loaded. The same split every service here
+          # makes, and the reason liveness must not use the second one: a WAL
+          # replay slow enough to fail readiness would otherwise restart the pod
+          # into replaying it again.
+          startupProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: web
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # Memory only, as everywhere else here. A CPU limit would throttle
+              # rule evaluation during exactly the incident the rules exist for.
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          emptyDir: {}

@@ -1,0 +1,79 @@
+# What scrapes the /metrics every process in this repo already serves.
+#
+# Discovery is by pod and not by Service, which is the one choice here worth
+# explaining. Every Service in this cluster is headless, so an endpoints-role
+# target would still resolve to pod IPs; but Kong's status port is deliberately
+# absent from its Service — probes and scrapes reach it on the pod — and a pod
+# that is rolling has an admin port answering before anything routes to it.
+# Selecting on the container port name covers all three cases with one rule, and
+# it means a new service is scraped for naming its port `admin` rather than for
+# carrying an annotation somebody has to remember.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: k3d-ecommerce
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+# No alerting section: there is no Alertmanager here. The rules still evaluate
+# and a firing one is visible under /alerts, which is what the local stack is
+# for — routing, silences, and who gets paged are a production concern and would
+# be one more pod on a laptop with nowhere to send anything.
+
+scrape_configs:
+  # Every Go process in the repo: pkg/observability serves /metrics on the port
+  # named `admin`, which is also where /healthz and /readyz live.
+  - job_name: services
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          own_namespace: true
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: admin
+      # A pod that has finished or not started yet answers nothing, and scraping
+      # it turns every migration Job and every rollout into a `up == 0` alert.
+      - source_labels: [__meta_kubernetes_pod_phase]
+        action: keep
+        regex: Running
+      # `service` rather than `job`, so the label matches what the process puts
+      # on its own spans and log lines and the three can be read together.
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        target_label: service
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_version]
+        target_label: version
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+
+  # Kong's own RED metrics, from the prometheus plugin in kong.yml. They measure
+  # the requests Kong answered itself — 429, 413, and the 502/503/504 raised when
+  # bff-web is unreachable — which are precisely the requests no service ever
+  # sees and therefore never counts.
+  - job_name: kong
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          own_namespace: true
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: status
+      - source_labels: [__meta_kubernetes_pod_phase]
+        action: keep
+        regex: Running
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        target_label: service
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+
+  # Itself, so that `up` has a series that proves the scraper is alive rather
+  # than only ever describing other people.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: prometheus

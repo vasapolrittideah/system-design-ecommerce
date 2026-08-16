@@ -1,0 +1,151 @@
+# The alerts worth having from the first day a service is deployed.
+#
+# Two rules govern what is in here. An alert fires on a metric something in this
+# repo actually emits — a rule written against a metric nobody publishes never
+# fires and reads as coverage that does not exist. And an alert fires on the
+# service being broken, never on a user doing something the service refused,
+# which is the same line pkg/grpcx/server draws when it logs NotFound at info:
+# an error rate that counts sold-out SKUs measures the catalogue, and the alert
+# on it is silenced within a week.
+#
+# Deliberately absent until the phase that emits them arrives: consumer lag,
+# DLQ depth, and saga duration. There is no Kafka in this stack yet.
+
+groups:
+  - name: targets
+    rules:
+      # Everything below this line is inferred from metrics, and a process
+      # nobody is scraping publishes no metrics to infer from — a crash-looping
+      # service is silent on every other rule here.
+      - alert: TargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }}/{{ $labels.pod }} has not been scraped for 5m"
+          description: "Prometheus cannot reach the admin port. The pod is down, wedged, or its port name changed."
+
+  - name: grpc
+    rules:
+      # The numerator is the breaker's list from CLAUDE.md — the codes that mean
+      # the target is unhealthy. NotFound and FailedPrecondition are the service
+      # working correctly and are excluded for the reason they are logged at
+      # info.
+      - alert: GRPCErrorRateHigh
+        expr: |
+          sum by (service, grpc_service, grpc_method) (
+            rate(grpc_server_handled_total{grpc_code=~"Internal|Unknown|DataLoss|Unavailable|DeadlineExceeded|ResourceExhausted"}[5m])
+          )
+          /
+          sum by (service, grpc_service, grpc_method) (
+            rate(grpc_server_handled_total[5m])
+          ) > 0.01
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} {{ $labels.grpc_method }} is failing {{ $value | humanizePercentage }} of calls"
+          description: "Server-fault gRPC codes over 1% for 10m. Join the access log to a trace by trace_id."
+
+      # 300ms is the downstream leg of the timeout budget — Kong 5s, BFF 800ms,
+      # downstream 300ms — so a p99 above it is the point at which the BFF's own
+      # deadline starts cancelling calls that would have succeeded.
+      - alert: GRPCLatencyP99High
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, service, grpc_service, grpc_method) (
+              rate(grpc_server_handling_seconds_bucket[5m])
+            )
+          ) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} {{ $labels.grpc_method }} p99 is {{ $value | humanizeDuration }}"
+          description: "Above the 300ms downstream budget, which is where the BFF's 800ms deadline begins cutting calls short."
+
+      # A recovered panic is a bug that was survived, not one that was handled.
+      # It alerts at any rate above zero because the second occurrence is not
+      # more informative than the first.
+      - alert: GRPCPanicsRecovered
+        expr: increase(grpc_server_panics_recovered_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} recovered a panic in {{ $labels.grpc_method }}"
+          description: "The recovery interceptor turned a panic into Internal. The stack is on the panic log line, keyed by trace_id."
+
+  - name: http
+    rules:
+      # 5xx only. A 4xx is the BFF telling a client it asked wrongly, and
+      # counting those would put a scanner's 404s into the error rate.
+      - alert: HTTPErrorRateHigh
+        expr: |
+          sum by (service, route) (rate(http_server_handled_total{code=~"5.."}[5m]))
+          /
+          sum by (service, route) (rate(http_server_handled_total[5m])) > 0.01
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} {{ $labels.route }} is answering {{ $value | humanizePercentage }} 5xx"
+          description: "Includes the 503 a critical fan-out dependency being unreachable produces, which is the intended answer but still an outage to the screen."
+
+      # 800ms is the BFF's whole share of the budget, the one httpx.WithRequestTimeout
+      # enforces. A p99 at it means requests are being cut off rather than served.
+      - alert: HTTPLatencyP99High
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, service, route) (
+              rate(http_server_handling_seconds_bucket[5m])
+            )
+          ) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} {{ $labels.route }} p99 is {{ $value | humanizeDuration }}"
+          description: "At or above the BFF's 800ms request timeout, so the slowest requests are being cancelled rather than answered."
+
+      - alert: HTTPPanicsRecovered
+        expr: increase(http_server_panics_recovered_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} recovered a panic on {{ $labels.route }}"
+          description: "The recoverer turned a panic into a 500 in the standard error shape. The stack is on the panic log line."
+
+  - name: outbox
+    rules:
+      # A stalled relay breaks nothing anyone can see: the API answers, the
+      # database is healthy, readiness stays green, and events simply never
+      # leave. These three rules are the only place that becomes visible.
+      - alert: OutboxBacklogHigh
+        expr: outbox_backlog_rows > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} has {{ $value }} unpublished outbox rows"
+          description: "Depth alone does not separate a busy relay from a dead one — check OutboxRelayStalled alongside this."
+
+      # Age is the one that says stopped rather than busy: a thousand rows a
+      # second old is a healthy burst, five rows ten minutes old is a relay that
+      # died holding the lock.
+      - alert: OutboxRelayStalled
+        expr: outbox_oldest_unpublished_seconds > 300
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }}'s oldest unpublished event is {{ $value | humanizeDuration }} old"
+          description: "The relay is not draining. Every consumer downstream of this service is working from stale facts."
+
+      - alert: OutboxPublishFailing
+        expr: increase(outbox_publish_failures_total[10m]) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }}'s outbox relay failed {{ $value }} publish cycles in 10m"
+          description: "Cycles are rolled back, so no event is lost — but the broker is refusing writes and the backlog is growing."

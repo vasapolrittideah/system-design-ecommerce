@@ -1,0 +1,17 @@
+# ClusterIP, and reached from the host by port-forward alone. Prometheus holds
+# every RED series in the system and its query API has no authentication, which
+# is exactly the reason the ports it scrapes are not published either.
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  selector:
+    app.kubernetes.io/name: prometheus
+  ports:
+    # Named `web` rather than `admin`, or the scrape config would discover this
+    # port as a service target and Prometheus would be scraped twice under two
+    # job names.
+    - name: web
+      port: 9090
+      targetPort: web

@@ -1,9 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Dependencies every service shares. Kafka (KRaft) and Prometheus join this list
-# as the phases that need them arrive — an unused broker on a laptop is a
-# gigabyte of RAM and a pod that is red for no reason.
+# Dependencies every service shares. Kafka (KRaft) joins this list as the phase
+# that needs it arrives — an unused broker on a laptop is a gigabyte of RAM and
+# a pod that is red for no reason.
 #
 # Kong is here rather than under base/ and overlays/ because it is a dependency
 # and not a service: nothing in this repo builds its image, so it belongs beside
@@ -25,6 +25,7 @@ kind: Kustomization
 resources:
   - jaeger.yaml
   - kong
+  - prometheus
   - reloader.yaml
 
 namespace: ecommerce
