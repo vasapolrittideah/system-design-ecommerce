@@ -63,9 +63,31 @@ GOTEST_FLAGS ?=
 COVERAGE_OUT  := coverage.out
 COVERAGE_HTML := coverage.html
 
+# Where each generator writes, as git pathspecs the *-check targets compare.
+# Quoted at the point of use so git sees the pattern rather than the shell's
+# expansion of it, and ending in /* because a pathspec containing a wildcard is
+# matched against whole paths — without it the directory name matches nothing
+# inside the directory, and the check passes on everything.
+SQLC_OUT := services/*/internal/adapter/out/postgres/sqlc/*
+MOCK_OUT := services/*/internal/port/*/mocks/*
+
 # Fail early with an actionable message instead of "command not found".
 define need
 	@command -v $(1) >/dev/null 2>&1 || { echo "$(1) not found — run: make tools"; exit 1; }
+endef
+
+# Regenerate, then fail if anything moved: committed output that does not match
+# its source is output nobody regenerated.
+#
+# --porcelain rather than `git diff`: a file that was never committed is
+# untracked and would not show up in a diff at all. The message must contain no
+# comma — $(call) splits its arguments on them.
+define check_generated
+	@if [ -n "$$(git status --porcelain -- $(1))" ]; then \
+		git status --short -- $(1); \
+		echo "$(2)"; \
+		exit 1; \
+	fi
 endef
 
 define need_svc
@@ -109,6 +131,11 @@ help: ## Show this help
 .PHONY: tidy
 tidy: ## go mod tidy
 	go mod tidy
+
+.PHONY: tidy-check
+tidy-check: ## Fail if go.mod or go.sum is not tidy (CI)
+	go mod tidy
+	$(call check_generated,go.mod go.sum,go.mod or go.sum is not tidy — run: make tidy and commit the result)
 
 .PHONY: deps
 deps: ## Download and verify module dependencies
@@ -163,6 +190,12 @@ generate: ## Run go generate
 mock: ## Regenerate mocks (mockery v3, driven by .mockery.yml)
 	$(call need,mockery)
 	mockery
+
+.PHONY: mock-check
+mock-check: ## Fail if the committed mocks are stale relative to port/ (CI)
+	$(call need,mockery)
+	mockery
+	$(call check_generated,"$(MOCK_OUT)",mocks are stale — run: make mock and commit the result)
 
 .PHONY: build
 build: ## Build every services/*/cmd/* binary into bin/
@@ -219,13 +252,7 @@ proto-deps: ## Update buf.lock from buf.yaml dependencies
 proto-check: ## Fail if gen/go is stale relative to proto/ (CI)
 	$(call need,buf)
 	buf generate
-	@# --porcelain, not `git diff`: a never-committed .pb.go is untracked and
-	@# would not show up in a diff at all.
-	@if [ -n "$$(git status --porcelain -- gen/)" ]; then \
-		git status --short -- gen/; \
-		echo "gen/ is stale — run: make proto and commit the result"; \
-		exit 1; \
-	fi
+	$(call check_generated,gen/,gen/ is stale — run: make proto and commit the result)
 
 ##@ Database
 
@@ -233,6 +260,12 @@ proto-check: ## Fail if gen/go is stale relative to proto/ (CI)
 sqlc: ## Generate type-safe queries with sqlc
 	$(call need,sqlc)
 	sqlc generate
+
+.PHONY: sqlc-check
+sqlc-check: ## Fail if the sqlc output is stale relative to db/ (CI)
+	$(call need,sqlc)
+	sqlc generate
+	$(call check_generated,"$(SQLC_OUT)",sqlc output is stale — run: make sqlc and commit the result)
 
 .PHONY: sqlc-vet
 sqlc-vet: ## Lint SQL queries with sqlc
@@ -472,7 +505,13 @@ tools-clean: ## Remove everything installed in bin/
 ##@ Meta
 
 .PHONY: ci
-ci: fmt-check lint proto-lint test ## What CI runs
+ci: tidy-check fmt-check lint proto-lint proto-check sqlc-vet sqlc-check mock-check test ## What CI runs
+	@# proto-breaking is missing on purpose: the baseline here is trunk, which
+	@# on trunk is the commit being checked. The workflow passes its own.
+
+.PHONY: print-%
+print-%: ## Print a variable's value (make print-BUF_VERSION) — lets CI read the pinned versions
+	@echo '$($*)'
 
 .PHONY: clean
 clean: ## Remove build and coverage output
