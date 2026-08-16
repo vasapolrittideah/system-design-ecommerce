@@ -268,6 +268,11 @@ Most tests are domain tests: table-driven, no mocks, millisecond-fast, covering 
 
 Shared test helpers — container bootstrapping, fixtures, fake clock — live in `pkg/`, not duplicated per service.
 
+**Load testing is k6 through the gateway** — `scripts/load`, run by `make load`, deliberately manual and never a CI gate. It offers a fixed arrival rate rather than holding a fixed number of virtual users, so a system that slows down builds a queue instead of quietly receiving less traffic, which is the behaviour worth watching. Two things about it are load-bearing:
+
+- **The run raises Kong's rate limits and restores them afterwards**, deriving the raised config from `kong.yml` itself rather than keeping a second copy. 300 requests a minute is a limit set for people, and a run against it measures the limiter and nothing behind it. The bypass is deliberately not a route or a header that skips the plugin — that is a rate limit anyone can opt out of, and it would be one merge away from being true in production.
+- **The numbers are not a capacity result.** Generator, cluster, and every database share one laptop, and the local overlays request 10m of CPU per pod so that the HPA is reachable at all. What transfers is the shape: which limit is met first, which error the system answers with, and whether scaling out changed it.
+
 ## Commands
 
 ```text
@@ -280,6 +285,7 @@ make cluster-create     # k3d cluster with its registry, once
 make dev                # tilt up — watch, rebuild, redeploy
 make up                 # apply deploy/k8s/infra into the cluster
 make deploy SVC=x       # build image, run the migration Job, roll out
+make load SCENARIO=me   # k6 through Kong, with its rate limits raised for the run
 ```
 
 The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies every service shares (Jaeger, Kong DB-less, Reloader; Kafka in KRaft mode as the phase needing it arrives) and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/local/<name>` for the services.
