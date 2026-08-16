@@ -65,8 +65,12 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_phase]
         action: keep
         regex: Running
-      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
-        target_label: service
+      # Deliberately no `service` target label here, unlike the job above.
+      # Kong publishes a `service` label of its own naming the *upstream* a
+      # request was proxied to, which is the more useful meaning of the word on
+      # these series; setting one here would collide and Prometheus would rename
+      # Kong's to exported_service, leaving every panel reading the wrong label.
+      # `job="kong"` already says where the series came from.
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
 
