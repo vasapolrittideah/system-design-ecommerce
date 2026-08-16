@@ -1,0 +1,18 @@
+# Dashboards come from files in a ConfigMap, and the UI cannot save over them.
+#
+# The alternative is dashboards built by clicking, stored in Grafana's own
+# sqlite: not reviewable, not in git, and gone the moment the pod is replaced —
+# which it is on every config change, because Reloader restarts it. Editing a
+# panel here means editing the JSON and committing it, the same path kong.yml
+# and prometheus.yml take.
+apiVersion: 1
+
+providers:
+  - name: ecommerce
+    orgId: 1
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

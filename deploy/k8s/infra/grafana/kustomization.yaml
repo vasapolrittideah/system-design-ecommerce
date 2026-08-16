@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# No namespace and no shared labels here: the infra kustomization that includes
+# this directory sets both, the same way it does for every other dependency.
+
+resources:
+  - deployment.yaml
+  - service.yaml
+
+# Fixed names, as everywhere else in this repo. Kustomize's content hash would
+# roll the Deployment by renaming the object, but it gets there by creating a
+# new ConfigMap on every edit and orphaning the last one, with nothing to remove
+# them. The Reloader annotation on the Deployment does the restart instead.
+generatorOptions:
+  disableNameSuffixHash: true
+
+# Three ConfigMaps rather than one, because Grafana reads them from three
+# different directories: provisioning/datasources, provisioning/dashboards for
+# the provider, and the dashboard files themselves.
+configMapGenerator:
+  - name: grafana-datasources
+    files:
+      - datasources.yaml
+  - name: grafana-dashboard-provider
+    files:
+      - dashboards.yaml
+  - name: grafana-dashboards
+    files:
+      - dashboard-services.json
+      - dashboard-gateway.json

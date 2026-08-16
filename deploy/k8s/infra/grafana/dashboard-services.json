@@ -1,0 +1,358 @@
+{
+  "uid": "services-red",
+  "title": "Services — RED",
+  "description": "Rate, errors, and duration for every Go process in the repo. Latency panels carry exemplars: a point on the p99 line is a link into the trace behind it.",
+  "tags": ["ecommerce"],
+  "timezone": "browser",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(up, service)",
+        "query": { "qryType": 1, "query": "label_values(up, service)", "refId": "service" },
+        "refresh": 1,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "gRPC",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Request rate",
+      "description": "Calls per second per method, by status code.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (service, grpc_method, grpc_code) (rate(grpc_server_handled_total{service=~\"$service\"}[5m]))",
+          "legendFormat": "{{service}} {{grpc_method}} {{grpc_code}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Error rate",
+      "description": "Only the codes that mean the service is broken — the same list the client's circuit breaker counts. NotFound and FailedPrecondition are the service working correctly and are excluded, or this panel would measure user behaviour. The 1% line is where GRPCErrorRateHigh fires.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.01 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (service, grpc_method) (rate(grpc_server_handled_total{service=~\"$service\", grpc_code=~\"Internal|Unknown|DataLoss|Unavailable|DeadlineExceeded|ResourceExhausted\"}[5m])) / sum by (service, grpc_method) (rate(grpc_server_handled_total{service=~\"$service\"}[5m]))",
+          "legendFormat": "{{service}} {{grpc_method}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "p99 latency",
+      "description": "Click an exemplar diamond to open the trace that produced that observation. The 300ms line is the downstream leg of the timeout budget, where the BFF's own deadline starts cancelling calls.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum by (le, service, grpc_method) (rate(grpc_server_handling_seconds_bucket{service=~\"$service\"}[5m])))",
+          "legendFormat": "{{service}} {{grpc_method}}"
+        }
+      ]
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "HTTP (BFF)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Request rate",
+      "description": "Labelled by route pattern, never by path — one series per endpoint rather than one per user.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (service, route, code) (rate(http_server_handled_total{service=~\"$service\"}[5m]))",
+          "legendFormat": "{{service}} {{route}} {{code}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "5xx rate",
+      "description": "5xx only. A 4xx is the BFF telling a client it asked wrongly, and counting it here would put a scanner's 404s into the error rate. Includes the 503 an unreachable critical dependency produces — the intended answer, but still an outage to the screen.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.01 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (service, route) (rate(http_server_handled_total{service=~\"$service\", code=~\"5..\"}[5m])) / sum by (service, route) (rate(http_server_handled_total{service=~\"$service\"}[5m]))",
+          "legendFormat": "{{service}} {{route}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "p99 latency",
+      "description": "800ms is the BFF's whole share of the timeout budget, enforced by httpx.WithRequestTimeout. A p99 at the line means the slowest requests are being cancelled rather than answered. Exemplars link to the trace, which holds every fan-out call the slow request made.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum by (le, service, route) (rate(http_server_handling_seconds_bucket{service=~\"$service\"}[5m])))",
+          "legendFormat": "{{service}} {{route}}"
+        }
+      ]
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Saturation and faults",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "In-flight requests",
+      "description": "The gauge to read during an incident: a rising line with a flat request rate is work piling up behind something slow.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 19 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (service) (grpc_server_in_flight_requests{service=~\"$service\"}) or sum by (service) (http_server_in_flight_requests{service=~\"$service\"})",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Panics recovered",
+      "description": "A recovered panic is a bug that was survived, not one that was handled. Anything above zero here has a stack on a log line with the same trace_id.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 19 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 20, "showPoints": "never", "drawStyle": "bars" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (service) (increase(grpc_server_panics_recovered_total{service=~\"$service\"}[5m])) or sum by (service) (increase(http_server_panics_recovered_total{service=~\"$service\"}[5m]))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Goroutines and heap",
+      "description": "The runtime collectors pkg/observability registers for everyone. A goroutine count that only rises is the leak nothing else reports.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 19 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*heap.*" },
+            "properties": [{ "id": "unit", "value": "bytes" }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (service) (go_goroutines{service=~\"$service\"})",
+          "legendFormat": "{{service}} goroutines"
+        },
+        {
+          "refId": "B",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (service) (go_memstats_heap_inuse_bytes{service=~\"$service\"})",
+          "legendFormat": "{{service}} heap"
+        }
+      ]
+    }
+  ]
+}

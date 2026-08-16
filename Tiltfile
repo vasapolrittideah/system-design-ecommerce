@@ -89,6 +89,16 @@ k8s_resource(
     labels=['infra'],
 )
 
+# Where the three signals meet: metrics from Prometheus, traces from Jaeger, and
+# a link between them on every latency panel. Editing a dashboard means editing
+# its JSON — the provisioned copies cannot be saved over from the UI, which is
+# what keeps them in git rather than in a pod's sqlite.
+k8s_resource(
+    'grafana',
+    port_forwards=[port_forward(3000, 3000, name='grafana')],
+    labels=['infra'],
+)
+
 # The proxy is deliberately not forwarded: the gateway is reached on
 # localhost:8000 through the k3d load balancer, which is the same path a browser
 # takes and the only one that exercises the Service, the upstream, and the

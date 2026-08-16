@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  annotations:
+    # Datasources and dashboards are mounted ConfigMaps read at startup. Without
+    # this, an edited panel applies to nothing until somebody deletes the pod.
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: nothing here is worth keeping across a restart,
+  # and two replicas provisioning the same dashboards is one pod's worth of work
+  # done twice.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # The uid the image's files are owned by.
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.4.8
+          env:
+            # No login page. Everything this Grafana can reach is already
+            # readable by anything in the namespace, and the alternative is a
+            # password in a Secret that exists only to be typed into a laptop.
+            # It is reachable by port-forward alone — see the Service.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Editor
+            - name: GF_AUTH_BASIC_ENABLED
+              value: "false"
+            - name: GF_AUTH_DISABLE_LOGIN_FORM
+              value: "true"
+            # A dashboard is a file in this repo, so the landing page is one of
+            # them rather than a welcome screen advertising the ones nobody
+            # provisioned.
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /etc/grafana/dashboards/dashboard-services.json
+            # Nothing phones home from a laptop. The update check is also a
+            # startup-time HTTP call to the internet, which in an offline
+            # cluster is a slow start for no answer.
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+              value: "false"
+            - name: GF_NEWS_NEWS_FEED_ENABLED
+              value: "false"
+          ports:
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+              readOnly: true
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+              readOnly: true
+            # Under /etc, with the rest of the configuration, and deliberately
+            # not under the data directory below: that one is a writable volume,
+            # and nesting a read-only ConfigMap inside it makes the layout
+            # depend on the order the kubelet happens to mount things.
+            - name: dashboards
+              mountPath: /etc/grafana/dashboards
+              readOnly: true
+            # GF_PATHS_DATA. Grafana creates its sqlite here at startup, so this
+            # has to be a writable volume or the process exits before serving —
+            # the root filesystem is read-only, as everywhere else here. Nothing
+            # in it is worth keeping: datasources and dashboards are provisioned
+            # from files, and the UI cannot save over them.
+            - name: data
+              mountPath: /var/lib/grafana
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 45
+          # /api/health is the process and its database. As everywhere else
+          # here, liveness must not fail because a datasource is down — that
+          # would restart the one thing able to show you which one.
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+        - name: data
+          emptyDir: {}

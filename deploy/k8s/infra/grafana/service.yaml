@@ -1,0 +1,16 @@
+# ClusterIP, reached from the host by port-forward alone. Anonymous access is
+# on, so publishing this port would put an unauthenticated window onto every
+# metric and trace in the cluster on the node's network.
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector:
+    app.kubernetes.io/name: grafana
+  ports:
+    # Not `admin`, or Prometheus would discover this pod as a service target and
+    # scrape a /metrics that does not live on this port.
+    - name: http
+      port: 3000
+      targetPort: http

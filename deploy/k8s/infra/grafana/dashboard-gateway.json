@@ -1,0 +1,145 @@
+{
+  "uid": "gateway-kong",
+  "title": "Gateway — Kong",
+  "description": "The requests Kong answered itself are the ones no service ever sees: rate limits, oversized bodies, and the 502/503/504 raised when bff-web is unreachable. This dashboard is where those exist.",
+  "tags": ["ecommerce"],
+  "timezone": "browser",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests by status",
+      "description": "`service` here is Kong's own label naming the upstream a request was proxied to, not the process that emitted the series — the scrape config leaves it alone for that reason.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (route, code) (rate(kong_http_requests_total[5m]))",
+          "legendFormat": "{{route}} {{code}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Answered by Kong itself",
+      "description": "source=\"kong\" means Kong short-circuited the request before any service saw it — a 429 from the rate limiter, a 413 over the body cap, or a 5xx because there was no healthy bff-web to route to. These carry `message` and no `error.code`, so a client cannot branch on them the way it branches on the API's own errors.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 20, "showPoints": "never", "drawStyle": "bars" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum by (route, code) (rate(kong_http_requests_total{source=\"kong\"}[5m]))",
+          "legendFormat": "{{route}} {{code}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "p99 total latency",
+      "description": "What the caller experienced, gateway included. The 5s line is Kong's leg of the timeout budget.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "histogram_quantile(0.99, sum by (le, route) (rate(kong_request_latency_ms_bucket[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "p99 latency added by Kong",
+      "description": "Total latency minus the upstream's share — the cost of the gateway's own plugins. A rise here with a flat upstream line is a plugin, not a service.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "expr": "histogram_quantile(0.99, sum by (le, route) (rate(kong_kong_latency_ms_bucket[5m])))",
+          "legendFormat": "{{route}} kong"
+        },
+        {
+          "refId": "B",
+          "editorMode": "code",
+          "range": true,
+          "expr": "histogram_quantile(0.99, sum by (le, route) (rate(kong_upstream_latency_ms_bucket[5m])))",
+          "legendFormat": "{{route}} upstream"
+        }
+      ]
+    }
+  ]
+}

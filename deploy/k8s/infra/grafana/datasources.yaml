@@ -1,0 +1,41 @@
+# Datasources as files rather than as clicks. Grafana reads this at startup and
+# on every restart, so the connection details are reviewable and a pod that is
+# deleted comes back knowing where its data is.
+apiVersion: 1
+
+# Named the same on every restart, so a dashboard can reference a datasource by
+# uid instead of by whatever id an import happened to assign.
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      # What makes a latency panel clickable. Prometheus stores the trace ID
+      # that pkg/httpx and pkg/grpcx/server hang off each sampled observation;
+      # this is the half that turns it into a link into Jaeger.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: jaeger
+
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      # The other direction: from a span, jump to the RED metrics of the service
+      # that produced it. `service` is the label pkg/observability puts on every
+      # series and the resource attribute it puts on every span, which is what
+      # lets one name work on both sides.
+      tracesToMetrics:
+        datasourceUid: prometheus
+        tags:
+          - key: service.name
+            value: service
+        queries:
+          - name: "Request rate"
+            query: 'sum by (grpc_method, route) (rate({__name__=~"grpc_server_handled_total|http_server_handled_total", $$__tags}[5m]))'

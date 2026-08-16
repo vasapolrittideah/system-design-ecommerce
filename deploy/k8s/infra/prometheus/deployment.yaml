@@ -45,6 +45,12 @@ spec:
             # anywhere but a laptop. The retention bound is what keeps a cluster
             # left running over a weekend from filling the node's disk.
             - --storage.tsdb.retention.time=24h
+            # Exemplar storage is off by default and silently drops what the
+            # services already publish: pkg/grpcx/server and pkg/httpx hang the
+            # trace ID of a sampled request on its latency bucket, and this is
+            # what keeps it. Without it Grafana's latency panels have nothing to
+            # link from and the jump to Jaeger is missing with no error.
+            - --enable-feature=exemplar-storage
             # No --web.enable-lifecycle: a reload endpoint reachable by anything
             # in the namespace, to do what Reloader already does by restarting
             # the pod.

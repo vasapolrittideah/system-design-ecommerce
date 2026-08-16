@@ -306,7 +306,7 @@ cluster-delete: ## Delete the k3d cluster and everything inside it
 ##@ Local stack
 
 .PHONY: up
-up: ## Start the shared local infra in the cluster (Jaeger, Kong, Prometheus, Reloader)
+up: ## Start the shared local infra in the cluster (Jaeger, Kong, Prometheus, Grafana, Reloader)
 	$(need_cluster)
 	@# Databases are not here: each service brings its own Postgres instance in
 	@# its own overlay, so `make deploy SVC=x` is what starts x's database.
@@ -315,6 +315,7 @@ up: ## Start the shared local infra in the cluster (Jaeger, Kong, Prometheus, Re
 	kubectl -n $(NAMESPACE) rollout status deployment/jaeger --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/kong --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/prometheus --timeout=180s
+	kubectl -n $(NAMESPACE) rollout status deployment/grafana --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/reloader-reloader --timeout=180s
 	@echo "gateway: http://localhost:8000 (https://localhost:8443 — self-signed)"
 
@@ -337,7 +338,7 @@ logs: ## Tail a service's logs across every replica (make logs SVC=identity)
 		-l app.kubernetes.io/name=$(SVC)
 
 .PHONY: port-forward
-port-forward: ## Expose a service's database, Jaeger, and Prometheus on localhost (SVC=identity)
+port-forward: ## Expose a service's database and the observability UIs on localhost (SVC=identity)
 	$(need_svc)
 	@if [ ! -d services/$(SVC)/db/migrations ]; then \
 		echo "$(SVC) owns no database — nothing to forward. Use: make port-forward SVC=identity"; \
@@ -348,6 +349,7 @@ port-forward: ## Expose a service's database, Jaeger, and Prometheus on localhos
 	@# 9092, because 9090 and 9091 are where the Tiltfile forwards the admin
 	@# ports Prometheus is scraping.
 	@echo "prometheus      -> http://localhost:9092 (alerts: /alerts)"
+	@echo "grafana         -> http://localhost:3000"
 	@# One database at a time on 5432, because that is what DSN and every
 	@# psql invocation assume. Forwarding a second service means a second
 	@# terminal with SVC set to it and a port of its own.
@@ -355,6 +357,7 @@ port-forward: ## Expose a service's database, Jaeger, and Prometheus on localhos
 	kubectl -n $(NAMESPACE) port-forward svc/$(SVC)-postgres 5432:5432 >/dev/null & \
 	kubectl -n $(NAMESPACE) port-forward svc/jaeger 16686:16686 >/dev/null & \
 	kubectl -n $(NAMESPACE) port-forward svc/prometheus 9092:9090 >/dev/null & \
+	kubectl -n $(NAMESPACE) port-forward svc/grafana 3000:3000 >/dev/null & \
 	wait
 
 ##@ Develop

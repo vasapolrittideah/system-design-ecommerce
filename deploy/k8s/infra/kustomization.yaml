@@ -23,6 +23,7 @@ kind: Kustomization
 # away the database is `make clean-volumes`, and it should take a second
 # command to say so.
 resources:
+  - grafana
   - jaeger.yaml
   - kong
   - prometheus
