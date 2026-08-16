@@ -1,13 +1,13 @@
 # CLAUDE.md
 
-E-commerce microservices monorepo. **Go · gRPC · PostgreSQL · Kafka · Kong**, hexagonal architecture per service, with a Composition API (BFF) in front.
+E-commerce microservices monorepo. **Go · gRPC · PostgreSQL · Kafka · Kong**, hexagonal architecture per service, with a BFF in front — one per audience, `bff-web` today.
 
 ## Non-negotiable rules
 
 1. **Database per service.** Never query another service's tables. Cross-service reads go through gRPC; cross-service facts arrive via Kafka events.
 2. **gRPC is synchronous** (caller needs the answer now). **Kafka is asynchronous** (telling others something happened). Do not use Kafka for request/response, do not use gRPC for fan-out notifications.
 3. **Kong handles north-south traffic only.** East-west calls go service-to-service over gRPC. Never route internal calls through the gateway.
-4. **Composition API has no database and no business logic.** It fans out, merges, and shapes responses. Nothing else.
+4. **A BFF has no database and no business logic.** It fans out, merges, and shapes responses. Nothing else.
 5. **`internal/domain` imports libraries, never layers, and shares no code with another service.** The allow-list is the standard library plus `google/uuid`, and that is the whole of it: no `pkg/`, no generated proto, no gRPC, pgx, or Kafka. Imports pointing *inward* need no rule — port, app, and adapter all import domain, so an import back at any of them is a cycle that does not build; `depguard` in `.golangci.yml` exists for the outward ones, which compile fine and are what hexagonal actually forbids. The line is between a library and a layer rather than between third-party and first-party code: a library carries no domain meaning and nobody here can change it, while `pkg/` is denied even where one package looks harmless, because a package we own can grow — today's UUID helper is next quarter's shared `Money`, and by then two services import it and changing it for one changes it for both. Where a library does not already exist the code is copied per service, which is the right trade wherever divergence would harm nobody; where divergence would instead be a *bug*, the answer is a deliberate shared kernel with an owner, argued as an architecture decision, never one more entry in the allow-list.
 
 ## Repository layout
@@ -68,7 +68,7 @@ A service owns exactly one bounded context: one set of aggregates, one database,
 
 Contract-first with `buf`. Change `.proto` first, run `buf lint`, `buf breaking --against '.git#branch=trunk'`, then `buf generate`. Never edit files under `gen/`.
 
-Request validation is declared in the proto with **protovalidate** and enforced by a single interceptor — do not write per-handler validation code. The Composition API is the one place that cannot use it, because its request bodies are hand-written DTOs rather than protos; those are validated by `validate` struct tags through `httpx.Validator.Bind`. Those are the only two mechanisms in the repo. A handler that checks its own input by hand is a bug wherever it appears.
+Request validation is declared in the proto with **protovalidate** and enforced by a single interceptor — do not write per-handler validation code. A BFF is the one place that cannot use it, because its request bodies are hand-written DTOs rather than protos; those are validated by `validate` struct tags through `httpx.Validator.Bind`. Those are the only two mechanisms in the repo. A handler that checks its own input by hand is a bug wherever it appears.
 
 Standard server interceptor chain (`pkg/grpcx/server`), in order: recovery → logging → metrics → auth → validate. Tracing is not in that list because otel is installed as a `stats.Handler`, its interceptor form being deprecated upstream — which wraps the whole chain rather than sitting inside it, so the span exists before recovery runs and a panic lands on the trace instead of beside it.
 
@@ -79,7 +79,7 @@ Consequences of that order, both deliberate:
 
 The chain also owns the correlation ID: it adopts an inbound `x-correlation-id` or mints one, puts it in the context, and echoes it as a response header.
 
-`pkg/grpcx` itself only holds what both ends must agree on — the identity metadata keys and `Identity` in the context. Authentication establishes *who* is calling and nothing more; whether that caller may touch this aggregate is a business rule owned by the service. The default authenticator reads the identity forwarded from the edge and never rejects, because relays, timeout workers, and plain service-to-service reads legitimately arrive with no user behind them. Verifying a token is `pkg/auth`'s job, and it happens at the edge — the Composition API's HTTP middleware — not in this chain. `WithAuth` exists for a gRPC server that ever becomes a first reachable hop; nothing is one today, and a service that grows into one wraps `pkg/auth`'s verifier rather than writing its own.
+`pkg/grpcx` itself only holds what both ends must agree on — the identity metadata keys and `Identity` in the context. Authentication establishes *who* is calling and nothing more; whether that caller may touch this aggregate is a business rule owned by the service. The default authenticator reads the identity forwarded from the edge and never rejects, because relays, timeout workers, and plain service-to-service reads legitimately arrive with no user behind them. Verifying a token is `pkg/auth`'s job, and it happens at the edge — a BFF's HTTP middleware — not in this chain. `WithAuth` exists for a gRPC server that ever becomes a first reachable hop; nothing is one today, and a service that grows into one wraps `pkg/auth`'s verifier rather than writing its own.
 
 Client side (`pkg/grpcx/client`): callers always set a deadline and callees respect `ctx.Done()` (a call arriving without a deadline gets a default one rather than waiting forever); retries only on `Unavailable`/`DeadlineExceeded` with exponential backoff + jitter, and only for idempotent methods; circuit breaker per target service, outside the retry loop so one logical call counts once; keepalive plus a default service config for round-robin balancing.
 
@@ -103,7 +103,7 @@ KindInternal         → codes.Internal            → 500 (never leak internals
 
 The kinds are transport-shaped, never business-shaped: `KindConflict`, not `ErrOutOfStock`. A service names its own failures in its own vocabulary and points them at a kind — `pkg/` may not learn what a SKU is.
 
-`KindUnauthenticated` and `KindUnauthorized` are never interchangeable, and only the second one is a service's to raise. 401 says the credential is the problem, so the client should run its refresh flow; 403 says the credential was fine and the answer is still no. A frontend handed 403 for an expired token logs the user out instead of quietly renewing. Only a process that verifies tokens itself produces the first — Kong, and the Composition API re-verifying behind it. A service reached over east-west gRPC has had identity settled two hops earlier and only ever answers the authorization question.
+`KindUnauthenticated` and `KindUnauthorized` are never interchangeable, and only the second one is a service's to raise. 401 says the credential is the problem, so the client should run its refresh flow; 403 says the credential was fine and the answer is still no. A frontend handed 403 for an expired token logs the user out instead of quietly renewing. Only a process that verifies tokens itself produces the first — Kong, and the BFF re-verifying behind it. A service reached over east-west gRPC has had identity settled two hops earlier and only ever answers the authorization question.
 
 **A domain package declares its kind structurally, never by importing `errorx`.** It implements `ErrorKind() string` returning one of the kind strings (`"conflict"`, `"not_found"`, …), which is a method signature and therefore no dependency at all — the same trick as `Unwrap` and `Stringer`. This is what keeps `internal/domain` free of `pkg/` while its errors still map correctly. Code outside `domain` builds errors directly instead: `errorx.New(errorx.KindNotFound, "order %s not found", id)`, or `errorx.Wrap` where a lower layer's failure is the explanation. An error declaring no kind is Internal — an unclassified failure is a bug until someone classifies it, and defaulting the other way would answer 400 for a broken database.
 
@@ -116,7 +116,7 @@ The kinds are transport-shaped, never business-shaped: `KindConflict`, not `ErrO
 
 Only the `Internal` message is replaced — every other kind is a fact the caller asked for. The returned error still wraps the original, so the access line logs the full chain while the client gets the scrubbed status; without that, hiding internals would also erase the only record of what broke.
 
-Attach `ErrorInfo` details so clients can handle specific cases — `.WithReason("OUT_OF_STOCK").WithMetadata(map[string]string{"sku": sku})`. Reason codes are API: a client branches on them, so renaming one is a breaking change. Every error carries one whether or not it was set, defaulted from the kind, so nobody has to pattern-match a message. Reading back on the other side is `errorx.Reason` / `errorx.Metadata`, and the Composition API turns a status into an HTTP code with `errorx.HTTPStatus`.
+Attach `ErrorInfo` details so clients can handle specific cases — `.WithReason("OUT_OF_STOCK").WithMetadata(map[string]string{"sku": sku})`. Reason codes are API: a client branches on them, so renaming one is a breaking change. Every error carries one whether or not it was set, defaulted from the kind, so nobody has to pattern-match a message. Reading back on the other side is `errorx.Reason` / `errorx.Metadata`, and a BFF turns a status into an HTTP code with `errorx.HTTPStatus`.
 
 ## PostgreSQL
 
@@ -169,17 +169,26 @@ Failure handling that must exist in any such flow:
 | Saga stuck mid-flight | `saga_instance` table + timeout worker that forces compensation |
 | Overselling / lost update | `UPDATE stock SET available = available - $1 WHERE sku = $2 AND available >= $1` — let the DB be the final guard, never read-then-write |
 
-## Composition API (BFF)
+## BFF
 
 Screen-oriented REST endpoints — one endpoint per screen, not per entity — stateless, no database.
 
+**One BFF per audience, named `bff-<audience>`.** `bff-web` serves the storefront; an admin console arrives as `bff-admin`, not as a route group inside this one. Screens belong to an audience, so a single BFF serving two would hold two unrelated sets of endpoints and two unrelated authorization stories in one process. The prefix is also what `.golangci.yml` matches to let a BFF import `pkg/httpx` while every other service is denied it — a new BFF named to the pattern needs no lint change, and a service that grows an HTTP handler is either the wrong place for it or a BFF that was not named like one.
+
+Its structure is the hexagonal layout with the layers it has no use for left out: `cmd/server`, `internal/bootstrap`, `internal/adapter/in/rest`, and nothing else. There is no `domain`, no `port`, and no `app`, because there are no rules to protect and nothing to invert — the handler depends on the generated client interface directly, since the proto already is the contract and a hand-written mirror of it would be a second copy to keep in step. An `app` package earns its place the day a use case fans out across several services and has to name something the generated code does not.
+
 - Separate **critical** from **optional** dependencies. Critical failures fail the request; optional ones degrade with their own child context so they cannot cancel the errgroup.
-- Cascading timeout budget: Kong 5s → BFF 800ms → downstream 300ms, leaving room for fallbacks.
+- Cascading timeout budget: Kong 5s → BFF 800ms → downstream 300ms, leaving room for fallbacks. The BFF's share is one `httpx.WithRequestTimeout`, and it reaches every fan-out call as a context deadline `pkg/grpcx/client` inherits — no handler passes it along.
 - Every service exposes batch `GetXByIDs(ids)` methods. Never loop single-item gRPC calls.
 - BFF DTOs are defined separately from service protos so clients never bind to internal structures.
 - Short-TTL cache with singleflight for read-heavy data; invalidate via Kafka events.
+- **A BFF registers no readiness check for the services it calls.** An unreachable dependency is a 503 with a reason code, which is a better answer than every replica leaving the endpoint list at once — gating on it would turn a downstream service's routine rollout into an outage with nothing left to route to.
 
-The HTTP side is `pkg/httpx`, which services never import — they speak gRPC, and `pkg/errorx` already carries their errors this far. Routers come from `httpx.NewRouter`, never a bare `chi.NewRouter`: chi answers an unrouted path, a wrong method, and a panic in `text/plain`, and its recoverer prints the stack into the response, so three exceptions to the response contract exist from the first commit unless its fallbacks are replaced.
+The HTTP side is `pkg/httpx`, which services never import — they speak gRPC, and `pkg/errorx` already carries their errors this far. Routers come from `httpx.MustNewRouter`, never a bare `chi.NewRouter`: chi answers an unrouted path, a wrong method, and a panic in `text/plain`, and its recoverer prints the stack into the response, so three exceptions to the response contract exist from the first commit unless its fallbacks are replaced.
+
+That router's chain is correlation → logging → metrics → recovery → localize → timeout, which is the reverse of `pkg/grpcx/server` on the one point where they differ. There recovery is outermost because the correlation ID is minted by the logging interceptor; here it arrives as a header, so recovery can sit *inside* logging and metrics — and has to, or a panicked request unwinds past both and is never counted as the 500 it became. The server wraps the whole chain in otel the same way otelgrpc does, so a panic lands on the trace rather than beside it.
+
+**The BFF is where a trace begins.** Sampling is parent-based everywhere else, so `OBS_SAMPLE_RATIO` here decides how many traces the whole system has, and `observability.Start` running before `httpx.NewServer` is what makes them exist at all.
 
 **`httpx.CorrelationID` is mandatory, and omitting it fails silently.** It is where the ID enters the system: `pkg/grpcx/client` reads it off the context and forwards it to every service the request fans out to, and those services put it on the outbox rows for the events they raise. Without the middleware the context holds nothing, every downstream service mints its own ID, and one user-visible operation appears in the logs as several unrelated ones — with no error anywhere.
 
@@ -193,9 +202,9 @@ Kong is declarative and DB-less (`deploy/kong/kong.yml`, version-controlled). It
 
 Kong must **not** perform business authorization ("does this user own this order?") — that belongs in the owning service. Kong forwards claims via `X-User-ID` / `X-User-Roles`.
 
-Zero-trust: the Composition API re-verifies the JWT itself and never trusts upstream headers alone.
+Zero-trust: the BFF re-verifies the JWT itself and never trusts upstream headers alone.
 
-Tokens are **ES256**, and the asymmetry is what makes zero-trust affordable: the identity service holds the private key and is the only thing that can mint a token; Kong and the Composition API hold a public key that can only ever say no. A shared secret would put the credential that forges any user's identity inside the process most exposed to the outside. ES256 over RS256 for size — a P-256 key is 32 bytes against 256, on a header that rides every request.
+Tokens are **ES256**, and the asymmetry is what makes zero-trust affordable: the identity service holds the private key and is the only thing that can mint a token; Kong and every BFF hold a public key that can only ever say no. A shared secret would put the credential that forges any user's identity inside the process most exposed to the outside. ES256 over RS256 for size — a P-256 key is 32 bytes against 256, on a header that rides every request.
 
 `pkg/auth` is the one place a token becomes an identity. It owns the `Claims` shape both ends must agree on, the `Signer` (identity only), the `Verifier`, and the `Authenticate` HTTP middleware that puts a `grpcx.Identity` on the request context — where `pkg/grpcx/client` picks it up and forwards it to every hop. It owns nothing else: TTL policy, role assignment, and refresh-token storage are the identity service's, and authorization belongs to whoever owns the aggregate.
 

@@ -8,7 +8,7 @@
 // # Wiring
 //
 //	v := httpx.MustNewValidator()
-//	r := httpx.NewRouter(v)
+//	r := httpx.MustNewRouter(v)
 //
 //	r.Post("/api/v1/carts/{cartId}/items", func(w http.ResponseWriter, r *http.Request) {
 //		var req AddCartItemRequest

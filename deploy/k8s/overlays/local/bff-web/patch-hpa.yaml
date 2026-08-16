@@ -1,0 +1,13 @@
+# vscode-kubernetes-tools: exclude
+
+# k3d ships metrics-server, so the HPA is a real object locally rather than a
+# manifest nobody has ever seen run. Two replicas stay the floor: it is what
+# exercises a rolling restart with no gap in availability, and one pod would
+# hide a drain that does not actually drain.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bff-web
+spec:
+  minReplicas: 2
+  maxReplicas: 3

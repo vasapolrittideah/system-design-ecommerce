@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce
+
+resources:
+  - ../../../base/bff-web
+
+# The verification key is a second generator rather than a line in config.env
+# because it is a PEM: an env file is one key=value per line and cannot carry
+# one. A ConfigMap file entry becomes an env var whose value is the file's
+# whole content, which is exactly what pkg/auth expects.
+#
+# It is a ConfigMap and not a Secret on purpose. A public key can only ever say
+# no, and seeing it in a log line is how a mismatch with identity's signer gets
+# diagnosed — the private half is the one that lives in identity's Secret and
+# never leaves it.
+#
+# `make keys` writes it here alongside identity's private half, and .gitignore
+# keeps both out of the repo. kustomize build fails loudly if it is missing,
+# which is the correct outcome: a BFF that cannot verify has nothing to serve.
+configMapGenerator:
+  - name: bff-web-config
+    behavior: merge
+    envs:
+      - config.env
+    files:
+      - BFF_WEB_JWT_PUBLIC_KEY=jwt-public.pem
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+patches:
+  - path: patch-hpa.yaml
+  - path: patch-deployment.yaml

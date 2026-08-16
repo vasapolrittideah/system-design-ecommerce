@@ -13,7 +13,7 @@ import (
 func newTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 
-	r := httpx.NewRouter(httpx.MustNewValidator())
+	r := httpx.MustNewRouter(httpx.MustNewValidator())
 	r.Get("/api/v1/carts/{cartId}", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"cartId": "c-1"})
 	})

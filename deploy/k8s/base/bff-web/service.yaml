@@ -1,0 +1,27 @@
+# A normal ClusterIP, not the headless Service identity uses.
+#
+# Headless exists there because gRPC holds one long-lived HTTP/2 connection per
+# caller, so a virtual IP would pin every caller to one replica. This service is
+# reached over HTTP/1.1 from one place — the gateway — and Kong does its own
+# upstream balancing.
+#
+# The pinning problem does return the moment Kong holds keep-alive connections
+# here, and the answer then is a Kong upstream with a DNS-based ring balancer
+# pointed at this Service, not a change on this side. Worth revisiting when Kong
+# lands and not before.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff-web
+spec:
+  selector:
+    app.kubernetes.io/name: bff-web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    # Scraping and probing go here, on a port that is never routed to from
+    # outside the cluster.
+    - name: admin
+      port: 9090
+      targetPort: admin

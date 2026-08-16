@@ -1,0 +1,20 @@
+# vscode-kubernetes-tools: exclude
+
+# Local-only relaxations, each one paying for something the inner loop needs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bff-web
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          resources:
+            requests:
+              # Lower than base so several services fit on a laptop. The HPA
+              # measures against this number, so a local request that matched
+              # production would make the autoscaler's behaviour here
+              # meaningless as well as expensive.
+              cpu: 10m
+              memory: 32Mi

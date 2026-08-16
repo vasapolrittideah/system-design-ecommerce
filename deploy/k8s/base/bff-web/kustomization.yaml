@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# No namespace here on purpose: base describes the service, an overlay decides
+# where it lands. Same for the image tag — kustomize rewrites it per overlay.
+#
+# There is no migration Job in this list and there will not be one. The BFF has
+# no database.
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+
+# includeSelectors stays off: every selector in this directory is written by
+# hand, and a transformer that edits an auto-generated selector produces an
+# immutable-field error on the second apply.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/name: bff-web
+      app.kubernetes.io/part-of: ecommerce
+
+# A generator so the values live in a readable .env file rather than inline
+# YAML, but with a fixed name — the content hash kustomize would append rolls
+# the Deployment by creating a new object each time and orphaning the last one,
+# with nothing to clean them up. The Reloader annotation on the Deployment does
+# the restart instead.
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: bff-web-config
+    envs:
+      - config.env
+
+images:
+  - name: ecommerce/bff-web
+    newTag: dev

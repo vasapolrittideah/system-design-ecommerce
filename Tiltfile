@@ -45,9 +45,16 @@ allow_k8s_contexts([])
 if k8s_context() != 'k3d-ecommerce':
     fail('kubectl context is %s, expected k3d-ecommerce — run: make cluster-create' % k8s_context())
 
-# kustomize fails on the missing file with a path and no explanation.
-if not os.path.exists('deploy/k8s/overlays/local/identity/jwt-private.pem'):
-    fail('signing key missing — run: make keys')
+# kustomize fails on the missing file with a path and no explanation. Both
+# halves are checked because they are written by the same command but land in
+# different overlays — a tree from before bff-web existed has the private key
+# and not the public one, and only re-running `make keys` fixes it.
+for key in [
+    'deploy/k8s/overlays/local/identity/jwt-private.pem',
+    'deploy/k8s/overlays/local/bff-web/jwt-public.pem',
+]:
+    if not os.path.exists(key):
+        fail('%s missing — run: make keys' % key)
 
 # ------------------------------------------------------------------------------
 # Infrastructure
@@ -128,6 +135,38 @@ k8s_resource(
         '9090:9090',
     ],
     labels=['identity'],
+)
+
+# ------------------------------------------------------------------------------
+# bff-web
+#
+# No Postgres and no migration Job: the BFF has no database. Its only stateful
+# dependency is identity, reached over gRPC.
+# ------------------------------------------------------------------------------
+
+k8s_yaml(kustomize('deploy/k8s/overlays/local/bff-web'))
+
+docker_build(
+    'ecommerce/bff-web',
+    context='.',
+    dockerfile='services/bff-web/Dockerfile',
+    target='server',
+    # Everything the image needs and nothing else, so that editing a manifest
+    # or another service does not rebuild this one.
+    only=['go.mod', 'go.sum', 'pkg', 'gen', 'services/bff-web'],
+)
+
+k8s_resource(
+    'bff-web',
+    # identity does not have to be *up* for this to serve — an unreachable one
+    # is a 503, not a failed start — but ordering it after the rollout means
+    # the first request in a fresh cluster hits a service that exists.
+    resource_deps=['identity', 'reloader'],
+    port_forwards=[
+        '8080:8080',
+        '9091:9090',
+    ],
+    labels=['bff'],
 )
 
 # ------------------------------------------------------------------------------

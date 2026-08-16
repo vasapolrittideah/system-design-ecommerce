@@ -118,15 +118,21 @@ linters:
               desc: pkg/ must stay free of business logic; move the shared piece into pkg/ or keep it inside the service
 
         # --------------------------------------------------------------------
-        # Services speak gRPC; the HTTP layer belongs to the Composition API.
+        # Services speak gRPC; the HTTP layer belongs to a BFF.
+        #
+        # The exception is a prefix rather than a list, which is the whole
+        # reason these are named bff-<audience>: screens belong to an audience,
+        # so a second one arrives as bff-admin and needs no edit here. A service
+        # that grows an HTTP handler is either the wrong place for it or a BFF
+        # that was not named like one.
         # --------------------------------------------------------------------
         services-no-httpx:
           files:
             - "**/services/**"
-            - "!**/services/composition/**"
+            - "!**/services/bff-*/**"
           deny:
             - pkg: github.com/vasapolrittideah/system-design-ecommerce/pkg/httpx
-              desc: httpx is the Composition API's HTTP layer; services expose gRPC and let errorx carry their errors
+              desc: httpx is a BFF's HTTP layer; services expose gRPC and let errorx carry their errors
 
         # --------------------------------------------------------------------
         # Repo-wide bans.

@@ -336,6 +336,10 @@ logs: ## Tail a service's logs across every replica (make logs SVC=identity)
 .PHONY: port-forward
 port-forward: ## Expose a service's database and Jaeger on localhost (SVC=identity)
 	$(need_svc)
+	@if [ ! -d services/$(SVC)/db/migrations ]; then \
+		echo "$(SVC) owns no database — nothing to forward. Use: make port-forward SVC=identity"; \
+		exit 1; \
+	fi
 	@echo "$(SVC) postgres -> localhost:5432"
 	@echo "jaeger UI       -> http://localhost:16686"
 	@# One database at a time on 5432, because that is what DSN and every
@@ -362,14 +366,24 @@ dev-down: ## Remove everything Tilt deployed, keeping the cluster
 ##@ Deploy
 
 .PHONY: keys
-keys: ## Generate the local ES256 signing keypair for identity (gitignored)
-	@dir=$(K8S_DIR)/overlays/local/identity; \
-	if [ -f $$dir/jwt-private.pem ]; then \
-		echo "$$dir/jwt-private.pem already exists — delete it to rotate"; exit 0; \
+keys: ## Generate the local ES256 keypair and hand the public half to every verifier (gitignored)
+	@# Every process that verifies a token needs the public half in its own
+	@# overlay directory. kustomize refuses to read a file outside its root, so
+	@# it is copied rather than referenced — add a directory here when a second
+	@# BFF or anything else starts verifying.
+	@signer=$(K8S_DIR)/overlays/local/identity; \
+	verifiers="$(K8S_DIR)/overlays/local/bff-web"; \
+	if [ -f $$signer/jwt-private.pem ]; then \
+		echo "$$signer/jwt-private.pem already exists — delete it to rotate"; \
+	else \
+		openssl ecparam -name prime256v1 -genkey -noout -out $$signer/jwt-private.pem; \
+		echo "wrote $$signer/jwt-private.pem"; \
 	fi; \
-	openssl ecparam -name prime256v1 -genkey -noout -out $$dir/jwt-private.pem; \
-	openssl ec -in $$dir/jwt-private.pem -pubout -out $$dir/jwt-public.pem 2>/dev/null; \
-	echo "wrote $$dir/jwt-{private,public}.pem"
+	openssl ec -in $$signer/jwt-private.pem -pubout -out $$signer/jwt-public.pem 2>/dev/null; \
+	for dir in $$verifiers; do \
+		cp $$signer/jwt-public.pem $$dir/jwt-public.pem; \
+		echo "wrote $$dir/jwt-public.pem"; \
+	done
 
 .PHONY: image
 image: ## Build a service's images and import them into the cluster (SVC=identity)
@@ -380,10 +394,16 @@ image: ## Build a service's images and import them into the cluster (SVC=identit
 	@# context scoped to services/$(SVC) cannot see the module it belongs to.
 	docker build -f services/$(SVC)/Dockerfile --target server \
 		-t ecommerce/$(SVC):$(IMAGE_TAG) .
-	docker build -f services/$(SVC)/Dockerfile --target migrate \
-		-t ecommerce/$(SVC)-migrate:$(IMAGE_TAG) .
-	k3d image import -c $(CLUSTER) \
-		ecommerce/$(SVC):$(IMAGE_TAG) ecommerce/$(SVC)-migrate:$(IMAGE_TAG)
+	@# The migrate image exists only for a service that owns a database. The
+	@# presence of a migrations directory is what says so — the Composition
+	@# API has neither, and its Dockerfile has no such stage to build.
+	@images="ecommerce/$(SVC):$(IMAGE_TAG)"; \
+	if [ -d services/$(SVC)/db/migrations ]; then \
+		docker build -f services/$(SVC)/Dockerfile --target migrate \
+			-t ecommerce/$(SVC)-migrate:$(IMAGE_TAG) . || exit 1; \
+		images="$$images ecommerce/$(SVC)-migrate:$(IMAGE_TAG)"; \
+	fi; \
+	k3d image import -c $(CLUSTER) $$images
 
 .PHONY: deploy
 deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity)
@@ -393,13 +413,18 @@ deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity)
 	@# Kustomize has no hooks, so the migration is ordered here instead. The
 	@# Job is immutable once created, which is why it is deleted rather than
 	@# re-applied — a changed image on an existing Job is rejected outright.
-	kubectl -n $(NAMESPACE) delete job $(SVC)-migrate --ignore-not-found
+	@# A service with no migrations directory owns no database and has no Job.
+	@if [ -d services/$(SVC)/db/migrations ]; then \
+		kubectl -n $(NAMESPACE) delete job $(SVC)-migrate --ignore-not-found; \
+	fi
 	kubectl apply -k $(K8S_DIR)/overlays/local/$(SVC)
-	@kubectl -n $(NAMESPACE) wait --for=condition=complete job/$(SVC)-migrate --timeout=180s || { \
-		echo "--- migration failed ---"; \
-		kubectl -n $(NAMESPACE) logs job/$(SVC)-migrate --tail=50; \
-		exit 1; \
-	}
+	@if [ -d services/$(SVC)/db/migrations ]; then \
+		kubectl -n $(NAMESPACE) wait --for=condition=complete job/$(SVC)-migrate --timeout=180s || { \
+			echo "--- migration failed ---"; \
+			kubectl -n $(NAMESPACE) logs job/$(SVC)-migrate --tail=50; \
+			exit 1; \
+		}; \
+	fi
 	kubectl -n $(NAMESPACE) rollout status deployment/$(SVC) --timeout=180s
 
 .PHONY: undeploy
