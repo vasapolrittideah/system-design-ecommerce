@@ -68,6 +68,23 @@ spec:
               value: "127.0.0.1:8001"
             - name: KONG_STATUS_LISTEN
               value: "0.0.0.0:8100"
+            # Kong Manager, loopback for the same reason as the Admin API it
+            # reads: a port-forward reaches a listener bound to 127.0.0.1 inside
+            # the pod, so nothing has to be published to the cluster to look at
+            # it. Under DB-less it is read-only — kong.yml stays the only way to
+            # change a route.
+            - name: KONG_ADMIN_GUI_LISTEN
+              value: "127.0.0.1:8002"
+            # Both are the URLs the *browser* uses, not in-cluster addresses:
+            # Manager is a single-page app that calls the Admin API from the
+            # host, and Kong allows that origin on the Admin API from the first
+            # of these. They therefore encode the ports the Tiltfile forwards,
+            # and changing one without the other breaks the UI with a CORS error
+            # rather than a connection failure.
+            - name: KONG_ADMIN_GUI_URL
+              value: http://localhost:8002
+            - name: KONG_ADMIN_GUI_API_URL
+              value: http://localhost:8001
             # Errors Kong answers itself cannot carry httpx.ErrorResponse — a
             # short-circuited response never reaches a plugin that could rewrite
             # it, which is why the plugin that does exist for it is Enterprise.
@@ -100,6 +117,11 @@ spec:
             - name: KONG_ADMIN_ACCESS_LOG
               value: /dev/stdout
             - name: KONG_ADMIN_ERROR_LOG
+              value: /dev/stderr
+            # Default is a file in the prefix, which is an emptyDir nobody reads.
+            - name: KONG_ADMIN_GUI_ACCESS_LOG
+              value: /dev/stdout
+            - name: KONG_ADMIN_GUI_ERROR_LOG
               value: /dev/stderr
           volumeMounts:
             - name: declarative

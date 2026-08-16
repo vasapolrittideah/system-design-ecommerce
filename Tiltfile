@@ -79,16 +79,27 @@ k8s_resource(
     labels=['infra'],
 )
 
-# No port_forward: the gateway is reached on localhost:8000 through the k3d load
-# balancer, which is the same path a browser takes and the only one that
-# exercises the Service, the upstream, and the routes. Forwarding straight to
-# the pod would skip all three.
+# The proxy is deliberately not forwarded: the gateway is reached on
+# localhost:8000 through the k3d load balancer, which is the same path a browser
+# takes and the only one that exercises the Service, the upstream, and the
+# routes. Forwarding straight to the pod would skip all three.
+#
+# The two ports below are the opposite case — Kong Manager and the Admin API it
+# reads are bound to loopback in the pod so that nothing in the cluster can
+# reach them, and a forward is the only way in. Manager is read-only under
+# DB-less, so it is somewhere to see the routing table Kong actually loaded,
+# never somewhere to change it. Its origin and the Admin API URL it calls are
+# fixed in the Deployment's env and have to agree with these host ports.
 #
 # Editing deploy/k8s/infra/kong/kong.yml is enough to apply a routing change —
 # Tilt re-runs kustomize, the ConfigMap content changes, and Reloader restarts
 # the pod.
 k8s_resource(
     'kong',
+    port_forwards=[
+        port_forward(8002, 8002, name='manager'),
+        port_forward(8001, 8001, name='admin api'),
+    ],
     labels=['infra'],
 )
 
