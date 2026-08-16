@@ -11,6 +11,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -126,6 +128,52 @@ func start(t *testing.T, handlers map[string]grpctest.Handler, opts ...server.Op
 	})
 
 	return harness{conn: conn, reg: reg, logs: logs}
+}
+
+// A latency observation carries the trace ID of the call that produced it, so a
+// point on a p99 panel leads to one trace rather than to a minute's worth of
+// candidates.
+func TestLatencyCarriesTraceExemplar(t *testing.T) {
+	useTracerProvider(t, sdktrace.AlwaysSample())
+
+	h := start(t, map[string]grpctest.Handler{
+		"GetEcho": echoHandler(func(context.Context) string { return "ok" }),
+	})
+
+	if _, err := grpctest.Call(context.Background(), h.conn, grpctest.MethodGetEcho, ""); err != nil {
+		t.Fatalf("GetEcho: %v", err)
+	}
+
+	ids := exemplarTraceIDs(t, h.reg, "grpc_server_handling_seconds", map[string]string{"grpc_method": "GetEcho"})
+	if len(ids) == 0 {
+		t.Fatal("no exemplar on the latency histogram — a dashboard has nothing to link from")
+	}
+	for _, id := range ids {
+		// 16 bytes as hex, and not the all-zero ID a span context that was
+		// never populated would carry.
+		if len(id) != 32 || strings.Trim(id, "0") == "" {
+			t.Errorf("exemplar trace_id = %q, want a populated 32-character trace ID", id)
+		}
+	}
+}
+
+// An unsampled call must leave no exemplar: its trace was never exported, so
+// the link would lead to nothing in Jaeger.
+func TestUnsampledCallCarriesNoExemplar(t *testing.T) {
+	useTracerProvider(t, sdktrace.NeverSample())
+
+	h := start(t, map[string]grpctest.Handler{
+		"GetEcho": echoHandler(func(context.Context) string { return "ok" }),
+	})
+
+	if _, err := grpctest.Call(context.Background(), h.conn, grpctest.MethodGetEcho, ""); err != nil {
+		t.Fatalf("GetEcho: %v", err)
+	}
+
+	ids := exemplarTraceIDs(t, h.reg, "grpc_server_handling_seconds", map[string]string{"grpc_method": "GetEcho"})
+	if len(ids) != 0 {
+		t.Errorf("exemplars = %v, want none for an unsampled call", ids)
+	}
 }
 
 func echoHandler(fn func(ctx context.Context) string) grpctest.Handler {
@@ -393,6 +441,41 @@ func matches(m *dto.Metric, want map[string]string) bool {
 	}
 
 	return true
+}
+
+// useTracerProvider installs an SDK tracer provider for one test.
+//
+// It has to run before start, for the reason main starts telemetry first:
+// otelgrpc resolves the provider when its handler is built, so a server
+// constructed beforehand holds the no-op one and no call ever carries a span.
+func useTracerProvider(t *testing.T, sampler sdktrace.Sampler) {
+	t.Helper()
+
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sampler))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		_ = tp.Shutdown(context.Background())
+	})
+}
+
+func exemplarTraceIDs(t *testing.T, reg *prometheus.Registry, name string, labels map[string]string) []string {
+	t.Helper()
+
+	var ids []string
+	for _, m := range metricsNamed(t, reg, name, labels) {
+		for _, bucket := range m.GetHistogram().GetBucket() {
+			for _, pair := range bucket.GetExemplar().GetLabel() {
+				if pair.GetName() == "trace_id" {
+					ids = append(ids, pair.GetValue())
+				}
+			}
+		}
+	}
+
+	return ids
 }
 
 func metricsNamed(t *testing.T, reg *prometheus.Registry, name string, labels map[string]string) []*dto.Metric {

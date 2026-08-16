@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/httpx"
 )
@@ -191,6 +192,101 @@ func TestAbortHandlerIsNotRecovered(t *testing.T) {
 	}()
 
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/abort", nil))
+}
+
+// The exemplar is what turns a point on a latency panel into the trace that
+// produced it. Without it a slow p99 is a number with no way back to the
+// request behind it.
+func TestLatencyCarriesTraceExemplar(t *testing.T) {
+	reg := prometheus.NewRegistry()
+
+	r := httpx.MustNewRouter(httpx.MustNewValidator(), httpx.WithRouterMetrics(reg))
+	r.Get("/orders", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "/orders", nil)
+	req = req.WithContext(trace.ContextWithSpanContext(req.Context(), spanContext(t, trace.FlagsSampled)))
+
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	ids := exemplarTraceIDs(t, reg, "http_server_handling_seconds")
+	if len(ids) == 0 {
+		t.Fatal("no exemplar on the latency histogram — a dashboard has nothing to link from")
+	}
+	for _, id := range ids {
+		if id != testTraceID {
+			t.Errorf("exemplar trace_id = %q, want %q", id, testTraceID)
+		}
+	}
+}
+
+// An unsampled span must not leave an exemplar behind: its trace was never
+// exported, so the link would lead to nothing in Jaeger.
+func TestUnsampledRequestCarriesNoExemplar(t *testing.T) {
+	reg := prometheus.NewRegistry()
+
+	r := httpx.MustNewRouter(httpx.MustNewValidator(), httpx.WithRouterMetrics(reg))
+	r.Get("/orders", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "/orders", nil)
+	req = req.WithContext(trace.ContextWithSpanContext(req.Context(), spanContext(t, 0)))
+
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	if ids := exemplarTraceIDs(t, reg, "http_server_handling_seconds"); len(ids) != 0 {
+		t.Errorf("exemplars = %v, want none for an unsampled span", ids)
+	}
+}
+
+// The IDs from the W3C trace context specification's own example.
+const (
+	testTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	testSpanID  = "00f067aa0ba902b7"
+)
+
+func spanContext(t *testing.T, flags trace.TraceFlags) trace.SpanContext {
+	t.Helper()
+
+	traceID, err := trace.TraceIDFromHex(testTraceID)
+	if err != nil {
+		t.Fatalf("TraceIDFromHex() error = %v", err)
+	}
+	spanID, err := trace.SpanIDFromHex(testSpanID)
+	if err != nil {
+		t.Fatalf("SpanIDFromHex() error = %v", err)
+	}
+
+	return trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: flags,
+	})
+}
+
+func exemplarTraceIDs(t *testing.T, reg prometheus.Gatherer, metric string) []string {
+	t.Helper()
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+
+	var ids []string
+	for _, family := range families {
+		if family.GetName() != metric {
+			continue
+		}
+		for _, m := range family.GetMetric() {
+			for _, bucket := range m.GetHistogram().GetBucket() {
+				for _, pair := range bucket.GetExemplar().GetLabel() {
+					if pair.GetName() == "trace_id" {
+						ids = append(ids, pair.GetValue())
+					}
+				}
+			}
+		}
+	}
+
+	return ids
 }
 
 func labelValues(t *testing.T, reg prometheus.Gatherer, metric, label string) []string {

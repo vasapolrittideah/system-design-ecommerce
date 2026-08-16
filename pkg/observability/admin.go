@@ -50,6 +50,12 @@ func startAdmin(cfg Config, reg *prometheus.Registry, log *zap.Logger) (*adminSe
 		// the process along with it, at exactly the moment they are wanted.
 		ErrorHandling: promhttp.ContinueOnError,
 		ErrorLog:      zap.NewStdLog(log),
+		// Exemplars — the trace IDs hung off latency buckets — exist only in
+		// the OpenMetrics exposition. Without this the classic text format is
+		// negotiated, client_golang drops every exemplar on the way out, and
+		// the jump from a slow p99 to the trace that caused it is missing with
+		// nothing reporting that it was ever offered.
+		EnableOpenMetrics: true,
 	}))
 	mux.HandleFunc("GET /healthz", s.handleLive)
 	mux.HandleFunc("GET /readyz", s.handleReady)

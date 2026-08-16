@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 )
@@ -65,9 +66,34 @@ func newMetrics(reg prometheus.Registerer) (*metrics, error) {
 }
 
 // observe records one completed call.
-func (m *metrics) observe(callType, service, method string, err error, elapsed time.Duration) {
+//
+// The latency observation carries the call's trace ID as an exemplar, which is
+// what lets a dashboard turn a point on the p99 line into the trace of the
+// request that produced it — the alternative being to guess which of the
+// minute's traces was the slow one.
+func (m *metrics) observe(ctx context.Context, callType, service, method string, err error, elapsed time.Duration) {
 	m.handled.WithLabelValues(callType, service, method, status.Code(err).String()).Inc()
-	m.duration.WithLabelValues(callType, service, method).Observe(elapsed.Seconds())
+	observeLatency(ctx, m.duration.WithLabelValues(callType, service, method), elapsed)
+}
+
+// observeLatency records elapsed, attaching a trace ID when there is a sampled
+// span to attach.
+//
+// Unsampled spans are skipped deliberately: their trace was never exported, so
+// the exemplar would render as a link that leads to nothing in Jaeger. That
+// makes exemplar coverage a function of OBS_SAMPLE_RATIO at the BFF, which is
+// the same knob everything else about tracing already answers to.
+func observeLatency(ctx context.Context, o prometheus.Observer, elapsed time.Duration) {
+	sc := trace.SpanContextFromContext(ctx)
+
+	exemplar, ok := o.(prometheus.ExemplarObserver)
+	if !ok || !sc.IsSampled() {
+		o.Observe(elapsed.Seconds())
+
+		return
+	}
+
+	exemplar.ObserveWithExemplar(elapsed.Seconds(), prometheus.Labels{"trace_id": sc.TraceID().String()})
 }
 
 func metricsUnary(m *metrics) grpc.UnaryServerInterceptor {
@@ -80,7 +106,7 @@ func metricsUnary(m *metrics) grpc.UnaryServerInterceptor {
 
 		start := time.Now()
 		resp, err := handler(ctx, req)
-		m.observe(typeUnary, service, method, err, time.Since(start))
+		m.observe(ctx, typeUnary, service, method, err, time.Since(start))
 
 		return resp, err
 	}
@@ -97,7 +123,7 @@ func metricsStream(m *metrics) grpc.StreamServerInterceptor {
 
 		start := time.Now()
 		err := handler(srv, stream)
-		m.observe(callType, service, method, err, time.Since(start))
+		m.observe(stream.Context(), callType, service, method, err, time.Since(start))
 
 		return err
 	}

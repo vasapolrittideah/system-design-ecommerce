@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // latencyBuckets match the ones pkg/grpcx/server uses, so a BFF endpoint and the
@@ -95,9 +97,29 @@ func metricsMiddleware(m *serverMetrics) func(http.Handler) http.Handler {
 
 			route := routePattern(r)
 			m.handled.WithLabelValues(r.Method, route, strconv.Itoa(statusOrOK(wrapped.Status()))).Inc()
-			m.duration.WithLabelValues(r.Method, route).Observe(elapsed.Seconds())
+			observeLatency(r.Context(), m.duration.WithLabelValues(r.Method, route), elapsed)
 		})
 	}
+}
+
+// observeLatency records elapsed, attaching the request's trace ID as an
+// exemplar so that a point on a latency panel leads to the trace behind it.
+//
+// Unsampled spans are skipped deliberately: their trace was never exported, so
+// the exemplar would be a link to nothing. This is where such a link is worth
+// most — the BFF's span is the root, and the trace it points at holds every
+// downstream call the slow request made.
+func observeLatency(ctx context.Context, o prometheus.Observer, elapsed time.Duration) {
+	sc := trace.SpanContextFromContext(ctx)
+
+	exemplar, ok := o.(prometheus.ExemplarObserver)
+	if !ok || !sc.IsSampled() {
+		o.Observe(elapsed.Seconds())
+
+		return
+	}
+
+	exemplar.ObserveWithExemplar(elapsed.Seconds(), prometheus.Labels{"trace_id": sc.TraceID().String()})
 }
 
 // routePattern returns the chi pattern this request matched.
