@@ -61,6 +61,21 @@ BASE_URL ?= http://localhost:8000
 # a false alarm: rolling out a service into a cluster that has no bff-web yet.
 SMOKE ?= 1
 
+# `make load` knobs. RATE is requests per second *offered* rather than achieved:
+# the generator starts an iteration on a schedule instead of waiting for the last
+# one, so a system that slows down builds a queue rather than receiving less
+# traffic, which is the behaviour worth watching.
+#
+# LIMITER=keep leaves Kong's rate limits in place. The default raises them for
+# the run and puts them back afterwards, because 300 requests a minute is a limit
+# set for people and a run against it measures the limiter.
+SCENARIO ?= me
+RATE     ?= 50
+DURATION ?= 1m
+WARMUP   ?= 20s
+USERS    ?= 10
+LIMITER  ?= open
+
 # `buf breaking` baseline. CI on a PR may want '.git\#branch=origin/trunk'.
 # The backslash is required: an unescaped # starts a Make comment.
 BREAKING_AGAINST ?= .git\#branch=trunk
@@ -503,6 +518,18 @@ restart: ## Roll a service's pods without rebuilding (SVC=identity)
 render: ## Print the manifests an overlay would apply (SVC=identity)
 	$(need_svc)
 	kubectl kustomize $(K8S_DIR)/overlays/local/$(SVC)
+
+##@ Load
+
+.PHONY: load
+load: ## Load-test the deployed stack through the gateway (SCENARIO=me|login RATE=50 DURATION=1m)
+	$(call need_bin,k6,brew install k6)
+	@# Deliberately not part of `make deploy` and not in CI. It takes minutes,
+	@# it restarts the gateway twice to move the rate limits and back, and its
+	@# numbers are about a laptop — a gate built on that is a flaky test.
+	@SCENARIO="$(SCENARIO)" BASE_URL="$(BASE_URL)" NAMESPACE="$(NAMESPACE)" \
+		RATE="$(RATE)" DURATION="$(DURATION)" WARMUP="$(WARMUP)" USERS="$(USERS)" \
+		LIMITER="$(LIMITER)" scripts/load/run.sh
 
 ##@ Tools
 
