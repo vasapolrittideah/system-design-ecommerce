@@ -40,9 +40,30 @@ spec:
           args:
             - |
               set -eu
-              exec goose -dir /migrations postgres \
-                "postgres://${IDENTITY_DB_USER}:${IDENTITY_DB_PASSWORD}@${IDENTITY_DB_HOST}:${IDENTITY_DB_PORT}/${IDENTITY_DB_DATABASE}?sslmode=${IDENTITY_DB_SSLMODE}" \
-                up
+
+              dsn="postgres://${IDENTITY_DB_USER}:${IDENTITY_DB_PASSWORD}@${IDENTITY_DB_HOST}:${IDENTITY_DB_PORT}/${IDENTITY_DB_DATABASE}?sslmode=${IDENTITY_DB_SSLMODE}"
+
+              # Retry the migration itself rather than probe for the database
+              # first. On a first deploy the StatefulSet is still running initdb
+              # on an empty volume, and until its pod is ready the headless
+              # Service has no endpoint and its name does not resolve at all —
+              # so the failure is NXDOMAIN rather than a refused connection, and
+              # a readiness check written here would be a second definition of
+              # ready that can disagree with the probe.
+              #
+              # goose up is idempotent, which is what makes retrying it safe: an
+              # attempt that already applied everything is a no-op. Sixty
+              # seconds, then fail with the last error in the log — a wrong
+              # password must not retry until the Job's deadline.
+              attempt=1
+              until goose -dir /migrations postgres "$dsn" up; do
+                if [ "$attempt" -ge 30 ]; then
+                  echo "database unreachable after 60s, giving up"
+                  exit 1
+                fi
+                attempt=$((attempt + 1))
+                sleep 2
+              done
           envFrom:
             - configMapRef:
                 name: identity-config
