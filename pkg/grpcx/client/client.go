@@ -167,6 +167,15 @@ func Dial(cfg Config, opts ...Option) (*grpc.ClientConn, error) {
 		return nil, fmt.Errorf("grpcx/client: dial %s: %w", cfg.Target, err)
 	}
 
+	// Start connecting now rather than at the first call. grpc.NewClient leaves
+	// the channel idle, so without this the first request to arrive after a pod
+	// starts pays for name resolution, the TCP connect and the HTTP/2 handshake
+	// out of its own budget — which is how a caller on an 800ms budget answers
+	// 504 to a user for a call the callee handled in 90ms. This still returns
+	// immediately and still fails no startup: it only moves work that was going
+	// to happen anyway off the critical path of a real request.
+	conn.Connect()
+
 	return conn, nil
 }
 
