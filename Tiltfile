@@ -243,8 +243,8 @@ k8s_resource(
 # ------------------------------------------------------------------------------
 # bff-web
 #
-# No Postgres and no migration Job: the BFF has no database. Its only stateful
-# dependency is identity, reached over gRPC.
+# No Postgres and no migration Job: the BFF has no database. Everything it
+# answers with comes from identity and catalog over gRPC.
 # ------------------------------------------------------------------------------
 
 k8s_yaml(kustomize('deploy/k8s/overlays/local/bff-web'))
@@ -261,10 +261,10 @@ docker_build(
 
 k8s_resource(
     'bff-web',
-    # identity does not have to be *up* for this to serve — an unreachable one
-    # is a 503, not a failed start — but ordering it after the rollout means
-    # the first request in a fresh cluster hits a service that exists.
-    resource_deps=['identity', 'reloader'],
+    # Neither downstream has to be *up* for this to serve — an unreachable one
+    # is a 503, not a failed start — but ordering it after their rollouts means
+    # the first request in a fresh cluster hits services that exist.
+    resource_deps=['identity', 'catalog', 'reloader'],
     port_forwards=[
         '8080:8080',
         '9091:9090',
