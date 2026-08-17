@@ -182,6 +182,65 @@ k8s_resource(
 )
 
 # ------------------------------------------------------------------------------
+# catalog
+#
+# The same shape as identity, one file at a time: its own Postgres instance, its
+# own migration Job, its own images. Nothing is shared but the pattern — which
+# is the point of copying it rather than factoring it into a helper that would
+# have to be right about every service before the second one exists.
+# ------------------------------------------------------------------------------
+
+k8s_yaml(kustomize('deploy/k8s/overlays/local/catalog'))
+
+k8s_resource(
+    'catalog-postgres',
+    # 5433 on the host: 5432 is identity's. Two databases on a laptop is what
+    # "database per service" costs, and the port collision is where that first
+    # shows up.
+    port_forwards=[port_forward(5433, 5432, name='postgres')],
+    labels=['catalog'],
+)
+
+docker_build(
+    'ecommerce/catalog',
+    context='.',
+    dockerfile='services/catalog/Dockerfile',
+    target='server',
+    build_args={'GOOSE_VERSION': 'v3.27.3'},
+    # Everything the image needs and nothing else, so that editing a manifest
+    # or another service does not rebuild this one.
+    only=['go.mod', 'go.sum', 'pkg', 'gen', 'services/catalog'],
+)
+
+docker_build(
+    'ecommerce/catalog-migrate',
+    context='.',
+    dockerfile='services/catalog/Dockerfile',
+    target='migrate',
+    build_args={'GOOSE_VERSION': 'v3.27.3'},
+    # The same list as the server image even though this stage only copies
+    # migrations: it is built from the same `build` stage, which needs the
+    # module to compile goose, and a narrower context fails on the COPY.
+    only=['go.mod', 'go.sum', 'pkg', 'gen', 'services/catalog'],
+)
+
+k8s_resource(
+    'catalog-migrate',
+    resource_deps=['catalog-postgres'],
+    labels=['catalog'],
+)
+
+k8s_resource(
+    'catalog',
+    resource_deps=['catalog-migrate', 'reloader'],
+    port_forwards=[
+        '50052:50051',
+        '9093:9090',
+    ],
+    labels=['catalog'],
+)
+
+# ------------------------------------------------------------------------------
 # bff-web
 #
 # No Postgres and no migration Job: the BFF has no database. Its only stateful
@@ -233,7 +292,7 @@ local_resource(
 local_resource(
     'sqlc',
     'make sqlc',
-    deps=['services/identity/db'],
+    deps=['services/identity/db', 'services/catalog/db'],
     trigger_mode=TRIGGER_MODE_MANUAL,
     auto_init=False,
     labels=['generate'],

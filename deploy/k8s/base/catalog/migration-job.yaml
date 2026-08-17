@@ -1,0 +1,82 @@
+# Migrations run here, never on application startup. A process that migrates
+# as it boots runs the migration once per replica, races itself during a
+# rollout, and makes a schema change a restart away from any pod that happens
+# to come up first.
+#
+# The Job is immutable once created, so a redeploy has to delete it before
+# applying — `make deploy` does that, and it is also what orders the migration
+# ahead of the rollout, since kustomize has no notion of hooks.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: catalog-migrate
+spec:
+  # goose runs each migration in a transaction and records nothing when it
+  # rolls back, so a lock timeout or a dropped connection clears itself on the
+  # next attempt rather than leaving a version to be forced by hand.
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: catalog
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: goose
+          image: ecommerce/catalog-migrate
+          imagePullPolicy: IfNotPresent
+          # The DSN is assembled here rather than stored in the Secret, so the
+          # host, user, and database name have exactly one definition and the
+          # Secret holds only the part that is actually secret.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+
+              dsn="postgres://${CATALOG_DB_USER}:${CATALOG_DB_PASSWORD}@${CATALOG_DB_HOST}:${CATALOG_DB_PORT}/${CATALOG_DB_DATABASE}?sslmode=${CATALOG_DB_SSLMODE}"
+
+              # Retry the migration itself rather than probe for the database
+              # first. On a first deploy the StatefulSet is still running initdb
+              # on an empty volume, and until its pod is ready the headless
+              # Service has no endpoint and its name does not resolve at all —
+              # so the failure is NXDOMAIN rather than a refused connection, and
+              # a readiness check written here would be a second definition of
+              # ready that can disagree with the probe.
+              #
+              # goose up is idempotent, which is what makes retrying it safe: an
+              # attempt that already applied everything is a no-op. Sixty
+              # seconds, then fail with the last error in the log — a wrong
+              # password must not retry until the Job's deadline.
+              attempt=1
+              until goose -dir /migrations postgres "$dsn" up; do
+                if [ "$attempt" -ge 30 ]; then
+                  echo "database unreachable after 60s, giving up"
+                  exit 1
+                fi
+                attempt=$((attempt + 1))
+                sleep 2
+              done
+          envFrom:
+            - configMapRef:
+                name: catalog-config
+            - secretRef:
+                name: catalog-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
