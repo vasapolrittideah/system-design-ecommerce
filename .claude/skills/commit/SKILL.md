@@ -12,7 +12,7 @@ Turn working-tree changes into one or more commits that follow
 ## Message format
 
 ```
-<type>(<optional scope>)<optional !>: <subject>
+<type>(<optional scope>)<optional !>: <description>
 
 <body>
 
@@ -22,27 +22,42 @@ Turn working-tree changes into one or more commits that follow
 - **type** — required, lowercase, from the table below.
 - **scope** — optional but strongly preferred in this repo. See "Scopes".
 - **`!`** — append before the colon for a breaking change.
-- **subject** — required. Imperative mood ("add", not "added"/"adds"), lowercase
-  first letter, no trailing period, **English**, ≤ 72 chars total header length.
+- **description** — required. Imperative mood ("add", not "added"/"adds"),
+  lowercase first letter, no trailing period, **English**, ≤ 72 chars total
+  header length. See "Articles in the description".
 - **body** — optional. Wrap at 72 cols. Explain **why**, not what — the diff
   already says what. Blank line before it.
 - **footer** — optional. `BREAKING CHANGE: <desc>`, `Refs: #123`, `Closes: #123`.
 
-### Articles in the subject
+### Articles in the description
 
-**Drop `a`, `an`, and `the`.** The spec says nothing about articles — this is
-house style. The type prefix already carries what an article might: `feat` says
-the thing is new, `fix` and `refactor` say it was already there. So the article
-adds no information and spends part of the 72-char budget — `add shared zap
-logger`, and `fix domain error mapping` rather than `fix the domain error
-mapping`.
+**Drop `a`, `an`, and `the`.** The description is telegraphic — the register of a
+news headline, where articles are the first thing cut. The spec says nothing
+about them; this is house style. The type prefix already carries what an article
+might: `feat` says the thing is new, `fix` and `refactor` say it was already
+there. So the article adds no information and spends part of the 72-char budget.
 
-Keep one only where dropping it is ungrammatical rather than merely terse:
-before a noun that is the subject of a verb (`record what the domain import rule
-protects`) or before an ordinal (`take context as the first parameter`).
+| Don't | Do |
+|---|---|
+| `fix(identity): handle the null response from the auth API` | `fix(identity): handle null response from auth API` |
+| `feat(payment): add a retry to the payment webhook` | `feat(payment): add retry to payment webhook` |
+| `refactor(order): extract the validation into a helper` | `refactor(order): extract validation into helper` |
 
-Check the mood separately: "If applied, this commit will `<subject>`" must read
-as a grammatical sentence.
+**Stop where the cut costs meaning.** Terseness is the point only while the line
+still reads cleanly; an article that removes an ambiguity has earned its
+characters. Keep one:
+
+- where dropping it is ungrammatical rather than merely terse — before a noun
+  that is the subject of a verb (`record what the domain import rule protects`)
+  or before an ordinal (`take context as the first parameter`)
+- where the line parses without it but stumbles on the way through —
+  `fix(cart): prevent panic when the user has no active session` over `when user
+  has no active session`
+
+Where both read fine, drop it.
+
+Check the mood separately: "If applied, this commit will `<description>`" must
+read as a grammatical sentence.
 
 ## Types
 
@@ -99,7 +114,7 @@ Never use `feat` for agent config. These files do not change the deployed
 artifact, so they must not trigger a release bump.
 
 ```
-docs(agent): document the outbox pattern convention
+docs(agent): document outbox pattern convention
 chore(agent): add conventional-commit skill
 chore(agent): allow go test in project permissions
 fix(agent): correct scope table paths in commit skill
