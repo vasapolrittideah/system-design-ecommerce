@@ -20,6 +20,14 @@
 #   unrouted path   Kong's catch-all reaches bff-web and httpx answers 404 in
 #                   the error shape. Kong answering "no Route matched" instead
 #                   means the catch-all is gone.
+#   settled         nothing below is asserted until the rollout window is over.
+#                   It is the only check that waits on purpose, and the only one
+#                   whose failure means "still mid-deploy" rather than "broken".
+#   products        the storefront read reaches catalog over east-west gRPC. An
+#                   empty catalog still answers `products: []`, so this passes on
+#                   a fresh cluster and fails on the thing worth catching: a
+#                   missing egress rule, which surfaces as a 503 here and as
+#                   nothing at all in any pod's status.
 #   register/login  the write path works and the identity service is reachable
 #                   over east-west gRPC.
 #   me              the ES256 key pair agrees. identity holds the private key in
@@ -163,6 +171,79 @@ got="$(header X-Correlation-ID)"
     "An inbound X-Correlation-ID must be adopted, never replaced."
 
 pass "404 ROUTE_NOT_FOUND in the error shape, correlation id echoed"
+
+# ------------------------------------------------------------------------------
+begin 'the deploy has settled'
+
+# Everything below asserts what a deploy is supposed to serve. This waits until
+# there is a deploy to assert against, because `rollout status` reports the new
+# pods Ready and says nothing about the old ones. Two things outlive it, both
+# transient and both indistinguishable from a real failure at the first request:
+#
+#   404  a replica still draining keeps serving on the keep-alive connection
+#        Kong already holds, and answers a route added in this very deploy with
+#        ROUTE_NOT_FOUND.
+#   504  a replica that just started holds no gRPC channel yet, so its first
+#        call pays DNS, the TCP connect and the HTTP/2 handshake inside the
+#        800ms request budget — and the callee's first query opens its pool.
+#
+# The budget is the drain window, not a guess: 5s preStop + 25s SHUTDOWN_TIMEOUT
+# bounded by terminationGracePeriodSeconds: 35. Anything decisive — a 200, a 401,
+# a 500 — ends the wait immediately and is read by the check it belongs to, so
+# waiting here can only cost time on a stack that was going to fail anyway.
+#
+# A streak rather than one success: Kong balances over every replica, so one 200
+# says one of them is warm. Three in a row is evidence, not proof, and that is
+# the honest ceiling for a check that only ever sees the far side of a gateway.
+settle_deadline=$((SECONDS + 45))
+attempt=0
+streak=0
+
+while :; do
+    attempt=$((attempt + 1))
+    status="$(request GET '/api/v1/products?pageSize=1')"
+
+    case "$status" in
+    200)
+        streak=$((streak + 1))
+        ((streak >= 3)) && break
+        continue
+        ;;
+    404 | 502 | 503 | 504)
+        streak=0
+        info "${status} — the previous version may still be draining (${attempt})"
+        ;;
+    *)
+        break
+        ;;
+    esac
+
+    ((SECONDS < settle_deadline)) || fail "still answering ${status} after 45s" \
+        "The rollout window is over, so this is the deploy, not the drain:" \
+        "a 404 means the route is genuinely missing, a 504 means bff-web" \
+        "reached catalog too slowly to matter. Try:" \
+        "  kubectl -n ecommerce get pods -l app.kubernetes.io/name=bff-web"
+
+    sleep 2
+done
+
+pass "serving after ${attempt} attempt(s)"
+
+# ------------------------------------------------------------------------------
+begin 'storefront listing — anonymous, and reaches catalog'
+
+status="$(request GET '/api/v1/products?pageSize=5')"
+
+[[ "$status" == "200" ]] || fail "expected 200, got ${status}" \
+    "This is a public read: a 401 means it was mounted behind the auth group," \
+    "and a 503 means bff-web could not reach catalog. Try:" \
+    "  kubectl -n ecommerce get pods,endpoints -l app.kubernetes.io/name=catalog"
+
+jq -e '.products | type == "array"' <"$body" >/dev/null 2>&1 || fail "products is not an array" \
+    "An empty catalog must answer products: [] — never null, and never absent."
+
+count="$(jq -r '.products | length' <"$body")"
+pass "listing answered with ${count} product(s)"
 
 # ------------------------------------------------------------------------------
 begin 'register'
