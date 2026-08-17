@@ -48,28 +48,35 @@ func run() error {
 	obs := observability.MustStart(ctx, cfg.Obs, observability.WithLogger(log))
 	log.Info("telemetry started", zap.String("admin_addr", obs.AdminAddr()))
 
-	conn := client.MustDial(cfg.Identity, client.WithLogger(log))
+	// One connection per target service, dialled here and shared by every
+	// request. Dialling does not block on connectivity, so a service that is
+	// down at this moment costs nothing at startup — its first calls fail with
+	// Unavailable, which is what the retry and the breaker are for.
+	conns := bootstrap.Conns{
+		Identity: client.MustDial(cfg.Identity, client.WithLogger(log)),
+		Catalog:  client.MustDial(cfg.Catalog, client.WithLogger(log)),
+	}
 
-	// Deliberately no readiness check on identity.
+	// Deliberately no readiness check on identity or catalog.
 	//
 	// A dependency belongs in readiness when this pod cannot serve without it.
-	// This one can: an unreachable identity service comes back as a 503 carrying
-	// a reason code, which is a better answer than vanishing from Kong's
-	// endpoint list. Gating on it would also mean every BFF replica going
-	// NotReady together during identity's own rolling deploy — turning one
-	// service's routine restart into an outage with nothing left to route to.
+	// These can: an unreachable service comes back as a 503 carrying a reason
+	// code, which is a better answer than vanishing from Kong's endpoint list.
+	// Gating on it would also mean every BFF replica going NotReady together
+	// during a downstream's own rolling deploy — turning one service's routine
+	// restart into an outage with nothing left to route to.
 	srv := httpx.MustNewServer(cfg.HTTP,
-		bootstrap.NewRouter(cfg, conn, log, obs.Registry()),
+		bootstrap.NewRouter(cfg, conns, log, obs.Registry()),
 		httpx.WithServerLogger(log),
 	)
 
 	serveErr := srv.Serve(ctx)
 
 	// Shut down in the reverse of the order things were built, and only after
-	// Serve has returned: the connection has to outlive the requests still
+	// Serve has returned: the connections have to outlive the requests still
 	// draining, and telemetry has to outlive both, or the last spans before a
 	// shutdown — the interesting ones — are never flushed.
-	closeErr := conn.Close()
+	closeErr := errors.Join(conns.Identity.Close(), conns.Catalog.Close())
 
 	// ctx is already cancelled by the time this runs, and Shutdown given a
 	// cancelled context skips the flush it exists to perform.

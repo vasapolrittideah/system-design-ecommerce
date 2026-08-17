@@ -19,6 +19,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	catalogv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/catalog/v1"
+	commonv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/common/v1"
 	identityv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/identity/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/auth"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/config"
@@ -107,9 +109,39 @@ func (s *stubIdentityClient) GetUsersByIDs(
 	return &identityv1.GetUsersByIDsResponse{}, s.err
 }
 
+// stubCatalogClient answers the one RPC the storefront reads through.
+//
+// The interface is embedded rather than implemented method by method, so every
+// other RPC — the writes an admin console will need — is a nil call that panics.
+// That is the intended failure: a write wired into this BFF should stop a test
+// rather than pass one.
+type stubCatalogClient struct {
+	catalogv1.CatalogServiceClient
+
+	listReq *catalogv1.ListProductsRequest
+
+	products      []*catalogv1.Product
+	nextPageToken string
+	err           error
+}
+
+func (s *stubCatalogClient) ListProducts(
+	_ context.Context, in *catalogv1.ListProductsRequest, _ ...grpc.CallOption,
+) (*catalogv1.ListProductsResponse, error) {
+	s.listReq = in
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return &catalogv1.ListProductsResponse{
+		Products:      s.products,
+		NextPageToken: s.nextPageToken,
+	}, nil
+}
+
 func TestRegisterReturnsCreatedWithNoTokens(t *testing.T) {
 	stub := &stubIdentityClient{user: testUser()}
-	srv, _ := newServer(t, stub)
+	srv, _ := newServer(t, stub, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodPost, "/api/v1/auth/register", "", `{
 		"email": "ada@example.com",
@@ -139,7 +171,7 @@ func TestRegisterReturnsCreatedWithNoTokens(t *testing.T) {
 }
 
 func TestLoginReturnsCamelCaseTokensAndUser(t *testing.T) {
-	srv, _ := newServer(t, &stubIdentityClient{user: testUser()})
+	srv, _ := newServer(t, &stubIdentityClient{user: testUser()}, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodPost, "/api/v1/auth/login", "", `{
 		"email": "ada@example.com",
@@ -173,7 +205,7 @@ func TestLoginReturnsCamelCaseTokensAndUser(t *testing.T) {
 // every service, which is the whole reason it is not a JWT.
 func TestRefreshReadsTokenFromBodyNotHeader(t *testing.T) {
 	stub := &stubIdentityClient{}
-	srv, _ := newServer(t, stub)
+	srv, _ := newServer(t, stub, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodPost, "/api/v1/auth/refresh", "Bearer not-a-refresh-token",
 		`{"refreshToken": "opaque-refresh-token"}`)
@@ -189,7 +221,7 @@ func TestRefreshReadsTokenFromBodyNotHeader(t *testing.T) {
 
 func TestLogoutReturnsNoContent(t *testing.T) {
 	stub := &stubIdentityClient{}
-	srv, _ := newServer(t, stub)
+	srv, _ := newServer(t, stub, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodPost, "/api/v1/auth/logout", "", `{"refreshToken": "opaque-refresh-token"}`)
 
@@ -213,7 +245,7 @@ func TestDownstreamErrorKeepsStatusAndReasonCode(t *testing.T) {
 	failure := errorx.ToGRPC(errorx.New(errorx.KindUnauthenticated, "invalid credentials").
 		WithReason("INVALID_CREDENTIALS"))
 
-	srv, _ := newServer(t, &stubIdentityClient{err: failure})
+	srv, _ := newServer(t, &stubIdentityClient{err: failure}, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodPost, "/api/v1/auth/login", "", `{
 		"email": "ada@example.com",
@@ -233,7 +265,7 @@ func TestDownstreamErrorKeepsStatusAndReasonCode(t *testing.T) {
 // that leaked the downstream error here would put database detail in a browser.
 func TestInternalErrorIsScrubbed(t *testing.T) {
 	failure := status.Error(codes.Internal, "pq: relation \"users\" does not exist")
-	srv, _ := newServer(t, &stubIdentityClient{err: failure})
+	srv, _ := newServer(t, &stubIdentityClient{err: failure}, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodPost, "/api/v1/auth/login", "", `{
 		"email": "ada@example.com",
@@ -250,7 +282,7 @@ func TestInternalErrorIsScrubbed(t *testing.T) {
 }
 
 func TestValidationFailureNamesFieldsAsTheClientSentThem(t *testing.T) {
-	srv, _ := newServer(t, &stubIdentityClient{})
+	srv, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodPost, "/api/v1/auth/register", "", `{
 		"email": "not-an-email",
@@ -280,7 +312,7 @@ func TestValidationFailureNamesFieldsAsTheClientSentThem(t *testing.T) {
 
 func TestMeRejectsRequestWithoutToken(t *testing.T) {
 	stub := &stubIdentityClient{user: testUser()}
-	srv, _ := newServer(t, stub)
+	srv, _ := newServer(t, stub, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodGet, "/api/v1/me", "", "")
 
@@ -302,7 +334,7 @@ func TestMeRejectsRequestWithoutToken(t *testing.T) {
 // to read somebody else's account.
 func TestMeReadsSubjectFromTheVerifiedToken(t *testing.T) {
 	stub := &stubIdentityClient{user: testUser()}
-	srv, signer := newServer(t, stub)
+	srv, signer := newServer(t, stub, &stubCatalogClient{})
 
 	token, err := signer.Sign(testUserID, []string{"customer"})
 	if err != nil {
@@ -327,8 +359,162 @@ func TestMeReadsSubjectFromTheVerifiedToken(t *testing.T) {
 	}
 }
 
+// The listing is anonymous and shaped for a grid: the cheapest variant becomes
+// the price a card quotes, and everything a card does not render is left behind
+// rather than forwarded because catalog happened to return it.
+func TestListProductsShapesCardsAndNeedsNoToken(t *testing.T) {
+	catalog := &stubCatalogClient{
+		products:      []*catalogv1.Product{testProduct()},
+		nextPageToken: "b3BhcXVl",
+	}
+	srv, _ := newServer(t, &stubIdentityClient{}, catalog)
+
+	res := do(t, srv, http.MethodGet, "/api/v1/products", "", "")
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusOK, res.Body)
+	}
+
+	body := decodeBody(t, res)
+
+	if body["nextPageToken"] != "b3BhcXVl" {
+		t.Errorf("nextPageToken = %v, want the token catalog returned", body["nextPageToken"])
+	}
+
+	products, _ := body["products"].([]any)
+	if len(products) != 1 {
+		t.Fatalf("products = %v, want one card", products)
+	}
+
+	card, _ := products[0].(map[string]any)
+
+	if card["name"] != "Oxford shirt" || card["category"] != "clothing/shirts" {
+		t.Errorf("card = %+v, want the product's name and category", card)
+	}
+
+	// A description of up to 4000 characters per product, on a screen that
+	// shows none of them, is the payload this shaping exists to avoid.
+	if _, found := card["description"]; found {
+		t.Errorf("card carries a description the grid does not render: %s", res.Body)
+	}
+
+	if _, found := card["variants"]; found {
+		t.Errorf("card carries the variant list: %s", res.Body)
+	}
+
+	price, _ := card["priceFrom"].(map[string]any)
+	if price["amountMinor"] != float64(89000) || price["currencyCode"] != "THB" {
+		t.Errorf("priceFrom = %+v, want the cheapest variant's price", price)
+	}
+
+	if card["variantCount"] != float64(2) {
+		t.Errorf("variantCount = %v, want 2", card["variantCount"])
+	}
+}
+
+// The storefront cannot be asked for drafts. Catalog reads an unset status as
+// ACTIVE only, so forwarding a status a client picked would put unfinished
+// products on a shop window one guessed query parameter later.
+func TestListProductsCannotBeAskedForDrafts(t *testing.T) {
+	catalog := &stubCatalogClient{}
+	srv, _ := newServer(t, &stubIdentityClient{}, catalog)
+
+	res := do(t, srv, http.MethodGet,
+		"/api/v1/products?category=clothing/shirts&status=PRODUCT_STATUS_DRAFT&utm_source=newsletter", "", "")
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusOK, res.Body)
+	}
+
+	if got := catalog.listReq.GetStatus(); got != catalogv1.ProductStatus_PRODUCT_STATUS_UNSPECIFIED {
+		t.Errorf("status = %v, want it left unset so catalog filters to ACTIVE", got)
+	}
+
+	// utm_source names no field and is ignored rather than rejected: a link
+	// from a campaign is still a valid request.
+	if catalog.listReq.GetCategory() != "clothing/shirts" {
+		t.Errorf("category = %q, want the one the client asked for", catalog.listReq.GetCategory())
+	}
+}
+
+// An empty page is an empty array, never null — a client should not need a nil
+// check to iterate a collection that is simply empty.
+func TestListProductsAnswersAnEmptyPageAsAnArray(t *testing.T) {
+	srv, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{})
+
+	res := do(t, srv, http.MethodGet, "/api/v1/products", "", "")
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusOK, res.Body)
+	}
+
+	if !strings.Contains(res.Body.String(), `"products":[]`) {
+		t.Errorf("body = %s, want products as an empty array", res.Body)
+	}
+}
+
+// Query parameters are checked here, before the call: a page size the contract
+// forbids is a 400 this tier answers rather than a round trip spent to be told
+// the same thing.
+func TestListProductsRejectsAPageSizeBeyondTheCap(t *testing.T) {
+	catalog := &stubCatalogClient{}
+	srv, _ := newServer(t, &stubIdentityClient{}, catalog)
+
+	res := do(t, srv, http.MethodGet, "/api/v1/products?pageSize=500", "", "")
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusBadRequest, res.Body)
+	}
+
+	body, _ := decodeBody(t, res)["error"].(map[string]any)
+	fields, _ := body["fields"].([]any)
+
+	if len(fields) != 1 {
+		t.Fatalf("fields = %v, want the failing parameter named", fields)
+	}
+
+	// Named as the client wrote it in the URL, not as the Go field it decoded
+	// into.
+	field, _ := fields[0].(map[string]any)
+	if field["field"] != "pageSize" {
+		t.Errorf("field = %v, want pageSize", field["field"])
+	}
+
+	if catalog.listReq != nil {
+		t.Error("catalog was called for a request that never passed validation")
+	}
+}
+
+func TestListProductsRejectsANonNumericPageSize(t *testing.T) {
+	srv, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{})
+
+	res := do(t, srv, http.MethodGet, "/api/v1/products?pageSize=many", "", "")
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusBadRequest, res.Body)
+	}
+
+	if code := errorCode(t, res); code != "INVALID_FIELD_TYPE" {
+		t.Errorf("error.code = %q, want INVALID_FIELD_TYPE", code)
+	}
+}
+
+// Catalog is critical to this screen: there is nothing else that can say what is
+// on sale, so its failure is the request's failure and keeps the meaning it was
+// given rather than becoming a 500.
+func TestListProductsFailsWhenCatalogIsUnreachable(t *testing.T) {
+	catalog := &stubCatalogClient{err: status.Error(codes.Unavailable, "connection refused")}
+	srv, _ := newServer(t, &stubIdentityClient{}, catalog)
+
+	res := do(t, srv, http.MethodGet, "/api/v1/products", "", "")
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusServiceUnavailable, res.Body)
+	}
+}
+
 func TestUnroutedPathAnswersInTheErrorShape(t *testing.T) {
-	srv, _ := newServer(t, &stubIdentityClient{})
+	srv, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodGet, "/api/v1/nothing-here", "", "")
 
@@ -346,7 +532,7 @@ func TestUnroutedPathAnswersInTheErrorShape(t *testing.T) {
 }
 
 func TestWrongMethodAnswers405(t *testing.T) {
-	srv, _ := newServer(t, &stubIdentityClient{})
+	srv, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{})
 
 	res := do(t, srv, http.MethodGet, "/api/v1/auth/login", "", "")
 
@@ -358,7 +544,11 @@ func TestWrongMethodAnswers405(t *testing.T) {
 // newServer builds the router the way bootstrap does, minus the metrics
 // registry: the tests below run in one process and a shared registry would
 // panic on the second router built.
-func newServer(t *testing.T, identity identityv1.IdentityServiceClient) (http.Handler, *auth.Signer) {
+func newServer(
+	t *testing.T,
+	identity identityv1.IdentityServiceClient,
+	catalog catalogv1.CatalogServiceClient,
+) (http.Handler, *auth.Signer) {
 	t.Helper()
 
 	privatePEM, publicPEM := generateKeyPair(t)
@@ -386,7 +576,7 @@ func newServer(t *testing.T, identity identityv1.IdentityServiceClient) (http.Ha
 
 	validator := httpx.MustNewValidator()
 	router := httpx.MustNewRouter(validator)
-	rest.NewHandler(identity, validator).Mount(router, auth.Authenticate(verifier))
+	rest.NewHandler(identity, catalog, validator).Mount(router, auth.Authenticate(verifier))
 
 	return router, signer
 }
@@ -440,6 +630,32 @@ func testUser() *identityv1.User {
 		Id:        testUserID,
 		Email:     "ada@example.com",
 		Roles:     []string{"customer"},
+		CreatedAt: timestamppb.New(time.Now()),
+		UpdatedAt: timestamppb.New(time.Now()),
+	}
+}
+
+// testProduct is a published product with two variants, the second cheaper than
+// the first — so a card quoting the first price passes nothing here.
+func testProduct() *catalogv1.Product {
+	return &catalogv1.Product{
+		Id:          "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+		Name:        "Oxford shirt",
+		Description: "A shirt described at length, for the product page.",
+		Category:    "clothing/shirts",
+		Status:      catalogv1.ProductStatus_PRODUCT_STATUS_ACTIVE,
+		Variants: []*catalogv1.Variant{
+			{
+				Id:    "3f2504e0-4f89-41d3-9a0c-0305e82c3401",
+				Sku:   "SHIRT-OX-L",
+				Price: &commonv1.Money{AmountMinor: 99000, CurrencyCode: "THB"},
+			},
+			{
+				Id:    "3f2504e0-4f89-41d3-9a0c-0305e82c3402",
+				Sku:   "SHIRT-OX-M",
+				Price: &commonv1.Money{AmountMinor: 89000, CurrencyCode: "THB"},
+			},
+		},
 		CreatedAt: timestamppb.New(time.Now()),
 		UpdatedAt: timestamppb.New(time.Now()),
 	}
