@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package ecommerce.catalog.v1;
+
+import "ecommerce/common/v1/money.proto";
+import "google/protobuf/timestamp.proto";
+
+// Product is one thing on sale as the storefront describes it: the name, the
+// words, the category. It is never the thing that gets bought — that is a
+// Variant, and every service downstream of this one references those.
+//
+// The outward shape, not the aggregate: the optimistic-locking version stays
+// inside the service, as does anything a future admin console needs and a
+// shopper does not.
+message Product {
+  string id = 1;
+
+  string name = 2;
+
+  string description = 3;
+
+  // A slug — "clothing", "clothing/shirts". Deliberately a string and not a
+  // Category message: nothing here needs a tree, localised category names, or
+  // a category that can be renamed in one place, and a taxonomy aggregate
+  // brings its own CRUD surface with it. It becomes an aggregate the day one
+  // of those is actually wanted, which is a field replaced rather than a
+  // service reshaped.
+  string category = 4;
+
+  ProductStatus status = 5;
+
+  // Every variant of this product, including ones a shopper cannot buy today.
+  // Filtering is the caller's, because "buyable" means something different on
+  // a product page and in an admin list.
+  repeated Variant variants = 6;
+
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// Variant is the unit that is actually sold: one SKU, one price.
+//
+// The split from Product exists even where a product will only ever have one
+// variant, because cart, inventory, and order all reference the sellable unit.
+// Adding this level of indirection later would be a breaking change in three
+// contracts and a migration in three databases; carrying it now costs one
+// table.
+message Variant {
+  string id = 1;
+
+  string product_id = 2;
+
+  // Unique across the service, uppercase. This is what the warehouse and the
+  // rest of the system call this thing, so it is chosen by whoever creates the
+  // product rather than generated here.
+  string sku = 3;
+
+  ecommerce.common.v1.Money price = 4;
+
+  // What distinguishes this variant from its siblings — {"size": "M"},
+  // {"weight_g": "500"}. Opaque on purpose: no rule in this service reads a
+  // key, which is exactly why the catalog can sell shirts and rice without
+  // knowing which it is doing. The day a rule does read one, that key is a
+  // field and not an entry here.
+  map<string, string> attributes = 5;
+
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// ProductStatus is where a product sits in its lifecycle. The transitions
+// between these are the catalog's state machine and belong to its domain;
+// this enum only names the states so a caller can read them.
+enum ProductStatus {
+  PRODUCT_STATUS_UNSPECIFIED = 0;
+
+  // Being written. Never shown to a shopper and never buyable.
+  PRODUCT_STATUS_DRAFT = 1;
+
+  // Published and buyable.
+  PRODUCT_STATUS_ACTIVE = 2;
+
+  // Withdrawn from sale, and kept forever rather than deleted: orders placed
+  // last year still name these variants, and a row a completed order points at
+  // must not disappear.
+  PRODUCT_STATUS_ARCHIVED = 3;
+}

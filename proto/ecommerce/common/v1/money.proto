@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package ecommerce.common.v1;
+
+import "buf/validate/validate.proto";
+
+// Money is an amount in one currency.
+//
+// It lives here because a price quoted by catalog becomes a cart line and then
+// an order line without changing meaning, and three services inventing three
+// shapes for it is how a total ends up disagreeing with the sum of its parts.
+// This is the wire shape only — each service still owns a Money in its own
+// domain package, since the rules that protect an amount are the service's and
+// a domain that imported this file would be importing generated code.
+message Money {
+  // The amount in the currency's minor unit: 1050 is THB 10.50, and 1050 in
+  // JPY is ¥1050 because yen has no minor unit — the number of decimal places
+  // is a property of currency_code, not of this field.
+  //
+  // An integer rather than a decimal string because every arithmetic this
+  // system performs on a price is exact in minor units, and because a string
+  // would put a parse step between every service and the number. Signed
+  // because a discount and a refund are amounts too.
+  //
+  // No bound is declared here. "A price is not negative" is a rule about
+  // prices, which catalog's domain holds; Money is also the shape of an
+  // adjustment, and a constraint on the message would forbid those everywhere
+  // it is reused.
+  int64 amount_minor = 1;
+
+  // ISO 4217, uppercase — "THB", "USD". Checked structurally here; whether
+  // this system actually sells in that currency is a question no shared
+  // message can answer.
+  string currency_code = 2 [(buf.validate.field).string.pattern = "^[A-Z]{3}$"];
+}

@@ -1,0 +1,279 @@
+syntax = "proto3";
+
+package ecommerce.catalog.v1;
+
+import "buf/validate/validate.proto";
+import "ecommerce/catalog/v1/product.proto";
+import "ecommerce/common/v1/money.proto";
+
+// CatalogService owns products, their variants, and the prices on them. It is
+// reached over east-west gRPC only.
+//
+// It owns no stock. What is on the shelf is written far more often than it is
+// described, and the rule that protects it — never sell the same unit twice —
+// cannot be enforced without reservations and expiries, which are a different
+// aggregate with a different vocabulary. That service arrives with the order
+// flow; this one answers what a thing is and what it costs.
+//
+// Every field constraint below is declared here rather than checked in a
+// handler: a single interceptor enforces them, so a handler that validates its
+// own input is a bug wherever it appears. What is *not* here is anything that
+// needs the aggregate to answer it — that a published product has at least one
+// variant, that an archived one takes no edits, that every variant of one
+// product is priced in one currency. Those are invariants, they live in the
+// domain, and a constraint here could only ever repeat the easy half of them.
+service CatalogService {
+  // GetProduct reads one product with its variants.
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse);
+
+  // GetProductsByIDs reads many. Every service exposes one of these so a BFF
+  // can fill a screen without looping single-item calls.
+  rpc GetProductsByIDs(GetProductsByIDsRequest) returns (GetProductsByIDsResponse);
+
+  // ListProducts pages through the catalog, newest first.
+  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+
+  // CreateProduct creates a product, in draft, optionally with variants.
+  //
+  // Deliberately not named Get* or Batch*: the client retry policy reads
+  // method names to decide what is safe to retry, and a retried create is a
+  // second product.
+  rpc CreateProduct(CreateProductRequest) returns (CreateProductResponse);
+
+  // UpdateProduct replaces the descriptive fields of a product.
+  //
+  // Wholesale rather than a patch: with three fields, a field mask buys
+  // nothing but a second way to be wrong about which of them the caller meant
+  // to clear. A caller sends what the product should now say.
+  rpc UpdateProduct(UpdateProductRequest) returns (UpdateProductResponse);
+
+  // AddVariant adds a sellable unit to a product.
+  rpc AddVariant(AddVariantRequest) returns (AddVariantResponse);
+
+  // UpdateVariant reprices a variant or restates what distinguishes it.
+  //
+  // The SKU is not among the fields it can change. Orders, carts, and the
+  // warehouse all refer to a variant by that string, so renaming one would
+  // rename a thing other systems have already written down.
+  rpc UpdateVariant(UpdateVariantRequest) returns (UpdateVariantResponse);
+
+  // PublishProduct moves a draft into the storefront.
+  rpc PublishProduct(PublishProductRequest) returns (PublishProductResponse);
+
+  // ArchiveProduct withdraws a product from sale. Nothing is deleted, and the
+  // move is one-way — a product that should sell again is a new one, because
+  // reviving an archived product silently revives whatever was wrong with it.
+  rpc ArchiveProduct(ArchiveProductRequest) returns (ArchiveProductResponse);
+}
+
+message GetProductRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message GetProductResponse {
+  Product product = 1;
+}
+
+message GetProductsByIDsRequest {
+  // Bounded because the response is: an unbounded id list is how a batch read
+  // drives its own callee out of memory.
+  repeated string ids = 1 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 100
+      unique: true
+    },
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+}
+
+message GetProductsByIDsResponse {
+  // Products that exist, in no guaranteed order and possibly fewer than were
+  // asked for. A missing id is not an error: one archived product must not
+  // fail the whole screen a BFF is assembling.
+  repeated Product products = 1;
+}
+
+message ListProductsRequest {
+  // Exact match on the slug, or every category when empty.
+  string category = 1 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string = {
+      max_len: 64
+      pattern: "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+    }
+  ];
+
+  // Unset means ACTIVE only.
+  //
+  // The default is a filter rather than "everything" because the storefront is
+  // the caller, and of the two ways to be wrong here, showing a shopper an
+  // unfinished draft is the one nobody notices until it is on a screen.
+  ProductStatus status = 2 [(buf.validate.field).enum.defined_only = true];
+
+  // 0 means 20.
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+
+  // next_page_token from the previous response, opaque to the caller. A cursor
+  // and not an offset: rows are inserted while a shopper pages, and an offset
+  // would skip or repeat whatever moved across the boundary.
+  string page_token = 4 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string.max_len = 512
+  ];
+}
+
+message ListProductsResponse {
+  repeated Product products = 1;
+
+  // Empty on the last page.
+  string next_page_token = 2;
+}
+
+// NewVariant is a variant that does not exist yet — the fields a caller
+// supplies, without the id and timestamps the service assigns. A separate
+// message from Variant so that neither has fields the other must ignore.
+message NewVariant {
+  // Uppercase, so uniqueness never depends on how it was typed. Chosen by the
+  // caller rather than generated here because a SKU is what the warehouse
+  // already calls this thing.
+  string sku = 1 [(buf.validate.field).string.pattern = "^[A-Z0-9][A-Z0-9-]{2,63}$"];
+
+  ecommerce.common.v1.Money price = 2 [(buf.validate.field).required = true];
+
+  map<string, string> attributes = 3 [(buf.validate.field).map = {
+    max_pairs: 20
+    keys: {
+      string: {
+        min_len: 1
+        max_len: 32
+        pattern: "^[a-z][a-z0-9_]*$"
+      }
+    }
+    values: {
+      string: {
+        min_len: 1
+        max_len: 128
+      }
+    }
+  }];
+}
+
+message CreateProductRequest {
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+  }];
+
+  string description = 2 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string.max_len = 4000
+  ];
+
+  string category = 3 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string = {
+      max_len: 64
+      pattern: "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+    }
+  ];
+
+  // May be empty: a draft is allowed to exist before anyone has decided what
+  // it costs. Publishing is where that stops being allowed.
+  repeated NewVariant variants = 4 [(buf.validate.field).repeated.max_items = 50];
+}
+
+message CreateProductResponse {
+  Product product = 1;
+}
+
+message UpdateProductRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+  }];
+
+  string description = 3 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string.max_len = 4000
+  ];
+
+  string category = 4 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string = {
+      max_len: 64
+      pattern: "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+    }
+  ];
+}
+
+message UpdateProductResponse {
+  Product product = 1;
+}
+
+message AddVariantRequest {
+  string product_id = 1 [(buf.validate.field).string.uuid = true];
+
+  NewVariant variant = 2 [(buf.validate.field).required = true];
+}
+
+message AddVariantResponse {
+  // The whole product, not the one variant. Adding a variant is a change to
+  // the product, and a caller that has to merge a returned fragment into a
+  // copy it already holds will eventually merge it wrong.
+  Product product = 1;
+}
+
+message UpdateVariantRequest {
+  // The aggregate root, named even though variant_id alone would find it: a
+  // variant is only ever modified as part of its product, and passing both
+  // means a caller cannot ask this service to reprice something under a
+  // product it was not looking at.
+  string product_id = 1 [(buf.validate.field).string.uuid = true];
+
+  string variant_id = 2 [(buf.validate.field).string.uuid = true];
+
+  ecommerce.common.v1.Money price = 3 [(buf.validate.field).required = true];
+
+  map<string, string> attributes = 4 [(buf.validate.field).map = {
+    max_pairs: 20
+    keys: {
+      string: {
+        min_len: 1
+        max_len: 32
+        pattern: "^[a-z][a-z0-9_]*$"
+      }
+    }
+    values: {
+      string: {
+        min_len: 1
+        max_len: 128
+      }
+    }
+  }];
+}
+
+message UpdateVariantResponse {
+  Product product = 1;
+}
+
+message PublishProductRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message PublishProductResponse {
+  Product product = 1;
+}
+
+message ArchiveProductRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message ArchiveProductResponse {
+  Product product = 1;
+}
