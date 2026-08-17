@@ -43,6 +43,45 @@ sql:
       - no-delete-without-where
       - no-update-without-where
 
+  - engine: postgresql
+    schema: services/catalog/db/migrations
+    queries: services/catalog/db/queries
+    gen:
+      go:
+        package: sqlc
+        out: services/catalog/internal/adapter/out/postgres/sqlc
+        # pgx/v5, not database/sql — this decides the whole generated API.
+        sql_package: pgx/v5
+        # Queriers are what repositories depend on and what tests fake.
+        emit_interface: true
+        emit_empty_slices: true
+        # No JSON tags: these rows are an adapter detail and never leave the
+        # repository. The domain aggregate is what gets mapped out of them.
+        emit_json_tags: false
+        overrides:
+          # pgtype.UUID would force a conversion in every repository method.
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: uuid
+            nullable: true
+            go_type:
+              import: github.com/google/uuid
+              type: NullUUID
+          # time.Time reads better than pgtype.Timestamptz and carries the
+          # same information for a NOT NULL column.
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              import: github.com/jackc/pgx/v5/pgtype
+              type: Timestamptz
+
+    # `make sqlc-vet` runs these; they need no database connection.
+    rules:
+      - no-delete-without-where
+      - no-update-without-where
+
 rules:
   - name: no-delete-without-where
     message: a DELETE without WHERE empties the table
