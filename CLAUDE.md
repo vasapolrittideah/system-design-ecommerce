@@ -68,7 +68,7 @@ A service owns exactly one bounded context: one set of aggregates, one database,
 
 Contract-first with `buf`. Change `.proto` first, run `buf lint`, `buf breaking --against '.git#branch=trunk'`, then `buf generate`. Never edit files under `gen/`.
 
-Request validation is declared in the proto with **protovalidate** and enforced by a single interceptor — do not write per-handler validation code. A BFF is the one place that cannot use it, because its request bodies are hand-written DTOs rather than protos; those are validated by `validate` struct tags through `httpx.Validator.Bind`. Those are the only two mechanisms in the repo. A handler that checks its own input by hand is a bug wherever it appears.
+Request validation is declared in the proto with **protovalidate** and enforced by a single interceptor — do not write per-handler validation code. A BFF is the one place that cannot use it, because its request bodies are hand-written DTOs rather than protos; those are validated by `validate` struct tags — through `httpx.Validator.Bind` for a body and `httpx.Validator.BindQuery` for a query string, which is the same mechanism reached from the other half of the request. Those are the only two mechanisms in the repo. A handler that checks its own input by hand is a bug wherever it appears.
 
 Standard server interceptor chain (`pkg/grpcx/server`), in order: recovery → logging → metrics → auth → validate. Tracing is not in that list because otel is installed as a `stats.Handler`, its interceptor form being deprecated upstream — which wraps the whole chain rather than sitting inside it, so the span exists before recovery runs and a panic lands on the trace instead of beside it.
 
