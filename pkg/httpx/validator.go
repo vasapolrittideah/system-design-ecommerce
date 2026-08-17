@@ -70,7 +70,7 @@ func MustNewValidator() *Validator {
 	uni := ut.New(translators[0], translators...)
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterTagNameFunc(jsonFieldName)
+	validate.RegisterTagNameFunc(requestFieldName)
 
 	for _, entry := range supported {
 		translator, found := uni.GetTranslator(entry.name)
@@ -105,7 +105,10 @@ func (e *ValidationError) Error() string {
 		names = append(names, field.Field)
 	}
 
-	return "invalid request body: " + strings.Join(names, ", ")
+	// "request" rather than "body": the same failure is raised for a query
+	// string, and a developer reading this message about a URL parameter should
+	// not be sent looking for a body that was never sent.
+	return "invalid request: " + strings.Join(names, ", ")
 }
 
 // ErrorKind implements [errorx.Kinder].
@@ -157,14 +160,22 @@ func (v *Validator) translator(ctx context.Context) ut.Translator {
 	return translator
 }
 
-// jsonFieldName makes the validator report a field by the name the client sent
-// rather than the Go name it was decoded into, so the frontend can attach a
+// requestFieldName makes the validator report a field by the name the client
+// sent rather than the Go name it was decoded into, so the frontend can attach a
 // failure to the input the user typed in.
 //
+// A body DTO carries json tags and a query DTO carries query tags; both name the
+// same thing from the client's side, so both are read here rather than leaving
+// one kind of request to be reported under its Go field names.
+//
 // An empty result tells the validator to keep the Go field name, which is the
-// right fallback for a field with no json tag.
-func jsonFieldName(field reflect.StructField) string {
+// right fallback for a field with neither tag.
+func requestFieldName(field reflect.StructField) string {
 	name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+	if name == "" {
+		name = field.Tag.Get(queryTag)
+	}
+
 	if name == "-" {
 		return ""
 	}
