@@ -67,6 +67,16 @@ func NewMoney(amountMinor int64, currency CurrencyCode) (Money, error) {
 	return Money{amountMinor: amountMinor, currency: currency}, nil
 }
 
+// ReconstituteMoney rebuilds a price from storage.
+//
+// It validates nothing, for the reason every Reconstitute here does not: a rule
+// tightened afterwards must not make existing rows unreadable, and a repository
+// that had to call NewMoney would fail to load the very products it needs to be
+// able to correct.
+func ReconstituteMoney(amountMinor int64, currency CurrencyCode) Money {
+	return Money{amountMinor: amountMinor, currency: currency}
+}
+
 // AmountMinor returns the amount in the currency's minor unit.
 func (m Money) AmountMinor() int64 { return m.amountMinor }
 
