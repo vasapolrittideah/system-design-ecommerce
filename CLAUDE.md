@@ -16,6 +16,7 @@ E-commerce microservices monorepo. **Go · gRPC · PostgreSQL · Kafka · Kong**
 proto/                  # single source of truth for API + event contracts
   ecommerce/common/v1/   ecommerce/<service>/v1/   ecommerce/events/v1/
 gen/go/                 # buf generate output — committed to the repo, never hand-edited
+docs/proto/             # buf generate output too: the service reference, rendered from the .proto comments
 pkg/                    # cross-cutting infrastructure — no business logic allowed
 services/<name>/        # one service per directory
 deploy/k8s/
