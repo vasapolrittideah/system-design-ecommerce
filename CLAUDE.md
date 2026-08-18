@@ -118,7 +118,7 @@ The kinds are transport-shaped, never business-shaped: `KindConflict`, not `ErrO
 
 Only the `Internal` message is replaced — every other kind is a fact the caller asked for. The returned error still wraps the original, so the access line logs the full chain while the client gets the scrubbed status; without that, hiding internals would also erase the only record of what broke.
 
-Attach `ErrorInfo` details so clients can handle specific cases — `.WithReason("OUT_OF_STOCK").WithMetadata(map[string]string{"sku": sku})`. Reason codes are API: a client branches on them, so renaming one is a breaking change. Every error carries one whether or not it was set, defaulted from the kind, so nobody has to pattern-match a message. Reading back on the other side is `errorx.Reason` / `errorx.Metadata`, and a BFF turns a status into an HTTP code with `errorx.HTTPStatus`.
+Attach `ErrorInfo` details so clients can handle specific cases — `.WithReason("OUT_OF_STOCK").WithMetadata(map[string]string{"sku": sku})`. Reason codes are API: a client branches on them, so renaming one is a breaking change. Every error carries one whether or not it was set — defaulted from the kind, or from the name of the status when a failure raised below the handlers arrives without one, so a 503 is `UNAVAILABLE` and never `INTERNAL` — and nobody has to pattern-match a message. Reading back on the other side is `errorx.Reason` / `errorx.Metadata`, and a BFF turns a status into an HTTP code with `errorx.HTTPStatus`.
 
 ## PostgreSQL
 
