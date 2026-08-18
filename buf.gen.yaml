@@ -1,7 +1,8 @@
 version: v2
 
-# Wipe gen/ before generating so a deleted .proto cannot leave a stale .pb.go
-# behind — `make proto-check` compares the result against what is committed.
+# Wipe every output directory before generating, so a deleted .proto cannot
+# leave a stale .pb.go or a documented message behind — `make proto-check`
+# compares the result against what is committed.
 clean: true
 
 managed:
@@ -29,3 +30,11 @@ plugins:
       # Forward compatibility: a service that forgets a new method fails to
       # compile instead of returning Unimplemented at runtime.
       - require_unimplemented_servers=true
+
+  # Reference docs for the service contracts, generated from the .proto comments
+  # so there is no second description of a method to keep in step. Markdown
+  # rather than HTML because the output is committed: a diff is how a change to
+  # the contract gets reviewed, and a rendered page is not reviewable.
+  - remote: buf.build/community/pseudomuto-doc:v1.5.1
+    out: docs/proto
+    opt: markdown,README.md

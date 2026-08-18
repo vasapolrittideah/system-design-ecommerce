@@ -263,7 +263,7 @@ proto-breaking: ## Check for breaking changes against trunk
 	}
 
 .PHONY: proto-generate
-proto-generate: ## buf generate into gen/go
+proto-generate: ## buf generate into gen/go and docs/proto
 	$(call need,buf)
 	buf generate
 
@@ -273,10 +273,10 @@ proto-deps: ## Update buf.lock from buf.yaml dependencies
 	buf dep update
 
 .PHONY: proto-check
-proto-check: ## Fail if gen/go is stale relative to proto/ (CI)
+proto-check: ## Fail if gen/ or docs/proto is stale relative to proto/ (CI)
 	$(call need,buf)
 	buf generate
-	$(call check_generated,gen/,gen/ is stale — run: make proto and commit the result)
+	$(call check_generated,gen/ docs/proto/,generated output is stale — run: make proto and commit the result)
 
 ##@ Database
 
