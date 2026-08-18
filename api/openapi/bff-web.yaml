@@ -1,0 +1,760 @@
+openapi: 3.1.0
+
+info:
+  title: bff-web
+  version: 1.0.0
+  summary: The storefront's HTTP API.
+  description: |
+    One endpoint per screen, not per entity: `GET /api/v1/products` answers the
+    listing grid, and a field no card renders is left behind rather than
+    forwarded because a service happened to return it. A shape here is a screen's
+    shape, and it changes when the screen does.
+
+    This document is hand-written and checked against the running router by a
+    contract test, so an endpoint or a field that appears in one and not the
+    other fails the build rather than drifting quietly.
+
+    ## Reading a failure
+
+    Every failure this API decides on is one shape — see `ErrorResponse` — and
+    every field is camelCase.
+
+    Branch on `error.code`, never on the HTTP status. A 409 alone cannot say
+    whether an email was taken or an order was already paid, and the codes are
+    machine-stable: renaming one is a breaking change.
+
+    Three answers come from the gateway instead and cannot carry that shape,
+    because it short-circuits them before this service is reached. They are JSON,
+    but they carry `message` and no `error.code`:
+
+    | Status | When |
+    | --- | --- |
+    | 429 | rate limited at the edge |
+    | 413 | body past the gateway's hard cap, 8× the one this service enforces |
+    | 502, 503, 504 | this service is unreachable or too slow to answer |
+
+    So a client needs one rule for the remainder: **no `error.code` means derive
+    it from the status** — 429 is `RATE_LIMITED`, 5xx is `UPSTREAM_UNAVAILABLE`.
+    It needs that rule regardless, since a CDN or load balancer above the gateway
+    answers in its own shape too.
+
+    Note that 503 and 504 appear on both sides of that line: an unreachable
+    service *behind* this one is answered here, in this shape.
+
+    ## Correlation
+
+    Read the correlation ID from the `X-Correlation-ID` response header, not from
+    `error.correlationId`. The gateway echoes the header on every answer
+    including its own; the body field exists only when this service wrote the
+    body. One source works for both.
+
+    Send `X-Correlation-ID` yourself to tie a client-side operation to
+    everything it caused; one is minted when you do not.
+
+    ## Language
+
+    Responses are localised from `Accept-Language`, defaulting to `en`, with the
+    negotiated language echoed as `Content-Language`. Only
+    `error.fields[].message` is translated. `error.message` is a developer aid
+    and a last-resort string — never render it to a user.
+
+servers:
+  - url: http://localhost:8000
+    description: The gateway on the local k3d load balancer.
+
+tags:
+  - name: auth
+    description: Opening, renewing, and ending a session.
+  - name: account
+    description: The signed-in person's own account.
+  - name: storefront
+    description: What is on sale, shaped for the screen that shows it.
+
+paths:
+  /api/v1/auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Create an account
+      description: |
+        Returns the person and no tokens. Registering and signing in stay
+        separate acts: a client that only wanted an account is not handed a
+        credential it has to decide what to do with.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: The account was created.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: |
+            The email is already registered — `EMAIL_ALREADY_REGISTERED`.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Exchange credentials for a session
+      description: |
+        Answers with the token pair and the person behind it, so a client renders
+        a header without a second call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: The session was opened.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: |
+            The email and password do not match an account —
+            `INVALID_CREDENTIALS`. Which half was wrong is deliberately not said.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [auth]
+      summary: Exchange a refresh token for a new pair
+      description: |
+        The presented token is spent and a successor is issued. Do not retry this
+        call: the token it spends is gone, and presenting it a second time is
+        indistinguishable from the theft that rotation exists to detect — the
+        answer is to end the whole chain and sign in again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: A new pair was issued and the old token is now spent.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokensResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: |
+            The token was expired, revoked, already spent, or never issued —
+            `REFRESH_TOKEN_INVALID` for all four, since telling them apart would
+            let a holder of one string find out whether it was ever real. Sign in
+            again rather than retrying.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: End a session
+      description: |
+        Revokes the presented token's whole rotation chain. It succeeds for a
+        token that was already revoked, never issued, or expired: logging out is
+        a state the caller wants to reach rather than a change they are making.
+
+        It does not invalidate the access token already in the caller's hands,
+        which keeps working until it expires. A screen that must stop responding
+        immediately has to ask the service that owns it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '204':
+          description: The chain is revoked. No body.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+  /api/v1/me:
+    get:
+      operationId: getCurrentUser
+      tags: [account]
+      summary: The signed-in person
+      description: |
+        The account is the one the presented token names. There is no endpoint
+        that reads somebody else's, and no parameter here that could ask for one.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The account behind the token.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          description: |
+            The token is valid but names an account that no longer exists —
+            `USER_NOT_FOUND`.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+  /api/v1/products:
+    get:
+      operationId: listProducts
+      tags: [storefront]
+      summary: One page of the catalog, as a grid of cards
+      description: |
+        Anonymous: browsing is what a shopper does before deciding to have an
+        account.
+
+        Only products on sale are returned, and there is no parameter that can
+        ask for anything else — drafts and archived products are an admin
+        console's business, not this API's. A query parameter this endpoint does
+        not name is ignored rather than rejected, so a campaign link carrying its
+        own tracking parameters is still a valid request.
+      parameters:
+        - name: category
+          in: query
+          required: false
+          description: Exact match on a category slug. Every category when absent.
+          schema:
+            type: string
+            maxLength: 64
+          example: clothing/shirts
+        - name: pageSize
+          in: query
+          required: false
+          description: |
+            How many cards to return. Omit it, or send 0, to let the catalog
+            choose.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            maximum: 100
+        - name: pageToken
+          in: query
+          required: false
+          description: |
+            The `nextPageToken` from the previous response. Opaque: read nothing
+            from it and construct nothing into it.
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: One page. An empty page is an empty array, never null.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        The access token from `POST /api/v1/auth/login`, as
+        `Authorization: Bearer <token>`. It is an ES256 JWT and lives 15 minutes;
+        renew it with `POST /api/v1/auth/refresh` rather than signing in again.
+
+        `X-User-ID` and `X-User-Roles` are ignored wherever they appear. Identity
+        comes from the signature this service verified itself.
+
+  headers:
+    CorrelationID:
+      description: |
+        The ID tying this response to every log line and span behind it. Present
+        on every answer, this API's and the gateway's alike.
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: |
+        The request could not be read or broke a rule.
+
+        A body that will not decode is a bug in the client and carries a reason
+        code with no translated prose: `EMPTY_BODY`, `MALFORMED_JSON`,
+        `UNKNOWN_FIELD`, `INVALID_FIELD_TYPE`. A request that decodes but breaks
+        a rule is a person's mistake and comes back as `INVALID_INPUT` with
+        `error.fields`, one entry per failing field, each already translated.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationID'
+        Content-Language:
+          description: The language `error.fields[].message` was written in.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Unauthenticated:
+      description: |
+        No usable token was presented — `TOKEN_MISSING`, `TOKEN_EXPIRED`, or
+        `TOKEN_INVALID`, and nothing finer, so that probing signatures teaches
+        nothing.
+
+        `TOKEN_EXPIRED` is the only one to act on differently: refresh, do not
+        send the person back to a login screen.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    PayloadTooLarge:
+      description: |
+        The body is over 1 MiB — `BODY_TOO_LARGE`. A body large enough to be
+        refused by the gateway instead arrives without an `error.code`.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    UnsupportedMediaType:
+      description: |
+        A `Content-Type` other than `application/json` was sent —
+        `UNSUPPORTED_MEDIA_TYPE`. Sending none at all is allowed.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    InternalError:
+      description: |
+        Something here broke — `INTERNAL`. The message is fixed prose and the
+        detail is in the logs under this response's correlation ID.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    UpstreamUnavailable:
+      description: |
+        A service this endpoint depends on could not be reached. It carries an
+        `error.code` — the failure was decided here — where the gateway's own 503
+        does not.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    UpstreamTimeout:
+      description: |
+        A service this endpoint depends on did not answer inside the request's
+        budget. Retrying is reasonable; retrying immediately is not.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationID'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Bounded at the longest address SMTP is required to accept.
+        password:
+          type: string
+          minLength: 8
+          maxLength: 256
+          description: |
+            Length is all that is checked. Composition rules push people toward
+            predictable passwords and belong nowhere near a transport contract.
+      example:
+        email: ada@example.com
+        password: correct-horse-battery-staple
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: |
+            No minimum beyond one character, unlike registration: the rule to
+            satisfy here is whatever the password already is, and a policy
+            tightened afterwards must not lock anyone out of an account they can
+            still open.
+
+    RefreshTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: |
+            In the body and never in a header. The `Authorization` header rides
+            every request to every service, which is the right place for a
+            15-minute access token and the wrong place for the long-lived
+            credential that mints new ones.
+
+    LogoutRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+          maxLength: 512
+
+    UserResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      required: [id, email, roles, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          description: |
+            Empty rather than null for a person with none, so a client needs no
+            nil check to iterate it.
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    SessionResponse:
+      type: object
+      required: [tokens, user]
+      properties:
+        tokens:
+          $ref: '#/components/schemas/TokenPair'
+        user:
+          $ref: '#/components/schemas/User'
+
+    TokensResponse:
+      type: object
+      description: |
+        What a refresh answers with: the pair alone, because nothing about the
+        account has changed.
+      required: [tokens]
+      properties:
+        tokens:
+          $ref: '#/components/schemas/TokenPair'
+
+    TokenPair:
+      type: object
+      required:
+        [accessToken, refreshToken, accessTokenExpiresAt, refreshTokenExpiresAt]
+      properties:
+        accessToken:
+          type: string
+          description: |
+            An ES256 JWT, sent back as the bearer token in the `Authorization`
+            header.
+        refreshToken:
+          type: string
+          description: |
+            Opaque, and revocable precisely because it is not a JWT. Store it
+            where an access token would not go.
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+        refreshTokenExpiresAt:
+          type: string
+          format: date-time
+          description: |
+            The end of the whole rotation chain, not of this link. Refreshing
+            does not move it.
+
+    ProductsResponse:
+      type: object
+      required: [products]
+      properties:
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductCard'
+        nextPageToken:
+          type: string
+          description: |
+            Absent on the last page. Send it back as `pageToken` to ask for the
+            next one.
+
+    ProductCard:
+      type: object
+      description: |
+        One product as a grid of cards needs it, which is much less than the
+        catalog holds about it. The description and the variant list are
+        deliberately absent: twenty cards would carry twenty descriptions and
+        every SKU to render text no card shows.
+      required: [id, name, category, priceFrom, variantCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        category:
+          type: string
+        priceFrom:
+          description: |
+            The cheapest variant's price, which is what "from ฿x" on a card
+            quotes. Null for a product with no variants — a state the storefront
+            should never see, since publishing requires one.
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+        variantCount:
+          type: integer
+          description: |
+            How many ways this product can be bought, so a card knows whether
+            `priceFrom` is the price or the lowest of several.
+
+    Money:
+      type: object
+      description: |
+        An amount in a currency's minor unit — 1050 is THB 10.50 — with the
+        currency saying how many decimal places that is. Formatting is the
+        client's: the locale an amount is rendered in is the browser's, not this
+        API's.
+      required: [amountMinor, currencyCode]
+      properties:
+        amountMinor:
+          type: integer
+          format: int64
+        currencyCode:
+          type: string
+          description: ISO 4217.
+          minLength: 3
+          maxLength: 3
+      example:
+        amountMinor: 89000
+        currencyCode: THB
+
+    ErrorResponse:
+      type: object
+      description: The body behind every failure this API decided on.
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            The machine-stable reason to branch on, finer-grained than the HTTP
+            status on purpose. Renaming one is a breaking change.
+
+            A failure that reached this tier without naming itself — a transport
+            error, an unclassified bug — arrives as `INTERNAL` whatever the
+            status says, so treat the status as the fallback rather than the
+            code as the whole truth.
+          examples:
+            - EMAIL_ALREADY_REGISTERED
+            - INVALID_CREDENTIALS
+            - TOKEN_EXPIRED
+            - INVALID_INPUT
+        message:
+          type: string
+          description: |
+            English prose, for a developer reading a log or a network tab. Never
+            render it to a user: it is untranslated, and a 5xx replaces it with
+            fixed text anyway so that nothing internal leaks.
+        fields:
+          type: array
+          description: Set when the request broke per-field validation.
+          items:
+            $ref: '#/components/schemas/FieldError'
+        metadata:
+          type: object
+          description: |
+            The facts behind `code` — the SKU that was short, the status an order
+            was actually in — so a client can compose its own message without
+            parsing one.
+          additionalProperties:
+            type: string
+        correlationId:
+          type: string
+          description: |
+            Present when this service wrote the body. Prefer the
+            `X-Correlation-ID` header, which is on every answer including the
+            gateway's.
+
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          description: |
+            The path as the client wrote it, in the same camelCase the request
+            used, with indexes for collections — `items[0].quantity`.
+          examples: [pageSize, email]
+        code:
+          type: string
+          description: The rule that failed, for a client that wants its own wording.
+          examples: [required, email, lte]
+        message:
+          type: string
+          description: |
+            The failure in the language `Accept-Language` asked for, ready to
+            render next to the input. The only translated string in this API.

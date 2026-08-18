@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -548,7 +549,7 @@ func newServer(
 	t *testing.T,
 	identity identityv1.IdentityServiceClient,
 	catalog catalogv1.CatalogServiceClient,
-) (http.Handler, *auth.Signer) {
+) (*chi.Mux, *auth.Signer) {
 	t.Helper()
 
 	privatePEM, publicPEM := generateKeyPair(t)
