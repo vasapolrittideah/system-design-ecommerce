@@ -103,6 +103,10 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		contentType   string
 		authenticated bool
 
+		// authorization is a header set by hand, for the tokens no signer of
+		// this test's would produce.
+		authorization string
+
 		identity *stubIdentityClient
 		catalog  *stubCatalogClient
 
@@ -144,6 +148,15 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 			name:        "register with an empty body",
 			method:      http.MethodPost,
 			path:        "/api/v1/auth/register",
+			identity:    &stubIdentityClient{},
+			wantStatus:  http.StatusBadRequest,
+			specRejects: true,
+		},
+		{
+			name:        "register with a body that is not JSON at all",
+			method:      http.MethodPost,
+			path:        "/api/v1/auth/register",
+			body:        `{"email": "ada@example.com",`,
 			identity:    &stubIdentityClient{},
 			wantStatus:  http.StatusBadRequest,
 			specRejects: true,
@@ -238,6 +251,14 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 			wantStatus:    http.StatusOK,
 		},
 		{
+			name:          "me with a token this service did not sign",
+			method:        http.MethodGet,
+			path:          "/api/v1/me",
+			authorization: "Bearer not.a.token",
+			identity:      &stubIdentityClient{},
+			wantStatus:    http.StatusUnauthorized,
+		},
+		{
 			name:       "me without a token",
 			method:     http.MethodGet,
 			path:       "/api/v1/me",
@@ -314,7 +335,7 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 
 			srv, signer := newServer(t, identity, catalog)
 
-			authorization := ""
+			authorization := tc.authorization
 			if tc.authenticated {
 				token, err := signer.Sign(testUserID, []string{"customer"})
 				if err != nil {
@@ -418,11 +439,11 @@ func assertResponseMatchesSpec(
 		t.Fatalf("decode body %s: %v", res.Body, err)
 	}
 
-	assertFieldsAreDocumented(t, "", media.Schema.Value, body)
+	assertFieldsAreDocumented(t, "", []*openapi3.Schema{media.Schema.Value}, body)
 }
 
-// assertFieldsAreDocumented reports a field the response carries and the schema
-// does not name.
+// assertFieldsAreDocumented reports a field the response carries and no schema
+// describing it names.
 //
 // Schema validation alone would not: JSON Schema permits properties it has not
 // heard of, which is the right default for a client — a field added to a
@@ -430,62 +451,87 @@ func assertResponseMatchesSpec(
 // undocumented field is precisely the drift being hunted. The strictness belongs
 // here rather than as `additionalProperties: false` in the spec, which would
 // tell every client the opposite.
-func assertFieldsAreDocumented(t *testing.T, path string, schema *openapi3.Schema, value any) {
+//
+// It takes a set of schemas rather than one because an error body is described
+// by two at once: the shared shape, and the branch narrowing `error.code` to
+// what this response can answer with. A field named by either is documented.
+func assertFieldsAreDocumented(t *testing.T, path string, schemas []*openapi3.Schema, value any) {
 	t.Helper()
 
-	if schema == nil {
-		return
-	}
+	described := flatten(schemas)
 
 	switch typed := value.(type) {
 	case map[string]any:
-		object := objectSchemaFor(schema)
-		if object == nil {
-			return
-		}
-
 		for name, field := range typed {
-			property, documented := object.Properties[name]
-			if !documented {
-				if extra := object.AdditionalProperties.Schema; extra != nil {
-					assertFieldsAreDocumented(t, join(path, name), extra.Value, field)
-
-					continue
-				}
-
+			children := propertySchemas(described, name)
+			if len(children) == 0 {
 				t.Errorf("the response carries %s, which the spec does not describe", join(path, name))
 
 				continue
 			}
 
-			assertFieldsAreDocumented(t, join(path, name), property.Value, field)
+			assertFieldsAreDocumented(t, join(path, name), children, field)
 		}
 	case []any:
-		if schema.Items == nil {
-			return
+		var items []*openapi3.Schema
+		for _, schema := range described {
+			if schema.Items != nil && schema.Items.Value != nil {
+				items = append(items, schema.Items.Value)
+			}
 		}
 
 		for i, item := range typed {
-			assertFieldsAreDocumented(t, fmt.Sprintf("%s[%d]", path, i), schema.Items.Value, item)
+			assertFieldsAreDocumented(t, fmt.Sprintf("%s[%d]", path, i), items, item)
 		}
 	}
 }
 
-// objectSchemaFor picks the schema an object value is described by, looking
-// through a oneOf — which is how a nullable object is written in 3.1, and the
-// only composition this API uses.
-func objectSchemaFor(schema *openapi3.Schema) *openapi3.Schema {
-	if len(schema.Properties) > 0 || schema.AdditionalProperties.Schema != nil {
-		return schema
-	}
+// flatten expands the two compositions this spec uses into the schemas that
+// actually name properties: allOf, which refines a shared shape, and oneOf,
+// which is how a nullable object is written in 3.1.
+func flatten(schemas []*openapi3.Schema) []*openapi3.Schema {
+	var described []*openapi3.Schema
 
-	for _, branch := range schema.OneOf {
-		if branch.Value != nil && len(branch.Value.Properties) > 0 {
-			return branch.Value
+	for _, schema := range schemas {
+		if schema == nil {
+			continue
+		}
+
+		var branches []*openapi3.Schema
+		for _, branch := range append(append([]*openapi3.SchemaRef{}, schema.AllOf...), schema.OneOf...) {
+			if branch.Value != nil {
+				branches = append(branches, branch.Value)
+			}
+		}
+
+		described = append(described, flatten(branches)...)
+
+		if len(schema.Properties) > 0 || schema.AdditionalProperties.Schema != nil || schema.Items != nil {
+			described = append(described, schema)
 		}
 	}
 
-	return nil
+	return described
+}
+
+// propertySchemas returns every schema describing the named field, which is
+// none when nothing documents it.
+func propertySchemas(described []*openapi3.Schema, name string) []*openapi3.Schema {
+	var children []*openapi3.Schema
+
+	for _, schema := range described {
+		if property, found := schema.Properties[name]; found && property.Value != nil {
+			children = append(children, property.Value)
+
+			continue
+		}
+
+		if extra := schema.AdditionalProperties.Schema; extra != nil && extra.Value != nil {
+			children = append(children, extra.Value)
+		}
+	}
+
+	return children
 }
 
 func join(path, name string) string {

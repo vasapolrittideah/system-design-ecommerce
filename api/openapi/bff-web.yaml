@@ -107,7 +107,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [EMAIL_ALREADY_REGISTERED]
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '415':
@@ -155,7 +161,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [INVALID_CREDENTIALS]
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '415':
@@ -207,7 +219,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [REFRESH_TOKEN_INVALID]
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '415':
@@ -289,7 +307,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [USER_NOT_FOUND]
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -401,7 +425,18 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        enum:
+                          - INVALID_INPUT
+                          - MALFORMED_JSON
+                          - EMPTY_BODY
+                          - UNKNOWN_FIELD
+                          - INVALID_FIELD_TYPE
 
     Unauthenticated:
       description: |
@@ -417,7 +452,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        enum: [TOKEN_MISSING, TOKEN_EXPIRED, TOKEN_INVALID]
 
     PayloadTooLarge:
       description: |
@@ -429,7 +470,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        enum: [BODY_TOO_LARGE]
 
     UnsupportedMediaType:
       description: |
@@ -441,44 +488,74 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        enum: [UNSUPPORTED_MEDIA_TYPE]
 
     InternalError:
       description: |
-        Something here broke — `INTERNAL`. The message is fixed prose and the
-        detail is in the logs under this response's correlation ID.
+        Something here broke — `INTERNAL`, or `UNKNOWN` and `DATA_LOSS` for a
+        failure that could not even say that much. All three mean the same thing
+        to a client: nothing it sent was wrong and nothing it can change will
+        help. The message is fixed prose and the detail is in the logs under
+        this response's correlation ID.
       headers:
         X-Correlation-ID:
           $ref: '#/components/headers/CorrelationID'
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        enum: [INTERNAL, UNKNOWN, DATA_LOSS]
 
     UpstreamUnavailable:
       description: |
-        A service this endpoint depends on could not be reached. It carries an
-        `error.code` — the failure was decided here — where the gateway's own 503
-        does not.
+        A service this endpoint depends on could not be reached — `UNAVAILABLE`.
+
+        A 503 with no `error.code` at all came from the gateway instead, and
+        means this service is the one that could not be reached. Both are
+        `UPSTREAM_UNAVAILABLE` as far as a client's handling goes.
       headers:
         X-Correlation-ID:
           $ref: '#/components/headers/CorrelationID'
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        enum: [UNAVAILABLE]
 
     UpstreamTimeout:
       description: |
         A service this endpoint depends on did not answer inside the request's
-        budget. Retrying is reasonable; retrying immediately is not.
+        budget — `DEADLINE_EXCEEDED`. Retrying is reasonable; retrying
+        immediately is not.
       headers:
         X-Correlation-ID:
           $ref: '#/components/headers/CorrelationID'
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        enum: [DEADLINE_EXCEEDED]
 
   schemas:
     RegisterRequest:
@@ -704,10 +781,11 @@ components:
             The machine-stable reason to branch on, finer-grained than the HTTP
             status on purpose. Renaming one is a breaking change.
 
-            A failure that reached this tier without naming itself — a transport
-            error, an unclassified bug — arrives as `INTERNAL` whatever the
-            status says, so treat the status as the fallback rather than the
-            code as the whole truth.
+            A failure raised below the handlers — a refused connection, a
+            tripped breaker, a spent deadline — has no reason of its own, and
+            the name of the status it arrived as stands in: `UNAVAILABLE`,
+            `DEADLINE_EXCEEDED`. Every response below lists the codes it can
+            carry.
           examples:
             - EMAIL_ALREADY_REGISTERED
             - INVALID_CREDENTIALS
