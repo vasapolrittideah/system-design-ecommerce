@@ -17,6 +17,7 @@ proto/                  # single source of truth for API + event contracts
   ecommerce/common/v1/   ecommerce/<service>/v1/   ecommerce/events/v1/
 gen/go/                 # buf generate output — committed to the repo, never hand-edited
 docs/proto/             # buf generate output too: the service reference, rendered from the .proto comments
+api/openapi/            # the REST contract, hand-written — one file per BFF
 pkg/                    # cross-cutting infrastructure — no business logic allowed
 services/<name>/        # one service per directory
 deploy/k8s/
@@ -184,6 +185,10 @@ Its structure is the hexagonal layout with the layers it has no use for left out
 - BFF DTOs are defined separately from service protos so clients never bind to internal structures.
 - Short-TTL cache with singleflight for read-heavy data; invalidate via Kafka events.
 - **A BFF registers no readiness check for the services it calls.** An unreachable dependency is a 503 with a reason code, which is a better answer than every replica leaving the endpoint list at once — gating on it would turn a downstream service's routine rollout into an outage with nothing left to route to.
+
+**The REST contract is hand-written in `api/openapi/bff-web.yaml`, and a contract test holds the router to it.** It cannot be generated the way `docs/proto` is: the DTOs are hand-written and the route table is chi, so the spec is a second description of the same API and would drift the first time one side moved alone. What stops that is a test that walks the mounted routes and drives every one of them — a route with no entry, an entry nothing serves, an undocumented status, and a field no schema names each fail the build. Request bounds are held from the other side too: a `validate` tag and a spec constraint that disagree show up as a request only one of them turns away.
+
+Response schemas deliberately do not set `additionalProperties: false`. A client should tolerate a field it has not seen, and saying otherwise in the published contract to make a test strict would tell every reader the opposite of what this API promises — so the strictness lives in the test, which compares the body against the schema's properties itself.
 
 The HTTP side is `pkg/httpx`, which services never import — they speak gRPC, and `pkg/errorx` already carries their errors this far. Routers come from `httpx.MustNewRouter`, never a bare `chi.NewRouter`: chi answers an unrouted path, a wrong method, and a panic in `text/plain`, and its recoverer prints the stack into the response, so three exceptions to the response contract exist from the first commit unless its fallbacks are replaced.
 
