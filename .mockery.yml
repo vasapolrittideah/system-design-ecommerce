@@ -18,3 +18,7 @@ packages:
   github.com/vasapolrittideah/system-design-ecommerce/services/catalog/internal/port/out:
     config:
       all: true
+
+  github.com/vasapolrittideah/system-design-ecommerce/services/inventory/internal/port/out:
+    config:
+      all: true

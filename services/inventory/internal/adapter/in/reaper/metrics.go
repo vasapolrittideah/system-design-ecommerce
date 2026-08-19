@@ -1,0 +1,45 @@
+package reaper
+
+import (
+	"fmt"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// metrics is what makes a stalled reaper visible.
+//
+// A reaper that has stopped sweeping breaks nothing anyone can see: the API
+// answers, the database is healthy, readiness stays green, and stock quietly
+// stops being sellable as abandoned checkouts accumulate holds. These two series
+// are where that shows up.
+type metrics struct {
+	expired  prometheus.Counter
+	failures prometheus.Counter
+}
+
+// newMetrics builds and registers the collectors.
+func newMetrics(reg prometheus.Registerer) (*metrics, error) {
+	m := &metrics{
+		// A rate worth watching in both directions. Zero forever means the sweep
+		// is not running; a sustained rise means checkouts are being abandoned
+		// after the stock was reserved, which is a payment problem showing up
+		// here first.
+		expired: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "inventory_reservations_expired_total",
+			Help: "Reservations swept because nobody committed them in time.",
+		}),
+
+		failures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "inventory_reaper_sweeps_failed_total",
+			Help: "Sweeps that failed and were rolled back.",
+		}),
+	}
+
+	for _, c := range []prometheus.Collector{m.expired, m.failures} {
+		if err := reg.Register(c); err != nil {
+			return nil, fmt.Errorf("reaper: register metrics: %w", err)
+		}
+	}
+
+	return m, nil
+}
