@@ -326,7 +326,9 @@ Two manifests carry couplings that break silently when one side is tuned alone. 
 
 ## Deployment notes
 
-One Deployment per service with HPA on CPU or consumer lag (KEDA). Migrations run as Jobs/init containers. gRPC needs a headless service with client-side load balancing — an L4 load balancer pins a single connection. Config comes from env (12-factor); secrets from External Secrets / Sealed Secrets.
+One Deployment per service with HPA on CPU or consumer lag (KEDA) — plus one more for each background loop the service runs, which is where the reservation reaper in `inventory` sits. A loop that ran as a goroutine inside the server would be started once per replica, so the work it does would be multiplied by whatever the autoscaler decided on. Migrations run as Jobs/init containers. gRPC needs a headless service with client-side load balancing — an L4 load balancer pins a single connection. Config comes from env (12-factor); secrets from External Secrets / Sealed Secrets.
+
+**A service with more than one Deployment names `app.kubernetes.io/component` in its headless Service's selector**, and that is the only reason the label is load-bearing anywhere. Every workload a service ships wears the same `app.kubernetes.io/name`, because that is what the NetworkPolicies and the database's ingress rule are written against — so a Service selecting on the name alone puts the background loop's pods, and any running migration Job, into the endpoint list a gRPC caller resolves. Those pods listen on nothing; neither they nor the caller report anything wrong. `make deploy` and `make restart` accordingly roll out every Deployment carrying the service's name label rather than the one that shares it.
 
 **Every service Deployment carries `reloader.stakater.com/auto: "true"`, and generated ConfigMaps and Secrets carry fixed names** (`disableNameSuffixHash: true`). Configuration is read from env once, when the container starts, so a Secret that changes underneath a running pod changes nothing until something restarts it — and rotating a signing key would otherwise report success while every replica kept signing with the old one.
 
