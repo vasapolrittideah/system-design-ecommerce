@@ -496,7 +496,14 @@ deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity)
 			exit 1; \
 		}; \
 	fi
-	kubectl -n $(NAMESPACE) rollout status deployment/$(SVC) --timeout=180s
+	@# Every Deployment carrying the service's label, not just the one named
+	@# after it. inventory ships a second one — its reservation reaper — and a
+	@# deploy that waited only on `deployment/$(SVC)` would report success while
+	@# that workload was still crash-looping on a bad config.
+	@for deploy in $$(kubectl -n $(NAMESPACE) get deployments \
+			-l app.kubernetes.io/name=$(SVC) -o name); do \
+		kubectl -n $(NAMESPACE) rollout status $$deploy --timeout=180s || exit 1; \
+	done
 	@# rollout status means the new pods are Ready, which is a claim each pod
 	@# makes about itself. Whether the system still serves is a different
 	@# question, and this is where it gets asked.
@@ -515,8 +522,11 @@ undeploy: ## Remove a service from the cluster (SVC=identity)
 .PHONY: restart
 restart: ## Roll a service's pods without rebuilding (SVC=identity)
 	$(need_svc)
-	kubectl -n $(NAMESPACE) rollout restart deployment/$(SVC)
-	kubectl -n $(NAMESPACE) rollout status deployment/$(SVC) --timeout=180s
+	@for deploy in $$(kubectl -n $(NAMESPACE) get deployments \
+			-l app.kubernetes.io/name=$(SVC) -o name); do \
+		kubectl -n $(NAMESPACE) rollout restart $$deploy; \
+		kubectl -n $(NAMESPACE) rollout status $$deploy --timeout=180s || exit 1; \
+	done
 
 .PHONY: render
 render: ## Print the manifests an overlay would apply (SVC=identity)
