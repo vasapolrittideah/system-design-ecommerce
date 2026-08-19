@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package ecommerce.inventory.v1;
+
+import "buf/validate/validate.proto";
+import "ecommerce/inventory/v1/stock.proto";
+
+// InventoryService owns how many of each SKU exist and who has claimed them. It
+// is reached over east-west gRPC only.
+//
+// It owns no prices and no descriptions. The catalog answers what a thing is and
+// what it costs; this service answers whether there is one left, which is written
+// far more often than it is read and is protected by a rule the catalog has no
+// way to enforce: never sell the same unit twice.
+//
+// The one rule worth stating at this level is that reserving is synchronous. It
+// is the step an order takes before it persists anything, so that a shopper
+// learns about a sold-out SKU while they are still looking at the screen rather
+// than in an email ten seconds later.
+//
+// Every field constraint below is declared here rather than checked in a
+// handler: a single interceptor enforces them, so a handler that validates its
+// own input is a bug wherever it appears.
+service InventoryService {
+  // GetStockBySKUs reads the counts for many SKUs. Every service exposes one of
+  // these so a caller can fill a screen without looping single-item calls.
+  rpc GetStockBySKUs(GetStockBySKUsRequest) returns (GetStockBySKUsResponse);
+
+  // GetReservation reads one reservation, which is how a saga that lost track
+  // of an ambiguous call finds out what actually happened.
+  rpc GetReservation(GetReservationRequest) returns (GetReservationResponse);
+
+  // CreateStockItem starts tracking a SKU, at a starting count.
+  //
+  // Explicit rather than folded into AdjustStock as an upsert: a typo in a SKU
+  // would otherwise create stock for something nobody sells, and the first sign
+  // of it would be an order for goods that do not exist.
+  rpc CreateStockItem(CreateStockItemRequest) returns (CreateStockItemResponse);
+
+  // AdjustStock moves the available count by a delta — a delivery arriving, a
+  // breakage written off.
+  //
+  // A delta and not an absolute count, because two receipts landing at once
+  // would otherwise overwrite each other and the loss would be silent. It is
+  // named for a mutation on purpose: the client retry policy reads method names,
+  // and a retried adjustment is a second delivery.
+  rpc AdjustStock(AdjustStockRequest) returns (AdjustStockResponse);
+
+  // ReserveStock holds stock for an order, for as long as this service's
+  // configured TTL.
+  //
+  // Idempotent on order_id rather than on the request as a whole: a saga that
+  // retries after an ambiguous timeout is asking whether its hold exists, and
+  // gets the existing reservation back unchanged. A *different* set of lines
+  // under an order_id that already holds one is a conflict, not a replacement.
+  //
+  // Not enough stock is FailedPrecondition with reason OUT_OF_STOCK and the SKU
+  // in the metadata, so a caller can name the line that failed. It is
+  // deliberately not one of the codes a circuit breaker counts: a run of
+  // sold-out SKUs is this service working correctly.
+  rpc ReserveStock(ReserveStockRequest) returns (ReserveStockResponse);
+
+  // CommitReservation turns a hold into a sale. The held quantity leaves the
+  // warehouse rather than returning to available.
+  //
+  // It refuses a reservation whose expires_at has passed, even while the reaper
+  // has not got to it yet: the capacity is already promised to whoever asks
+  // next, and committing on the strength of the reaper being slow is how the
+  // same unit gets sold twice. A saga that meets this reserves again or fails
+  // the order.
+  //
+  // Committing one that is already committed succeeds and changes nothing —
+  // every step of a saga is retried eventually.
+  rpc CommitReservation(CommitReservationRequest) returns (CommitReservationResponse);
+
+  // ReleaseReservation gives the held stock back. This is the compensating step
+  // of a saga that failed after reserving, and it is idempotent for the same
+  // reason: compensation runs more than once.
+  rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
+}
+
+message GetStockBySKUsRequest {
+  // Bounded because the response is: an unbounded list is how a batch read
+  // drives its own callee out of memory.
+  repeated string skus = 1 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 100
+      unique: true
+    },
+    (buf.validate.field).repeated.items.string.pattern = "^[A-Z0-9][A-Z0-9-]{2,63}$"
+  ];
+}
+
+message GetStockBySKUsResponse {
+  // The SKUs this service tracks, in no guaranteed order and possibly fewer than
+  // were asked for. A SKU nobody has stocked yet is not an error: one such line
+  // must not fail the whole screen a caller is assembling.
+  repeated StockItem items = 1;
+}
+
+message GetReservationRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message GetReservationResponse {
+  Reservation reservation = 1;
+}
+
+message CreateStockItemRequest {
+  string sku = 1 [(buf.validate.field).string.pattern = "^[A-Z0-9][A-Z0-9-]{2,63}$"];
+
+  // May be zero: a SKU that is tracked but not yet delivered is an ordinary
+  // state, and it is the one that keeps an order from being taken for it.
+  int32 available = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000000
+  }];
+}
+
+message CreateStockItemResponse {
+  StockItem item = 1;
+}
+
+message AdjustStockRequest {
+  string sku = 1 [(buf.validate.field).string.pattern = "^[A-Z0-9][A-Z0-9-]{2,63}$"];
+
+  // Non-zero, and either sign. An adjustment that would take available below
+  // zero is refused rather than clamped — the count is wrong either way, and
+  // clamping hides which.
+  int32 delta = 2 [(buf.validate.field).int32 = {
+    gte: -1000000
+    lte: 1000000
+  }];
+
+  // Why the count moved, for the humans reading the log line. Free text and not
+  // an enum: no rule here reads it, and an enum would be a list to extend every
+  // time a warehouse invents a new way to lose a box.
+  string reason = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+  }];
+}
+
+message AdjustStockResponse {
+  StockItem item = 1;
+}
+
+// NewReservationLine is one SKU a caller wants held.
+message NewReservationLine {
+  string sku = 1 [(buf.validate.field).string.pattern = "^[A-Z0-9][A-Z0-9-]{2,63}$"];
+
+  int32 quantity = 2 [(buf.validate.field).int32 = {
+    gt: 0
+    lte: 10000
+  }];
+}
+
+message ReserveStockRequest {
+  // The order taking the hold, and the idempotency key. A caller that has no
+  // order id yet has nothing to reserve against — the aggregate is persisted
+  // after this call returns, but its identifier is minted before.
+  string order_id = 1 [(buf.validate.field).string.uuid = true];
+
+  // Two lines naming the same SKU are summed rather than refused: a cart that
+  // added the same shirt twice is describing one quantity, and the caller
+  // should not have to know that.
+  repeated NewReservationLine lines = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 100
+  }];
+}
+
+message ReserveStockResponse {
+  Reservation reservation = 1;
+}
+
+message CommitReservationRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message CommitReservationResponse {
+  Reservation reservation = 1;
+}
+
+message ReleaseReservationRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message ReleaseReservationResponse {
+  Reservation reservation = 1;
+}

@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package ecommerce.inventory.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// StockItem is how many of one sellable unit the warehouse has, split by what
+// is still sellable and what an order has already spoken for.
+//
+// It is keyed by SKU rather than by variant id. The catalog mints the id, but
+// the SKU is what a shelf, a picking list, and a supplier's invoice all say, and
+// a service that counted physical things by a UUID would be unable to answer the
+// question a human actually asks.
+message StockItem {
+  string sku = 1;
+
+  // What a new reservation may still take.
+  int32 available = 2;
+
+  // What live reservations are holding. It becomes available again when a
+  // reservation is released or expires, and simply disappears when one is
+  // committed — the goods left the building.
+  int32 reserved = 3;
+
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// Reservation is one order's claim on stock, held for a while and then either
+// committed or given back.
+//
+// The whole order is one reservation rather than one per line, because it is
+// released and committed as a unit: a saga that compensated line by line could
+// leave half an order holding capacity nobody will ever buy.
+message Reservation {
+  string id = 1;
+
+  // The order this was taken for. Unique, which is what makes ReserveStock
+  // idempotent — a saga that retries after an ambiguous timeout gets the same
+  // reservation back rather than a second hold on the same goods.
+  string order_id = 2;
+
+  repeated ReservationLine lines = 3;
+
+  ReservationStatus status = 4;
+
+  // When a held reservation stops being honoured. Past this the capacity is
+  // the reaper's to return, and CommitReservation refuses — see the RPC.
+  google.protobuf.Timestamp expires_at = 5;
+
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// ReservationLine is one SKU's share of a reservation.
+message ReservationLine {
+  string sku = 1;
+
+  int32 quantity = 2;
+}
+
+// ReservationStatus is where a reservation sits in its lifecycle. The
+// transitions between these are this service's state machine and belong to its
+// domain; this enum only names the states so a caller can read them.
+enum ReservationStatus {
+  RESERVATION_STATUS_UNSPECIFIED = 0;
+
+  // Holding capacity, and doing so until expires_at.
+  RESERVATION_STATUS_HELD = 1;
+
+  // The goods were sold. The held quantity is gone rather than returned.
+  RESERVATION_STATUS_COMMITTED = 2;
+
+  // Given back on purpose — the compensating step of a saga that failed
+  // further along.
+  RESERVATION_STATUS_RELEASED = 3;
+
+  // Given back by the reaper, because nobody committed it in time. Distinct
+  // from RELEASED so that a stranded saga is visible as such instead of looking
+  // like a compensation somebody ran.
+  RESERVATION_STATUS_EXPIRED = 4;
+}

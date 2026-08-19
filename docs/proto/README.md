@@ -58,6 +58,32 @@
   
     - [IdentityService](#ecommerce-identity-v1-IdentityService)
   
+- [ecommerce/inventory/v1/stock.proto](#ecommerce_inventory_v1_stock-proto)
+    - [Reservation](#ecommerce-inventory-v1-Reservation)
+    - [ReservationLine](#ecommerce-inventory-v1-ReservationLine)
+    - [StockItem](#ecommerce-inventory-v1-StockItem)
+  
+    - [ReservationStatus](#ecommerce-inventory-v1-ReservationStatus)
+  
+- [ecommerce/inventory/v1/inventory_service.proto](#ecommerce_inventory_v1_inventory_service-proto)
+    - [AdjustStockRequest](#ecommerce-inventory-v1-AdjustStockRequest)
+    - [AdjustStockResponse](#ecommerce-inventory-v1-AdjustStockResponse)
+    - [CommitReservationRequest](#ecommerce-inventory-v1-CommitReservationRequest)
+    - [CommitReservationResponse](#ecommerce-inventory-v1-CommitReservationResponse)
+    - [CreateStockItemRequest](#ecommerce-inventory-v1-CreateStockItemRequest)
+    - [CreateStockItemResponse](#ecommerce-inventory-v1-CreateStockItemResponse)
+    - [GetReservationRequest](#ecommerce-inventory-v1-GetReservationRequest)
+    - [GetReservationResponse](#ecommerce-inventory-v1-GetReservationResponse)
+    - [GetStockBySKUsRequest](#ecommerce-inventory-v1-GetStockBySKUsRequest)
+    - [GetStockBySKUsResponse](#ecommerce-inventory-v1-GetStockBySKUsResponse)
+    - [NewReservationLine](#ecommerce-inventory-v1-NewReservationLine)
+    - [ReleaseReservationRequest](#ecommerce-inventory-v1-ReleaseReservationRequest)
+    - [ReleaseReservationResponse](#ecommerce-inventory-v1-ReleaseReservationResponse)
+    - [ReserveStockRequest](#ecommerce-inventory-v1-ReserveStockRequest)
+    - [ReserveStockResponse](#ecommerce-inventory-v1-ReserveStockResponse)
+  
+    - [InventoryService](#ecommerce-inventory-v1-InventoryService)
+  
 - [Scalar Value Types](#scalar-value-types)
 
 
@@ -892,6 +918,395 @@ That detection is also why this RPC is not idempotent and must never be retried 
 It cannot revoke the access token already in the caller&#39;s hands — a self-contained signed token is valid until it expires, and that window is the whole reason the TTL is 15 minutes. A screen that must stop working immediately has to ask the owning service, not the token.
 
 Revoking something already revoked, expired, or never issued succeeds. Logging out is a state the caller wants to reach rather than a change they are making, a client retrying after a timeout must not see a failure, and an error here would tell a prober which tokens exist. |
+
+ 
+
+
+
+<a name="ecommerce_inventory_v1_stock-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/inventory/v1/stock.proto
+
+
+
+<a name="ecommerce-inventory-v1-Reservation"></a>
+
+### Reservation
+Reservation is one order&#39;s claim on stock, held for a while and then either
+committed or given back.
+
+The whole order is one reservation rather than one per line, because it is
+released and committed as a unit: a saga that compensated line by line could
+leave half an order holding capacity nobody will ever buy.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+| order_id | [string](#string) |  | The order this was taken for. Unique, which is what makes ReserveStock idempotent — a saga that retries after an ambiguous timeout gets the same reservation back rather than a second hold on the same goods. |
+| lines | [ReservationLine](#ecommerce-inventory-v1-ReservationLine) | repeated |  |
+| status | [ReservationStatus](#ecommerce-inventory-v1-ReservationStatus) |  |  |
+| expires_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | When a held reservation stops being honoured. Past this the capacity is the reaper&#39;s to return, and CommitReservation refuses — see the RPC. |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-ReservationLine"></a>
+
+### ReservationLine
+ReservationLine is one SKU&#39;s share of a reservation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sku | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-StockItem"></a>
+
+### StockItem
+StockItem is how many of one sellable unit the warehouse has, split by what
+is still sellable and what an order has already spoken for.
+
+It is keyed by SKU rather than by variant id. The catalog mints the id, but
+the SKU is what a shelf, a picking list, and a supplier&#39;s invoice all say, and
+a service that counted physical things by a UUID would be unable to answer the
+question a human actually asks.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sku | [string](#string) |  |  |
+| available | [int32](#int32) |  | What a new reservation may still take. |
+| reserved | [int32](#int32) |  | What live reservations are holding. It becomes available again when a reservation is released or expires, and simply disappears when one is committed — the goods left the building. |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="ecommerce-inventory-v1-ReservationStatus"></a>
+
+### ReservationStatus
+ReservationStatus is where a reservation sits in its lifecycle. The
+transitions between these are this service&#39;s state machine and belong to its
+domain; this enum only names the states so a caller can read them.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| RESERVATION_STATUS_UNSPECIFIED | 0 |  |
+| RESERVATION_STATUS_HELD | 1 | Holding capacity, and doing so until expires_at. |
+| RESERVATION_STATUS_COMMITTED | 2 | The goods were sold. The held quantity is gone rather than returned. |
+| RESERVATION_STATUS_RELEASED | 3 | Given back on purpose — the compensating step of a saga that failed further along. |
+| RESERVATION_STATUS_EXPIRED | 4 | Given back by the reaper, because nobody committed it in time. Distinct from RELEASED so that a stranded saga is visible as such instead of looking like a compensation somebody ran. |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="ecommerce_inventory_v1_inventory_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/inventory/v1/inventory_service.proto
+
+
+
+<a name="ecommerce-inventory-v1-AdjustStockRequest"></a>
+
+### AdjustStockRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sku | [string](#string) |  |  |
+| delta | [int32](#int32) |  | Non-zero, and either sign. An adjustment that would take available below zero is refused rather than clamped — the count is wrong either way, and clamping hides which. |
+| reason | [string](#string) |  | Why the count moved, for the humans reading the log line. Free text and not an enum: no rule here reads it, and an enum would be a list to extend every time a warehouse invents a new way to lose a box. |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-AdjustStockResponse"></a>
+
+### AdjustStockResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| item | [StockItem](#ecommerce-inventory-v1-StockItem) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-CommitReservationRequest"></a>
+
+### CommitReservationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-CommitReservationResponse"></a>
+
+### CommitReservationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| reservation | [Reservation](#ecommerce-inventory-v1-Reservation) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-CreateStockItemRequest"></a>
+
+### CreateStockItemRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sku | [string](#string) |  |  |
+| available | [int32](#int32) |  | May be zero: a SKU that is tracked but not yet delivered is an ordinary state, and it is the one that keeps an order from being taken for it. |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-CreateStockItemResponse"></a>
+
+### CreateStockItemResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| item | [StockItem](#ecommerce-inventory-v1-StockItem) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-GetReservationRequest"></a>
+
+### GetReservationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-GetReservationResponse"></a>
+
+### GetReservationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| reservation | [Reservation](#ecommerce-inventory-v1-Reservation) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-GetStockBySKUsRequest"></a>
+
+### GetStockBySKUsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| skus | [string](#string) | repeated | Bounded because the response is: an unbounded list is how a batch read drives its own callee out of memory. |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-GetStockBySKUsResponse"></a>
+
+### GetStockBySKUsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| items | [StockItem](#ecommerce-inventory-v1-StockItem) | repeated | The SKUs this service tracks, in no guaranteed order and possibly fewer than were asked for. A SKU nobody has stocked yet is not an error: one such line must not fail the whole screen a caller is assembling. |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-NewReservationLine"></a>
+
+### NewReservationLine
+NewReservationLine is one SKU a caller wants held.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sku | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-ReleaseReservationRequest"></a>
+
+### ReleaseReservationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-ReleaseReservationResponse"></a>
+
+### ReleaseReservationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| reservation | [Reservation](#ecommerce-inventory-v1-Reservation) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-ReserveStockRequest"></a>
+
+### ReserveStockRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| order_id | [string](#string) |  | The order taking the hold, and the idempotency key. A caller that has no order id yet has nothing to reserve against — the aggregate is persisted after this call returns, but its identifier is minted before. |
+| lines | [NewReservationLine](#ecommerce-inventory-v1-NewReservationLine) | repeated | Two lines naming the same SKU are summed rather than refused: a cart that added the same shirt twice is describing one quantity, and the caller should not have to know that. |
+
+
+
+
+
+
+<a name="ecommerce-inventory-v1-ReserveStockResponse"></a>
+
+### ReserveStockResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| reservation | [Reservation](#ecommerce-inventory-v1-Reservation) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="ecommerce-inventory-v1-InventoryService"></a>
+
+### InventoryService
+InventoryService owns how many of each SKU exist and who has claimed them. It
+is reached over east-west gRPC only.
+
+It owns no prices and no descriptions. The catalog answers what a thing is and
+what it costs; this service answers whether there is one left, which is written
+far more often than it is read and is protected by a rule the catalog has no
+way to enforce: never sell the same unit twice.
+
+The one rule worth stating at this level is that reserving is synchronous. It
+is the step an order takes before it persists anything, so that a shopper
+learns about a sold-out SKU while they are still looking at the screen rather
+than in an email ten seconds later.
+
+Every field constraint below is declared here rather than checked in a
+handler: a single interceptor enforces them, so a handler that validates its
+own input is a bug wherever it appears.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetStockBySKUs | [GetStockBySKUsRequest](#ecommerce-inventory-v1-GetStockBySKUsRequest) | [GetStockBySKUsResponse](#ecommerce-inventory-v1-GetStockBySKUsResponse) | GetStockBySKUs reads the counts for many SKUs. Every service exposes one of these so a caller can fill a screen without looping single-item calls. |
+| GetReservation | [GetReservationRequest](#ecommerce-inventory-v1-GetReservationRequest) | [GetReservationResponse](#ecommerce-inventory-v1-GetReservationResponse) | GetReservation reads one reservation, which is how a saga that lost track of an ambiguous call finds out what actually happened. |
+| CreateStockItem | [CreateStockItemRequest](#ecommerce-inventory-v1-CreateStockItemRequest) | [CreateStockItemResponse](#ecommerce-inventory-v1-CreateStockItemResponse) | CreateStockItem starts tracking a SKU, at a starting count.
+
+Explicit rather than folded into AdjustStock as an upsert: a typo in a SKU would otherwise create stock for something nobody sells, and the first sign of it would be an order for goods that do not exist. |
+| AdjustStock | [AdjustStockRequest](#ecommerce-inventory-v1-AdjustStockRequest) | [AdjustStockResponse](#ecommerce-inventory-v1-AdjustStockResponse) | AdjustStock moves the available count by a delta — a delivery arriving, a breakage written off.
+
+A delta and not an absolute count, because two receipts landing at once would otherwise overwrite each other and the loss would be silent. It is named for a mutation on purpose: the client retry policy reads method names, and a retried adjustment is a second delivery. |
+| ReserveStock | [ReserveStockRequest](#ecommerce-inventory-v1-ReserveStockRequest) | [ReserveStockResponse](#ecommerce-inventory-v1-ReserveStockResponse) | ReserveStock holds stock for an order, for as long as this service&#39;s configured TTL.
+
+Idempotent on order_id rather than on the request as a whole: a saga that retries after an ambiguous timeout is asking whether its hold exists, and gets the existing reservation back unchanged. A *different* set of lines under an order_id that already holds one is a conflict, not a replacement.
+
+Not enough stock is FailedPrecondition with reason OUT_OF_STOCK and the SKU in the metadata, so a caller can name the line that failed. It is deliberately not one of the codes a circuit breaker counts: a run of sold-out SKUs is this service working correctly. |
+| CommitReservation | [CommitReservationRequest](#ecommerce-inventory-v1-CommitReservationRequest) | [CommitReservationResponse](#ecommerce-inventory-v1-CommitReservationResponse) | CommitReservation turns a hold into a sale. The held quantity leaves the warehouse rather than returning to available.
+
+It refuses a reservation whose expires_at has passed, even while the reaper has not got to it yet: the capacity is already promised to whoever asks next, and committing on the strength of the reaper being slow is how the same unit gets sold twice. A saga that meets this reserves again or fails the order.
+
+Committing one that is already committed succeeds and changes nothing — every step of a saga is retried eventually. |
+| ReleaseReservation | [ReleaseReservationRequest](#ecommerce-inventory-v1-ReleaseReservationRequest) | [ReleaseReservationResponse](#ecommerce-inventory-v1-ReleaseReservationResponse) | ReleaseReservation gives the held stock back. This is the compensating step of a saga that failed after reserving, and it is idempotent for the same reason: compensation runs more than once. |
 
  
 
