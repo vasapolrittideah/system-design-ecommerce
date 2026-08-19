@@ -1,0 +1,20 @@
+# ClusterIP, reached by Alloy pushing and Grafana querying. There is no UI on
+# the far end of this port and no authentication in front of it: `auth_enabled:
+# false` means every request is tenant `fake`, so anything that can reach 3100
+# can also delete a tenant's data.
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+spec:
+  selector:
+    app.kubernetes.io/name: loki
+  ports:
+    # Named `http` rather than `admin`, so Prometheus does not discover it.
+    # Loki does serve its own /metrics here, and scraping them would be
+    # reasonable — but Grafana's and Jaeger's are not scraped either, and one
+    # infra component monitoring itself while its neighbours do not is a
+    # dashboard nobody can read. Renaming this port is the whole change.
+    - name: http
+      port: 3100
+      targetPort: http

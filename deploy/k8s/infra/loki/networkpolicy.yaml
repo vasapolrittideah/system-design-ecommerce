@@ -1,0 +1,28 @@
+# Two callers and no others: Alloy pushes what it tails, Grafana queries it
+# back. Loki's API has no authentication and `auth_enabled: false` puts every
+# request in one tenant, so the delete endpoints are reachable by whatever this
+# rule admits — which is the reason it names two workloads rather than the
+# namespace, the way Jaeger's collector deliberately does not.
+#
+# No egress rules: Loki calls nothing. It writes to a volume and answers.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: loki
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 3100

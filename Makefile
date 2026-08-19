@@ -363,13 +363,17 @@ cluster-delete: ## Delete the k3d cluster and everything inside it
 ##@ Local stack
 
 .PHONY: up
-up: ## Start the shared local infra in the cluster (Jaeger, Kong, Prometheus, Grafana, Reloader)
+up: ## Start the shared local infra in the cluster (Jaeger, Loki, Alloy, Kong, Prometheus, Grafana, Reloader)
 	$(need_cluster)
 	@# Databases are not here: each service brings its own Postgres instance in
 	@# its own overlay, so `make deploy SVC=x` is what starts x's database.
 	kubectl apply -f $(K8S_DIR)/infra/namespace.yaml
 	kubectl apply -k $(K8S_DIR)/infra
 	kubectl -n $(NAMESPACE) rollout status deployment/jaeger --timeout=180s
+	kubectl -n $(NAMESPACE) rollout status deployment/loki --timeout=180s
+	@# A DaemonSet, so this waits for one Alloy per node. It is the only
+	@# workload here whose replica count follows the cluster.
+	kubectl -n $(NAMESPACE) rollout status daemonset/alloy --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/kong --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/prometheus --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/grafana --timeout=180s

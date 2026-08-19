@@ -1,0 +1,64 @@
+# Loki in single-binary mode: every component in one process, index and chunks
+# on local disk. It holds the logs every process here already writes to stdout,
+# and it is what turns a trace ID on a span into the lines that trace produced.
+#
+# Nothing about this shape is production advice. Real Loki splits read from
+# write and puts chunks in object storage; this one is a laptop's worth of it,
+# arranged so the query language a dashboard is written against is the same.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # Loki logs a line per flush at info. That is the log backend narrating
+  # itself into a pod that Alloy then ships back into the log backend.
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    # TSDB and schema v13, which is what Loki 3 wants and what structured
+    # metadata needs. The `from` date is when this schema starts applying, not
+    # a version — moving it backwards after data exists is how a schema change
+    # is meant to be made, by appending a second entry with a future date.
+    - from: 2024-04-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# Retention only deletes if something runs the deletion, which is the compactor.
+# Setting retention_period without this is a config that reads like a bound and
+# enforces nothing.
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  retention_enabled: true
+
+limits_config:
+  # Storage is an emptyDir, so a restart loses the history regardless — the same
+  # trade Jaeger's in-memory store makes. This is what keeps a cluster left
+  # running over a weekend from filling the node's disk.
+  retention_period: 24h
+  # What draws the log-volume histogram above the results in Explore. Off by
+  # default, and its absence looks like a Grafana version difference.
+  volume_enabled: true
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+
+analytics:
+  reporting_enabled: false

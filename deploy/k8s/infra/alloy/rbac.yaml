@@ -1,0 +1,30 @@
+# Pod discovery needs the API server's permission to list pods, and nothing
+# else — the log lines themselves come off the node's disk, not through the API.
+# A Role rather than a ClusterRole, because discovery is restricted to this
+# namespace: the grant and the config say the same thing, so a config widened by
+# accident fails with a 403 instead of quietly collecting the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alloy
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alloy
+subjects:
+  - kind: ServiceAccount
+    name: alloy

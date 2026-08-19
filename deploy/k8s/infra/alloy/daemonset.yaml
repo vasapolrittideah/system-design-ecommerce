@@ -1,0 +1,109 @@
+# A DaemonSet and not a Deployment: log files live on the node that ran the pod,
+# so one replica per node is the only arrangement that sees all of them.
+#
+# It carries no NetworkPolicy, which is deliberate rather than forgotten.
+# Nothing in the namespace has any reason to reach Alloy, so the namespace-wide
+# default-deny is already the correct rule; its own UI on 12345 is reachable
+# through `make port-forward`, which arrives from the node and is not filtered.
+# What Alloy is allowed to *call* is stated on the far side, in Loki's policy.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+  annotations:
+    # config.alloy is a mounted ConfigMap read at startup. Alloy can reload it
+    # on SIGHUP, but nothing here sends one.
+    reloader.stakater.com/auto: "true"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alloy
+    spec:
+      serviceAccountName: alloy
+      securityContext:
+        # The one workload here that runs as root, and the reason is on the
+        # node: /var/log/pods is mode 0750 and its log files 0640, both owned by
+        # root. There is no supplementary group to join and no way to read them
+        # as anyone else. The mitigation is that the mount below is read-only
+        # and every capability is dropped — this can read log files and do
+        # nothing else with the node.
+        runAsUser: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.18.1
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            # Where the read positions live. On an emptyDir, so a restarted
+            # Alloy re-reads each file from the start and ships lines Loki
+            # already has. Loki drops an exact duplicate of the last line in a
+            # stream and keeps the rest, so a restart shows up as repeated
+            # lines rather than as a gap — the right way round on a laptop.
+            - --storage.path=/var/lib/alloy
+            # Bound to the pod IP rather than the default loopback, because the
+            # readiness probe below arrives from the kubelet. Nothing in the
+            # namespace can reach it: no policy admits this pod.
+            - --server.http.listen-addr=0.0.0.0:12345
+          env:
+            # What the field selector in config.alloy is built from. There is no
+            # other way for a pod to learn which node it is on.
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: 12345
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/alloy
+            - name: pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+          # /-/ready is the process with its components evaluated. As everywhere
+          # else here, liveness must not fail because Loki is down — restarting
+          # the shipper would lose its positions and re-ship the world.
+          startupProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              # Memory only, as everywhere else here. A CPU limit would throttle
+              # the shipper during exactly the incident the logs exist for.
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: alloy-config
+        - name: data
+          emptyDir: {}
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+            type: Directory

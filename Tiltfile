@@ -99,6 +99,24 @@ k8s_resource(
     labels=['infra'],
 )
 
+# Loki has no UI of its own — Grafana's Explore is it, and the link from a
+# latency panel to a trace to the lines that trace wrote is the whole reason it
+# is here. Editing loki.yaml applies the same way a Kong routing change does.
+k8s_resource(
+    'loki',
+    labels=['infra'],
+)
+
+# 12345 is Alloy's own UI, which is where a pipeline that ships nothing is
+# diagnosed: it shows each component, its arguments as evaluated, and the
+# targets it discovered. Tilt forwards one pod of the DaemonSet — the one whose
+# node's logs you are looking for may be a different one.
+k8s_resource(
+    'alloy',
+    port_forwards=[port_forward(12345, 12345, name='alloy')],
+    labels=['infra'],
+)
+
 # The proxy is deliberately not forwarded: the gateway is reached on
 # localhost:8000 through the k3d load balancer, which is the same path a browser
 # takes and the only one that exercises the Service, the upstream, and the

@@ -39,3 +39,36 @@ datasources:
         queries:
           - name: "Request rate"
             query: 'sum by (grpc_method, route) (rate({__name__=~"grpc_server_handled_total|http_server_handled_total", $$__tags}[5m]))'
+      # From a span to the lines the same request wrote. filterByTraceID adds
+      # the trace ID as a line filter, which works because pkg/logger puts
+      # trace_id on every request-scoped line — and it is why the query needs no
+      # label for it, the one label that would be ruinous to index.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+        tags:
+          - key: service.name
+            value: service
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # The return leg of the link above: a trace ID in a log line becomes a
+      # link into Jaeger. Grafana reads it out of the raw line rather than out
+      # of a label, so this regex is the coupling — it matches the field
+      # pkg/logger writes, and renaming that field breaks the link silently.
+      #
+      # The optional whitespace is what makes it work under both encoders: zap's
+      # json encoder writes `"trace_id":"..."` and its console encoder writes
+      # `"trace_id": "..."`, and the local overlays run the second one.
+      derivedFields:
+        - name: trace_id
+          matcherType: regex
+          matcherRegex: '"trace_id":\s*"(\w+)"'
+          url: '${__value.raw}'
+          datasourceUid: jaeger
