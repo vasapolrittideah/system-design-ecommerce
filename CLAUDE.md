@@ -302,11 +302,12 @@ The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for
 
 This is what makes two rules above manifests instead of conventions. "Never query another service's tables" is enforced from the side that owns them — `identity-postgres` accepts connections from pods labelled `identity` and from nothing else, so a second service reaching for it fails to connect rather than reading rows. "East-west calls never go through the gateway" is a rule about who may *call*, so it lives on the other side: each service's egress list names DNS, Jaeger, its own database, and the services it calls, and Kong is absent from every one of them.
 
-Three things about it are easy to get wrong:
+Four things about it are easy to get wrong:
 
 - **Ports are numeric, not the port names the Services and the scrape config use.** A NetworkPolicy may name a port, but resolving it is the CNI's to implement, and a rule the CNI ignores is a rule that is not there.
 - **Egress is denied only on the service workloads**, never namespace-wide. Prometheus's pod discovery and Reloader's watch both reach the API server, and allowing that means writing a ClusterIP into a manifest — a fragile rule in service of no architectural rule.
 - **A new service that ships no policy is unreachable**, and the first sign is `make deploy` failing its smoke test. That is the better of the two failures; the other default is a service reachable by everything in the namespace, which nothing ever reports.
+- **A policy reaches a pod slightly after the pod does.** k3s enforces these with kube-router, which programs a new pod's rules from the pod-add event, so a container that dials a dependency in its first milliseconds is refused by the default `REJECT` — and because that reject is an ICMP port-unreachable, it arrives as `connection refused` and reads as the dependency being down rather than as a policy. Anything that connects at startup has to retry: `pkg/postgres` does it for `ConnectMaxWait`, the migration Job does it around `goose up`. A process that panics on the first attempt turns a one-second window into a `CrashLoopBackOff`.
 
 Probes and `make port-forward` arrive from the node rather than from a pod and are not filtered, so neither needs a rule.
 
