@@ -24,7 +24,7 @@ kind: Kustomization
 # command to say so.
 resources:
   - grafana
-  - jaeger.yaml
+  - jaeger
   - kong
   - prometheus
   - reloader.yaml
