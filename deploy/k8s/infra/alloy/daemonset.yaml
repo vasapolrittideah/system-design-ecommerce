@@ -1,11 +1,8 @@
 # A DaemonSet and not a Deployment: log files live on the node that ran the pod,
 # so one replica per node is the only arrangement that sees all of them.
 #
-# It carries no NetworkPolicy, which is deliberate rather than forgotten.
-# Nothing in the namespace has any reason to reach Alloy, so the namespace-wide
-# default-deny is already the correct rule; its own UI on 12345 is reachable
-# through `make port-forward`, which arrives from the node and is not filtered.
-# What Alloy is allowed to *call* is stated on the far side, in Loki's policy.
+# What Alloy is allowed to *call* is stated on the far side, in Loki's policy;
+# who may reach it is in networkpolicy.yaml beside this file.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -46,9 +43,9 @@ spec:
             # stream and keeps the rest, so a restart shows up as repeated
             # lines rather than as a gap — the right way round on a laptop.
             - --storage.path=/var/lib/alloy
-            # Bound to the pod IP rather than the default loopback, because the
-            # readiness probe below arrives from the kubelet. Nothing in the
-            # namespace can reach it: no policy admits this pod.
+            # Bound to the pod IP rather than the default loopback: the probes
+            # below arrive from the kubelet and the scrape from Prometheus, and
+            # neither is on this container's loopback.
             - --server.http.listen-addr=0.0.0.0:12345
           env:
             # What the field selector in config.alloy is built from. There is no
@@ -58,7 +55,13 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
           ports:
-            - name: http
+            # `admin` is what makes Prometheus scrape this: a pod is a target
+            # for having a port by that name. The name is accurate rather than
+            # borrowed — 12345 serves /metrics, /-/ready, and the UI and nothing
+            # else — which is why Loki and Grafana keep `http`, their metrics
+            # being on the same port as their API. Without it the process
+            # shipping every log line is the one nobody can see fall behind.
+            - name: admin
               containerPort: 12345
           volumeMounts:
             - name: config
@@ -75,13 +78,13 @@ spec:
           startupProbe:
             httpGet:
               path: /-/ready
-              port: http
+              port: admin
             periodSeconds: 2
             failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /-/ready
-              port: http
+              port: admin
             periodSeconds: 10
             failureThreshold: 3
           resources:

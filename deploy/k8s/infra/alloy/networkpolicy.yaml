@@ -1,0 +1,31 @@
+# One caller: Prometheus, for the scrape. Alloy pushes rather than serves, so
+# the port this admits carries only its own /metrics, /-/ready, and the UI —
+# no log line ever travels through it.
+#
+# The UI stays reachable the only way it ever was — `kubectl port-forward` onto
+# a pod, there being no Service for Alloy — which arrives from the node rather
+# than from a pod and is not what this filters.
+#
+# No egress rules: what Alloy may reach is stated on the far side, in Loki's
+# policy, which is the side that knows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alloy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          # Numeric, not the `admin` name the port carries: a NetworkPolicy may
+          # name a port, but resolving it is the CNI's to implement, and a rule
+          # kube-router ignores is a rule that is not there.
+          port: 12345
