@@ -43,18 +43,40 @@ there. So the article adds no information and spends part of the 72-char budget.
 | `feat(payment): add a retry to the payment webhook` | `feat(payment): add retry to payment webhook` |
 | `refactor(order): extract the validation into a helper` | `refactor(order): extract validation into helper` |
 
-**Stop where the cut costs meaning.** Terseness is the point only while the line
-still reads cleanly; an article that removes an ambiguity has earned its
-characters. Keep one:
+**Notice where the cut costs meaning.** Terseness is the point only while the
+line still reads cleanly. The line is telling you it needs an article:
 
 - where dropping it is ungrammatical rather than merely terse — before a noun
   that is the subject of a verb (`record what the domain import rule protects`)
   or before an ordinal (`take context as the first parameter`)
 - where the line parses without it but stumbles on the way through —
-  `fix(cart): prevent panic when the user has no active session` over `when user
-  has no active session`
+  `fix(cart): prevent panic when the user has no active session` against `when
+  user has no active session`
 
-Where both read fine, drop it.
+**Reword rather than keep it.** Needing an article usually means the description
+is carrying one clause more than a headline can hold, and a rewrite is nearly
+always available: name the concrete thing, make the subject plural, or drop the
+relative clause and say what changed instead.
+
+| Wants an article | Reworded |
+|---|---|
+| `fix: wait on every deployment a service ships` | `fix: wait on every deployment SVC ships` |
+| `docs(agent): record why a second deployment needs a component selector` | `docs(agent): record why multiple deployments need component selector` |
+| `fix(cart): prevent panic when the user has no active session` | `fix(cart): prevent panic on session-less request` |
+
+Check the rewrite, because two kinds of it come out worse than the article they
+removed:
+
+- **it must not widen what the line is scoped to.** `wait on every deployment
+  services ship` reads as every service's deployments, which is not what
+  `make deploy SVC=x` does. The singular `a service` was binding the clause to
+  one service, and the bare plural let it go.
+- **it must not leave a compound noun the reader has to back out of.**
+  `deployment services` parses as services for deploying until the verb
+  arrives.
+
+Keep the article only where every rewrite reads worse. That is rare, and it is
+the exception rather than the first move.
 
 Check the mood separately: "If applied, this commit will `<description>`" must
 read as a grammatical sentence.
