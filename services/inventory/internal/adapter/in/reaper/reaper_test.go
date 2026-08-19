@@ -32,7 +32,17 @@ func newSweep(answer func(call int) (int, error)) *sweep {
 
 func (s *sweep) ExpireReservations(_ context.Context, limit int) (int, error) {
 	call := int(s.n.Add(1))
-	s.calls <- limit
+
+	// Published without blocking, and dropped once the buffer is full. A sweep
+	// that fills its batch is followed immediately by another, so a test that
+	// has read the calls it cares about leaves the loop spinning against a
+	// channel nobody drains — a blocking send there would hold the reaper inside
+	// this call, where it never reaches the context check that stops it, and
+	// shutdown would time out rather than the assertion failing.
+	select {
+	case s.calls <- limit:
+	default:
+	}
 
 	return s.answer(call)
 }
