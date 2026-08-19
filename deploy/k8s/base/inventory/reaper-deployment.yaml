@@ -1,0 +1,113 @@
+# The sweep that returns the stock of holds nobody committed in time.
+#
+# Its own workload rather than a goroutine inside the server, because the two
+# scale for different reasons: the server's replica count follows request
+# traffic, and a sweep running once per replica would multiply the row locks it
+# takes by whatever the autoscaler decided on. Those locks are SKUs nobody else
+# can reserve meanwhile.
+#
+# The same image as the server, picking a different binary. One image holds all
+# of cmd/, so there is no second build to keep in step.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-reaper
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  # One replica, and no HPA. FOR UPDATE SKIP LOCKED means a second one would be
+  # correct rather than harmful — which is what makes a rolling restart safe —
+  # but nothing here is throughput-bound: a sweep that fills its batch
+  # immediately runs another, so a backlog is worked off at the speed of the
+  # database rather than of the replica count.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inventory
+      app.kubernetes.io/component: reaper
+  strategy:
+    # Recreate rather than RollingUpdate. Two reapers overlapping is safe, so
+    # this is not about correctness: with one replica a rolling update needs
+    # somewhere to put the surge pod, and on a laptop that is a pod that never
+    # schedules and a rollout that never finishes.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: inventory
+        app.kubernetes.io/component: reaper
+        app.kubernetes.io/version: dev
+    spec:
+      # No preStop sleep: nothing routes to this pod, so there is no endpoint
+      # list to drain out of. What the grace period covers is the sweep in
+      # flight — its transaction rolls back on SIGTERM and the reservations are
+      # still expired for the next process, so a hard stop costs one interval
+      # rather than any data.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reaper
+          image: ecommerce/inventory
+          imagePullPolicy: IfNotPresent
+          # The one line that makes this a different workload from the server.
+          command: ["/app/reaper"]
+          ports:
+            # No gRPC port: this process serves nothing. The admin port is here
+            # because Prometheus discovers targets by a port being called
+            # `admin`, and a reaper nobody scrapes is a reaper nobody notices
+            # has stopped.
+            - name: admin
+              containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: inventory-config
+            - secretRef:
+                name: inventory-secret
+          env:
+            - name: OBS_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/version']
+            - name: LOG_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/version']
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            periodSeconds: 10
+            failureThreshold: 3
+          # Readiness is here even though no Service selects this pod, because
+          # it is what `kubectl rollout status` waits on — without it a deploy
+          # reports success against a process that has not reached its database.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: admin
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

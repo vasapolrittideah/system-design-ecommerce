@@ -1,0 +1,37 @@
+# Headless: clusterIP None makes DNS return one A record per ready pod instead
+# of a single virtual IP. gRPC holds one long-lived HTTP/2 connection, so a
+# normal ClusterIP would pin every caller to whichever replica it happened to
+# land on and the other replicas would sit idle. Callers dial
+# dns:///inventory.<namespace>.svc.cluster.local:50051 and balance round-robin
+# across what they resolve.
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory
+spec:
+  clusterIP: None
+  # Left at the default false: a pod that is not ready must not be in the list
+  # a caller resolves.
+  publishNotReadyAddresses: false
+  # The component half is load-bearing here in a way it is not in the other
+  # services, and it is the one selector in this repo that carries it.
+  #
+  # Three workloads wear app.kubernetes.io/name: inventory — the server, the
+  # reaper, and the migration Job — because that is what the NetworkPolicies and
+  # the database grant are written against. A selector naming only that would
+  # put the reaper's pods and a running migration into this Service's endpoint
+  # list, where a gRPC caller would resolve them and dial a port nothing is
+  # listening on. Neither pod would report anything wrong.
+  selector:
+    app.kubernetes.io/name: inventory
+    app.kubernetes.io/component: server
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      appProtocol: grpc
+    # Scraping and probing go here, on a port that is never routed to from
+    # outside the cluster.
+    - name: admin
+      port: 9090
+      targetPort: admin

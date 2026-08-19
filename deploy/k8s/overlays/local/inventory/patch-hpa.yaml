@@ -1,0 +1,13 @@
+# vscode-kubernetes-tools: exclude
+
+# k3d ships metrics-server, so the HPA is a real object locally rather than a
+# manifest nobody has ever seen run. Two replicas stay the floor: it is the
+# only way the headless Service and client-side round-robin are exercised
+# before production, and one pod would hide a balancing bug completely.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: inventory
+spec:
+  minReplicas: 2
+  maxReplicas: 3

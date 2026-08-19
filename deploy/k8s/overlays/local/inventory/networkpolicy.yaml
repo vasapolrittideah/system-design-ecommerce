@@ -1,0 +1,50 @@
+# The database half of inventory's policy, here rather than in base for the same
+# reason postgres.yaml is: the instance is a local-overlay thing. A production
+# overlay points INVENTORY_DB_HOST at a managed instance outside the cluster, and
+# reaching it is an ipBlock rule rather than a pod selector.
+#
+# Both directions are stated. The ingress rule is the one that carries the
+# architecture — "never query another service's tables", enforced by the side
+# that owns them, so a second service reaching for this database is refused by
+# the database's own policy and not by everyone remembering. The egress rule
+# only re-opens for inventory what its base policy closed; without it the
+# service and the migration Job both start and then fail to connect.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: inventory-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: inventory-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    # The server, the reaper, and the migration Job, which share this label.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: inventory
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: inventory-egress-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: inventory
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: inventory-postgres
+      ports:
+        - protocol: TCP
+          port: 5432

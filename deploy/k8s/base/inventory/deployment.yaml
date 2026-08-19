@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory
+  annotations:
+    # Restart these pods when a ConfigMap or Secret they reference changes
+    # content. Nothing here re-reads its configuration at runtime — env is read
+    # once, when the container starts — so without this a rotated database
+    # password leaves every running replica holding the old one, with no error
+    # anywhere to say so.
+    #
+    # This is load-bearing, not preparation: the generators are configured with
+    # disableNameSuffixHash, so a changed value leaves the Deployment spec
+    # byte-identical and kubectl apply rolls nothing. `make deploy` refuses to
+    # run when Reloader is not Available for exactly that reason.
+    reloader.stakater.com/auto: "true"
+spec:
+  # No replicas field: the HPA owns it. Setting both makes kustomize apply and
+  # the autoscaler fight, and every deploy resets the pod count.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inventory
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: inventory
+        # What the headless Service selects on, so that the reaper's pods and a
+        # running migration Job — both of which wear the name label — are not
+        # handed to gRPC callers as backends. See service.yaml.
+        app.kubernetes.io/component: server
+        # Read back through the downward API below. It has to be spelled out
+        # here rather than left to a transformer: a fieldRef to a label that
+        # does not exist resolves to the empty string, which overrides the
+        # config default with nothing instead of falling back to it.
+        app.kubernetes.io/version: dev
+    spec:
+      # 5s preStop + 25s SHUTDOWN_TIMEOUT = 30s of drain, with 5s of headroom
+      # before the kubelet's SIGKILL. Raising SHUTDOWN_TIMEOUT without raising
+      # this is how the graceful path stops running.
+      terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: ecommerce/inventory
+          # k3d image import puts the image in the node's store; Always would
+          # send the kubelet looking for a registry that does not exist.
+          imagePullPolicy: IfNotPresent
+          # No command or args: the image's ENTRYPOINT is /app/server. One
+          # image holds every binary this service ships, and the reaper's
+          # Deployment sets `command:` to pick its own — this one takes the
+          # default and passes no arguments, because main parses none.
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: admin
+              containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: inventory-config
+            - secretRef:
+                name: inventory-secret
+          env:
+            # Bound at construction and attached to every log line and span, so
+            # a latency regression can be tied to a rollout.
+            - name: OBS_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/version']
+            - name: LOG_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/version']
+          lifecycle:
+            preStop:
+              # Endpoint removal and SIGTERM race: without this pause the pod
+              # can stop accepting work before the last caller has been told it
+              # left the endpoint list. Native sleep action, so this works on a
+              # distroless image with no shell (Kubernetes 1.30+).
+              sleep:
+                seconds: 5
+          # Liveness checks nothing but the process. A liveness probe that
+          # touched the database would restart every replica during an outage
+          # and turn one incident into a crash-loop.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            periodSeconds: 10
+            failureThreshold: 3
+          # Dependencies live here instead, registered with AddReadinessCheck.
+          # A failure takes this pod out of the endpoint list; it does not
+          # restart anything.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: admin
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              # Memory only. A CPU limit throttles the process at the p99 that
+              # the HPA is watching, so the autoscaler and the limit end up
+              # working against each other.
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
