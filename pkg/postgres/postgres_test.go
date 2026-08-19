@@ -6,9 +6,13 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func testConfig() Config {
@@ -173,4 +177,107 @@ func TestMustNewPanicsOnError(t *testing.T) {
 	cfg.MaxConns = 0
 
 	MustNew(context.Background(), cfg)
+}
+
+func TestNewRetriesUnreachableDatabase(t *testing.T) {
+	cfg := testConfig()
+	// Port 1 refuses immediately, which is the same answer a NetworkPolicy the
+	// CNI has not yet programmed gives — the case ConnectMaxWait exists for.
+	cfg.Host = "127.0.0.1"
+	cfg.Port = 1
+	cfg.ConnectTimeout = 50 * time.Millisecond
+	cfg.ConnectMaxWait = 400 * time.Millisecond
+
+	started := time.Now()
+
+	got, err := New(context.Background(), cfg)
+	if err == nil {
+		got.Close()
+		t.Fatal("New() error = nil, want error")
+	}
+
+	if elapsed := time.Since(started); elapsed < cfg.ConnectMaxWait/2 {
+		t.Errorf("New() gave up after %v, want it to keep trying for about %v", elapsed, cfg.ConnectMaxWait)
+	}
+}
+
+func TestNewPingsOnceWithoutConnectMaxWait(t *testing.T) {
+	cfg := testConfig()
+	cfg.Host = "127.0.0.1"
+	cfg.Port = 1
+	cfg.ConnectTimeout = 50 * time.Millisecond
+	cfg.ConnectMaxWait = 0
+
+	started := time.Now()
+
+	got, err := New(context.Background(), cfg)
+	if err == nil {
+		got.Close()
+		t.Fatal("New() error = nil, want error")
+	}
+
+	if elapsed := time.Since(started); elapsed > connectBackoff {
+		t.Errorf("New() took %v, want a single attempt", elapsed)
+	}
+}
+
+func TestNewStopsRetryingWhenContextIsCancelled(t *testing.T) {
+	cfg := testConfig()
+	cfg.Host = "127.0.0.1"
+	cfg.Port = 1
+	cfg.ConnectTimeout = 50 * time.Millisecond
+	cfg.ConnectMaxWait = time.Minute
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+
+	got, err := New(ctx, cfg)
+	if err == nil {
+		got.Close()
+		t.Fatal("New() error = nil, want error")
+	}
+
+	if elapsed := time.Since(started); elapsed > cfg.ConnectMaxWait/2 {
+		t.Errorf("New() returned after %v, want it to give up with the context", elapsed)
+	}
+}
+
+// TestNewLogsWhileRetrying pins the line that keeps a slow database from
+// looking like a slow process: without it the wait is silent for as long as
+// ConnectMaxWait allows, and the only record is a startup that took a while.
+func TestNewLogsWhileRetrying(t *testing.T) {
+	core, logs := observer.New(zap.DebugLevel)
+
+	cfg := testConfig()
+	cfg.Host = "127.0.0.1"
+	cfg.Port = 1
+	cfg.ConnectTimeout = 50 * time.Millisecond
+	cfg.ConnectMaxWait = 400 * time.Millisecond
+
+	got, err := New(context.Background(), cfg, WithLogger(zap.New(core)))
+	if err == nil {
+		got.Close()
+		t.Fatal("New() error = nil, want error")
+	}
+
+	entries := logs.FilterMessage("postgres unreachable, retrying").All()
+	if len(entries) == 0 {
+		t.Fatal("New() retried without logging, want a line per attempt")
+	}
+
+	for i, entry := range entries {
+		if entry.Level != zap.WarnLevel {
+			t.Errorf("entry %d logged at %v, want warn — the process is still starting", i, entry.Level)
+		}
+
+		encoded, err := json.Marshal(entry.ContextMap())
+		if err != nil {
+			t.Fatalf("marshal entry %d: %v", i, err)
+		}
+		if strings.Contains(string(encoded), cfg.Password.Reveal()) {
+			t.Errorf("entry %d leaked the password: %s", i, encoded)
+		}
+	}
 }
