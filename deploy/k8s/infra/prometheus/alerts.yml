@@ -149,3 +149,48 @@ groups:
         annotations:
           summary: "{{ $labels.service }}'s outbox relay failed {{ $value }} publish cycles in 10m"
           description: "Cycles are rolled back, so no event is lost — but the broker is refusing writes and the backlog is growing."
+
+  - name: logs
+    rules:
+      # Everything else in this file is inferred from a service's own metrics.
+      # These three are about the thing that carries the *other* evidence: when
+      # Alloy stops shipping, no service notices, no request fails, and the only
+      # record of the failure is a log line that is no longer being collected.
+      # The volume histogram in Explore simply goes quiet, which looks the same
+      # as a quiet cluster.
+
+      # Retries are already exhausted by the time this moves, so it is not a
+      # warning about log loss — it is log loss. Any value above zero.
+      - alert: AlloyDroppedLogEntries
+        expr: increase(loki_write_dropped_entries_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.pod }} dropped {{ $value }} log entries ({{ $labels.reason }})"
+          description: "Alloy gave up on these after all retries. Those lines exist nowhere now; the pod's stdout has already rotated past them."
+
+      # The earlier signal: pushes are failing but the buffer is still holding
+      # them, so nothing is lost yet. status_code -1 is a connection that never
+      # got an answer, which is what Loki being unreachable looks like. Fifteen
+      # minutes because a Loki rollout fails a few pushes on purpose.
+      - alert: AlloyPushFailing
+        expr: rate(loki_write_request_duration_seconds_count{status_code!~"2.."}[5m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.pod }} cannot push to Loki (status {{ $labels.status_code }})"
+          description: "Still buffered and still retrying. AlloyDroppedLogEntries is what fires once the retries run out."
+
+      # A component that goes unhealthy at runtime is the quietest failure of
+      # the three: discovery.kubernetes refused by RBAC collects no targets, so
+      # there are no files, no pushes, and nothing to fail — every rule above
+      # this one stays silent because the pipeline is idle rather than broken.
+      - alert: AlloyComponentUnhealthy
+        expr: alloy_component_controller_running_components{health_type="unhealthy"} > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.pod }} has {{ $value }} unhealthy Alloy components"
+          description: "The pipeline is degraded or idle rather than failing. Which component it is, is on the /graph page of the pod's UI on 12345."
