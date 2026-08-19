@@ -59,6 +59,15 @@ spec:
               value: "false"
             - name: GF_NEWS_NEWS_FEED_ENABLED
               value: "false"
+            # Grafana ships a compiled-in list of apps it installs at startup —
+            # the Explore Logs, Traces, and Profiles drilldowns — none of which
+            # appear in defaults.ini, so the first sign of it is an error. It
+            # downloads them from grafana.com into /tmp, and both halves are
+            # wrong here: the root filesystem is read-only, and a plugin fetched
+            # at startup is a dependency that is neither pinned nor in git,
+            # while the dashboards it would sit beside are both.
+            - name: GF_PLUGINS_PREINSTALL_DISABLED
+              value: "true"
           ports:
             - name: http
               containerPort: 3000
