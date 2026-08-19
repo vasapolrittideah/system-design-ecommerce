@@ -259,6 +259,75 @@ k8s_resource(
 )
 
 # ------------------------------------------------------------------------------
+# inventory
+#
+# The same shape again, plus the one thing neither of the others has: a second
+# workload. The reaper runs the same image with a different binary, so it needs
+# no docker_build of its own — only a k8s_resource, because Tilt tracks a
+# Deployment rather than an image.
+# ------------------------------------------------------------------------------
+
+k8s_yaml(kustomize('deploy/k8s/overlays/local/inventory'))
+
+k8s_resource(
+    'inventory-postgres',
+    # 5434 on the host: 5432 is identity's and 5433 is catalog's. Three
+    # databases on a laptop is what "database per service" costs, and the port
+    # collision is where that keeps showing up.
+    port_forwards=[port_forward(5434, 5432, name='postgres')],
+    labels=['inventory'],
+)
+
+docker_build(
+    'ecommerce/inventory',
+    context='.',
+    dockerfile='services/inventory/Dockerfile',
+    target='server',
+    build_args={'GOOSE_VERSION': 'v3.27.3'},
+    # Everything the image needs and nothing else, so that editing a manifest
+    # or another service does not rebuild this one.
+    only=['go.mod', 'go.sum', 'pkg', 'gen', 'services/inventory'],
+)
+
+docker_build(
+    'ecommerce/inventory-migrate',
+    context='.',
+    dockerfile='services/inventory/Dockerfile',
+    target='migrate',
+    build_args={'GOOSE_VERSION': 'v3.27.3'},
+    # The same list as the server image even though this stage only copies
+    # migrations: it is built from the same `build` stage, which needs the
+    # module to compile goose, and a narrower context fails on the COPY.
+    only=['go.mod', 'go.sum', 'pkg', 'gen', 'services/inventory'],
+)
+
+k8s_resource(
+    'inventory-migrate',
+    resource_deps=['inventory-postgres'],
+    labels=['inventory'],
+)
+
+k8s_resource(
+    'inventory',
+    resource_deps=['inventory-migrate', 'reloader'],
+    port_forwards=[
+        '50053:50051',
+        '9094:9090',
+    ],
+    labels=['inventory'],
+)
+
+k8s_resource(
+    'inventory-reaper',
+    # Nothing routes to it, so there is no gRPC port to forward. The admin one
+    # is here because a stalled sweep is invisible everywhere else: /metrics is
+    # where inventory_reservations_expired_total sitting at zero shows up.
+    resource_deps=['inventory-migrate', 'reloader'],
+    port_forwards=['9095:9090'],
+    labels=['inventory'],
+)
+
+# ------------------------------------------------------------------------------
 # bff-web
 #
 # No Postgres and no migration Job: the BFF has no database. Everything it
@@ -310,7 +379,7 @@ local_resource(
 local_resource(
     'sqlc',
     'make sqlc',
-    deps=['services/identity/db', 'services/catalog/db'],
+    deps=['services/identity/db', 'services/catalog/db', 'services/inventory/db'],
     trigger_mode=TRIGGER_MODE_MANUAL,
     auto_init=False,
     labels=['generate'],
