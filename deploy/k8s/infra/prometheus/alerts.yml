@@ -10,6 +10,10 @@
 #
 # Deliberately absent until the phase that emits them arrives: consumer lag,
 # DLQ depth, and saga duration. There is no Kafka in this stack yet.
+#
+# There is no rule on stock running out, and there will not be one. A SKU with
+# nothing left is the catalogue, not the warehouse process — the same reason
+# FailedPrecondition is excluded from the error rate below.
 
 groups:
   - name: targets
@@ -149,6 +153,31 @@ groups:
         annotations:
           summary: "{{ $labels.service }}'s outbox relay failed {{ $value }} publish cycles in 10m"
           description: "Cycles are rolled back, so no event is lost — but the broker is refusing writes and the backlog is growing."
+
+  - name: inventory
+    rules:
+      # A stalled reaper is the same shape of failure as a stalled outbox relay,
+      # and it is quieter still: the API answers, readiness stays green, and
+      # stock simply stops being sellable as abandoned checkouts accumulate
+      # holds nobody returns. Nothing else in this file would move.
+      - alert: InventoryReaperStalled
+        expr: |
+          sum(rate(inventory_reservations_expired_total[30m])) == 0
+          and on() sum(increase(inventory_reservations_expired_total[24h])) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "inventory has swept no expired reservations for 30m"
+          description: "The second half of the expression is what keeps this quiet on a system with no traffic: it only fires where the sweep has done work in the last day and then stopped."
+
+      - alert: InventoryReaperSweepsFailing
+        expr: increase(inventory_reaper_sweeps_failed_total[10m]) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "inventory's reservation reaper failed {{ $value }} sweeps in 10m"
+          description: "Sweeps are rolled back, so nothing is lost — but held stock is not going back on the shelf, and every failure doubles the wait before the next attempt."
 
   - name: logs
     rules:
