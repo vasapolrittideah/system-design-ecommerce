@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# No namespace and no shared labels here: the infra kustomization that includes
+# this directory sets both, the same way it does for every other dependency.
+
+# These two files are one upstream document, pinned at v1.4.21 and committed
+# rather than fetched at build time, so `kustomize build` stays offline and a
+# version bump is a reviewable diff. Refresh it with:
+#
+#	curl -sSL -o /tmp/reloader.yaml \
+#	  https://raw.githubusercontent.com/stakater/Reloader/v1.4.21/deployments/kubernetes/reloader.yaml
+#
+# then split it the way it is split here — the five RBAC documents into
+# rbac.yaml and the Deployment into deployment.yaml — and re-apply the header
+# comment of each. Diff before replacing: upstream may add a document, and one
+# that lands in neither file is a permission this operator silently lacks.
+resources:
+  - rbac.yaml
+  - deployment.yaml

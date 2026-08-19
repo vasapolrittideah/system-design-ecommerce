@@ -27,7 +27,7 @@ resources:
   - jaeger
   - kong
   - prometheus
-  - reloader.yaml
+  - reloader
 
 namespace: ecommerce
 

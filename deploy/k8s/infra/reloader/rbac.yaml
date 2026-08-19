@@ -1,0 +1,117 @@
+# What Reloader is allowed to watch, vendored from upstream v1.4.21 — see the
+# kustomization for how to refresh it.
+#
+# Note what the ClusterRole grants: list/get/watch on secrets in every
+# namespace. That is inherent to what the operator does, and it means Reloader
+# is one of the few things in the cluster that can read the signing key.
+#
+# The namespace fields below say "default"; the infra kustomization rewrites
+# them, including the ServiceAccount subject in the ClusterRoleBinding.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: reloader-reloader
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: reloader-reloader-metadata-role
+  namespace: default
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - list
+  - get
+  - watch
+  - create
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: reloader-reloader-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  - configmaps
+  verbs:
+  - list
+  - get
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - daemonsets
+  - statefulsets
+  verbs:
+  - list
+  - get
+  - update
+  - patch
+- apiGroups:
+  - extensions
+  resources:
+  - deployments
+  - daemonsets
+  verbs:
+  - list
+  - get
+  - update
+  - patch
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  verbs:
+  - list
+  - get
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - list
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: reloader-reloader-metadata-rolebinding
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: reloader-reloader-metadata-role
+subjects:
+- kind: ServiceAccount
+  name: reloader-reloader
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: reloader-reloader-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: reloader-reloader-role
+subjects:
+- kind: ServiceAccount
+  name: reloader-reloader
+  namespace: default
