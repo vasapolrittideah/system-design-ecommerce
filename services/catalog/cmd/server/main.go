@@ -45,7 +45,7 @@ func run() error {
 	obs := observability.MustStart(ctx, cfg.Obs, observability.WithLogger(log))
 	log.Info("telemetry started", zap.String("admin_addr", obs.AdminAddr()))
 
-	pool := postgres.MustNew(ctx, cfg.DB)
+	pool := postgres.MustNew(ctx, cfg.DB, postgres.WithLogger(log))
 
 	// Registered as the dependency is wired, not at the end: until a check is
 	// added /readyz answers ready, and that gap is a window in which the pod
