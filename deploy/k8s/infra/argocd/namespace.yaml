@@ -1,0 +1,13 @@
+# Upstream ships no Namespace object — `kubectl apply -n argocd` is how its own
+# instructions create one, which leaves the namespace outside the manifest that
+# depends on it. It is declared here instead, so that applying this directory is
+# the whole install and nothing has to be remembered in the right order.
+#
+# There is deliberately no default-deny-ingress here, unlike `ecommerce`. Every
+# workload in this install arrives with a NetworkPolicy of its own from
+# upstream, so a blanket deny would add nothing except a second thing to keep in
+# step the day upstream adds an eighth workload.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd

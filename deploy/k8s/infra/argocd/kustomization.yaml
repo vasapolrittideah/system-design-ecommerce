@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The controller that reconciles this cluster against this repository.
+#
+# It is applied on its own rather than through deploy/k8s/infra, for the same
+# reason sealed-secrets is: that kustomization sets `namespace: ecommerce` over
+# everything it includes, and this belongs in a namespace of its own. `make
+# argocd` is what applies it, and it is not part of `make up` — local and
+# staging are clusters that live on the machine doing the deploy and are
+# deployed by pushing at them, which is the opposite of what this is for.
+#
+# What Argo does here is reconcile, not deploy. The images an overlay names are
+# still bumped by a person committing a new `newTag`; what changes is that the
+# commit is the deploy, and that a cluster which has drifted from the file says
+# so instead of waiting for somebody to notice. That distinction is worth
+# holding on to — an image updater that writes tags back into git is a separate
+# decision, and a much larger one.
+#
+# Bootstrapping is two commands and then never again:
+#
+#	make argocd
+#	kubectl apply -f deploy/k8s/apps/prod/root.yaml
+#
+# The first sync should change nothing at all, because `make stack OVERLAY=prod`
+# has already applied exactly these files. An OutOfSync on the first pass is
+# therefore information rather than a problem: something in the cluster does not
+# match the repository, and this is the moment it is cheapest to find out.
+namespace: argocd
+
+resources:
+  - namespace.yaml
+  - crds.yaml
+  - install.yaml

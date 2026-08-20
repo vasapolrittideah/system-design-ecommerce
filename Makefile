@@ -651,6 +651,32 @@ seal: ## Encrypt an overlay's secrets so they can be committed (OVERLAY=prod)
 	@OVERLAY="$(OVERLAY)" NAMESPACE="$(NAMESPACE)" K8S_DIR="$(K8S_DIR)" \
 		scripts/seal.sh
 
+.PHONY: argocd
+argocd: ## Install the GitOps controller that reconciles prod against this repo
+	@# Applied on its own rather than through the infra kustomization, which
+	@# would rewrite its namespace to ecommerce — this belongs in one of its
+	@# own. Deliberately not part of `make up`: local and staging are clusters
+	@# on the machine running the deploy, and pushing at them is the whole
+	@# point, which is the opposite of reconciling them from a branch.
+	@# --server-side, and it is the one apply in this repository that needs it.
+	@# A client-side apply records the whole object in a
+	@# last-applied-configuration annotation, and an annotation may hold
+	@# 262,144 bytes: the Application CRD is 406KB and the ApplicationSet CRD
+	@# is 1.4MB. Without this the apply fails outright with "Too long", which
+	@# at least says so — the flag is here so nobody has to find that out.
+	kubectl apply --server-side -k $(K8S_DIR)/infra/argocd
+	kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
+	@for deploy in $$(kubectl -n argocd get deployments -o name); do \
+		kubectl -n argocd rollout status $$deploy --timeout=300s || exit 1; \
+	done
+	@echo
+	@echo "argocd is up, and manages nothing until the root app is applied:"
+	@echo "  kubectl apply -f $(K8S_DIR)/apps/prod/root.yaml"
+	@echo
+	@echo "the UI is not published — reach it the way Grafana is reached:"
+	@echo "  kubectl -n argocd port-forward svc/argocd-server 8080:443   # https://localhost:8080"
+	@echo "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+
 .PHONY: smoke
 smoke: ## Smoke-test the deployed stack through the gateway (BASE_URL=...)
 	$(call need_bin,jq,brew install jq)
