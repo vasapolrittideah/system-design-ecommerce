@@ -22,6 +22,9 @@ pkg/                    # cross-cutting infrastructure — no business logic all
 services/<name>/        # one service per directory
 deploy/k8s/
   infra/kong/kong.yml    # declarative DB-less Kong config
+  base/<name>/           # the service, described once
+  components/<name>-postgres/   # the database an overlay runs itself
+  overlays/{local,staging}/<name>/
 ```
 
 Single `go.mod` for the whole repo. Do not introduce per-service modules or a `go.work` unless explicitly asked.
@@ -273,7 +276,7 @@ obs.AddReadinessCheck("postgres", pool.Ping)
 
 ## Testing
 
-Most tests are domain tests: table-driven, no mocks, millisecond-fast, covering invariants and state machines. Use case tests mock ports with `mockery`. Adapter and integration tests use real PostgreSQL and Kafka via testcontainers — never mock the database driver. Contract testing is `buf breaking` in CI. E2E through Kong stays minimal.
+Most tests are domain tests: table-driven, no mocks, millisecond-fast, covering invariants and state machines. Use case tests mock ports with `mockery`. Adapter and integration tests use real PostgreSQL and Kafka via testcontainers — never mock the database driver. Contract testing is `buf breaking` in CI. E2E through Kong stays minimal — `scripts/smoke.sh` is the whole of it, and CI runs it against the `staging` overlay on a k3d cluster it creates and destroys, which is where the manifests get tested rather than the Go.
 
 Shared test helpers — container bootstrapping, fixtures, fake clock — live in `pkg/`, not duplicated per service.
 
@@ -294,14 +297,21 @@ make cluster-create     # k3d cluster with its registry, once
 make dev                # tilt up — watch, rebuild, redeploy
 make up                 # apply deploy/k8s/infra into the cluster
 make deploy SVC=x       # build image, run the migration Job, roll out
+make stack OVERLAY=staging  # deploy every service, BFFs last, then smoke
 make load SCENARIO=me   # k6 through Kong, with its rate limits raised for the run
 ```
 
-The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies every service shares (Jaeger, Kong DB-less, Reloader; Kafka in KRaft mode as the phase needing it arrives) and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/local/<name>` for the services.
+The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies every service shares (Jaeger, Kong DB-less, Reloader; Kafka in KRaft mode as the phase needing it arrives) and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/<env>/<name>` for the services.
 
-**Databases are not shared infrastructure.** Each service's local overlay declares its own single-database Postgres instance, so "database per service" is structural rather than a matter of grants. One instance holding a database per service is cheaper and was what this stack ran first, but Postgres grants `CONNECT` on every new database to `PUBLIC`, so each service role could open a connection to every other service's database and list its tables through `pg_catalog` — closing that needed a `REVOKE` in an init script whose absence nothing would report. With an instance per service there is nothing to revoke, and reaching another service's data would mean reaching another Service. Every dependency a service needs must be startable this way; nothing may require a shared remote environment to develop against.
+**There are two overlays, and the second one exists to keep the first honest.** `local` is the laptop stack, and every line in it is a relaxation that has to earn its place — console logs, gRPC reflection, a 10m CPU request, a two-minute reservation TTL. `staging` overrides almost nothing, so base is deployed as written; what it does override is the database host, the plaintext opt-out, and the JWT `iss`/`aud`, which name the deployment rather than the service precisely so that one environment's token cannot open another's session. Without a second overlay, "base is environment-agnostic" is a claim nobody can check, and the first environment that is not a laptop is where every laptop-shaped default in it gets discovered at once.
 
-**The namespace denies ingress by default, and each workload carries the allow-list of who may reach it.** `deploy/k8s/infra/namespace.yaml` holds the deny — with the Namespace rather than in the infra kustomization, because `make down` removes that kustomization while the services it was protecting keep running. Everything else sits beside the thing it protects: a service's in `base/<name>/networkpolicy.yaml`, a database's in the overlay that declares the database, an infra component's next to its Deployment.
+CI applies `staging` to a k3d cluster it creates and throws away, which is what keeps it from being a file rather than an environment — and is the only place the manifests meet an *empty* cluster. `make deploy` on a laptop always applies over yesterday's objects, so a resource nobody creates any more, a policy that only works because an older one is still there, and an ordering that only holds when the database is already running are all invisible locally and fail there. It is not a substitute for a durable environment: it has no registry, no TLS, no secret store, and it lives for the length of one job.
+
+A service's Postgres instance is a **kustomize component** rather than part of either overlay, because both run one and the same instance described twice is where one of them quietly gets a setting the other does not. An overlay whose database is managed elsewhere includes no component and sets `<SVC>_DB_HOST` alone.
+
+**Databases are not shared infrastructure.** Each service brings its own single-database Postgres instance, in a component its overlays include, so "database per service" is structural rather than a matter of grants. One instance holding a database per service is cheaper and was what this stack ran first, but Postgres grants `CONNECT` on every new database to `PUBLIC`, so each service role could open a connection to every other service's database and list its tables through `pg_catalog` — closing that needed a `REVOKE` in an init script whose absence nothing would report. With an instance per service there is nothing to revoke, and reaching another service's data would mean reaching another Service. Every dependency a service needs must be startable this way; nothing may require a shared remote environment to develop against.
+
+**The namespace denies ingress by default, and each workload carries the allow-list of who may reach it.** `deploy/k8s/infra/namespace.yaml` holds the deny — with the Namespace rather than in the infra kustomization, because `make down` removes that kustomization while the services it was protecting keep running. Everything else sits beside the thing it protects: a service's in `base/<name>/networkpolicy.yaml`, a database's in the component that declares the database, an infra component's next to its Deployment.
 
 This is what makes two rules above manifests instead of conventions. "Never query another service's tables" is enforced from the side that owns them — `identity-postgres` accepts connections from pods labelled `identity` and from nothing else, so a second service reaching for it fails to connect rather than reading rows. "East-west calls never go through the gateway" is a rule about who may *call*, so it lives on the other side: each service's egress list names DNS, Jaeger, its own database, and the services it calls, and Kong is absent from every one of them.
 
