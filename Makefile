@@ -80,6 +80,14 @@ LIMITER  ?= open
 # The backslash is required: an unescaped # starts a Make comment.
 BREAKING_AGAINST ?= .git\#branch=trunk
 
+# `make api-docs` reads this one. The REST contract is one file per BFF, so a
+# second audience is `make api-docs SPEC=api/openapi/bff-admin.yaml`. Swagger UI
+# arrives as an image rather than through `make tools`, and is pinned for the
+# same reason everything else here is.
+SPEC               ?= api/openapi/bff-web.yaml
+SWAGGER_UI_VERSION ?= v5.32.14
+SWAGGER_UI_PORT    ?= 8081
+
 # Test knobs: make test PKG=./pkg/httpx/... GOTEST_FLAGS='-run TestBind -v'
 PKG          ?= ./...
 GOTEST_FLAGS ?=
@@ -433,6 +441,21 @@ dev: ## Run the Tilt development loop (ctrl-c to stop, leaves the cluster up)
 dev-down: ## Remove everything Tilt deployed, keeping the cluster
 	$(call need_bin,tilt,brew install tilt)
 	tilt down
+
+.PHONY: api-docs
+api-docs: ## Browse a BFF's OpenAPI spec in Swagger UI (ctrl-c to stop, SPEC=...)
+	$(call need_bin,docker,brew install --cask docker)
+	@[ -f $(SPEC) ] || { echo "$(SPEC) does not exist"; exit 1; }
+	@echo "$(notdir $(SPEC)) -> http://localhost:$(SWAGGER_UI_PORT)"
+	@# Reading only. "Try it out" posts from this origin to Kong on :8000, and
+	@# the CORS plugin in kong.yml allows the storefront's origin alone — so the
+	@# browser blocks it, and widening that list is a gateway change to make
+	@# deliberately rather than a side effect of opening the docs.
+	@docker run --rm --name swagger-ui \
+		-p $(SWAGGER_UI_PORT):8080 \
+		-e SWAGGER_JSON=/spec/$(notdir $(SPEC)) \
+		-v $(ROOT_DIR)/$(dir $(SPEC)):/spec:ro \
+		swaggerapi/swagger-ui:$(SWAGGER_UI_VERSION)
 
 ##@ Deploy
 
