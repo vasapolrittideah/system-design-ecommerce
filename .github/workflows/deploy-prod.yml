@@ -1,0 +1,204 @@
+name: Deploy prod
+
+# Bumps the image tag in every prod overlay to one commit and pushes that as a
+# commit to trunk. The push is the deploy: Argo CD reconciles prod against this
+# directory, so nothing here talks to a cluster and no kubeconfig exists in this
+# workflow.
+#
+# It exists so that choosing which build runs stays a decision a person makes,
+# while the seven lines of YAML that record the decision stop being typed by
+# hand. An image updater would have taken the decision too, and would have
+# needed a credential that can push to trunk living inside the prod cluster.
+#
+# Two things it does that the manual edit could not:
+#
+#   - it moves all four overlays together, so a half-bumped prod is not a state
+#     that can be pushed
+#   - it refuses a tag whose images are not on ghcr, both architectures present,
+#     which is otherwise discovered as ImagePullBackOff after Argo has synced
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: trunk commit to deploy (full or abbreviated)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    name: Point prod at ${{ inputs.sha }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Pushing the bump commit to trunk.
+      contents: write
+      # Reading image manifests back off ghcr.
+      packages: read
+    steps:
+      # Full history: the commit being deployed has to be checked for being on
+      # trunk, and a shallow clone cannot answer that.
+      - uses: actions/checkout@v5
+        with:
+          ref: trunk
+          fetch-depth: 0
+
+      # A commit that is not an ancestor of trunk is one CI never published
+      # images for — a branch tip, or a typo that happens to be a valid object.
+      # Abbreviated input is resolved here so everything downstream is full.
+      - name: Resolve the commit
+        id: commit
+        env:
+          INPUT: ${{ inputs.sha }}
+        run: |
+          sha=$(git rev-parse --verify --quiet "${INPUT}^{commit}") || {
+            echo "::error::$INPUT is not a commit in this repository"
+            exit 1
+          }
+          git merge-base --is-ancestor "$sha" HEAD || {
+            echo "::error::$sha is not on trunk, so no images were published for it"
+            exit 1
+          }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short "$sha")" >> "$GITHUB_OUTPUT"
+          echo "subject=$(git log -1 --format=%s "$sha")" >> "$GITHUB_OUTPUT"
+
+          # What prod is on now, read off the overlay rather than from a cluster.
+          current=$(grep -hm1 -E '^\s*newTag:' \
+            deploy/k8s/overlays/prod/identity/kustomization.yaml | awk '{print $2}')
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite the tags
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          find deploy/k8s/overlays/prod -name kustomization.yaml \
+            -exec sed -i -E "s|^([[:space:]]*newTag:[[:space:]]*).*|\1${SHA}|" {} +
+          git --no-pager diff --stat
+
+      # The list of images to check comes from rendering the overlays rather
+      # than from reconstructing the naming rule a second time. Whatever the
+      # cluster would pull is exactly what is verified, so a service that grows
+      # an image, or one whose overlay is missing a bump, is caught by the same
+      # step that catches a tag that was never published.
+      - name: Render and collect what prod would pull
+        id: render
+        run: |
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          prefix="ghcr.io/${repo}/"
+
+          : > images.txt
+          for dir in deploy/k8s/overlays/prod/*/; do
+            echo "::group::$(basename "$dir")"
+            kubectl kustomize "$dir" > rendered.yaml || exit 1
+            grep -oE "image: ${prefix}[^[:space:]]+" rendered.yaml \
+              | awk '{print $2}' | sort -u | tee -a images.txt
+            echo "::endgroup::"
+          done
+          sort -u -o images.txt images.txt
+
+          # An empty list means the render stopped naming our own images, which
+          # is a broken overlay rather than a prod with nothing in it.
+          [ -s images.txt ] || { echo "::error::no ${prefix} image in the render"; exit 1; }
+
+          # A tag left behind is the half-bumped state this job exists to make
+          # unpushable, so it fails here rather than in the diff.
+          if grep -v ":${{ steps.commit.outputs.sha }}$" images.txt; then
+            echo "::error::the images above did not take the new tag"
+            exit 1
+          fi
+          echo "count=$(wc -l < images.txt)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Both architectures, for the same reason `publish` checks it: a manifest
+      # missing one is invisible until it lands on a host of that architecture,
+      # and the prod host has not been chosen for good.
+      - name: Every image exists, on both architectures
+        run: |
+          while read -r image; do
+            echo "::group::$image"
+            manifest=$(docker buildx imagetools inspect "$image" 2>&1) || {
+              echo "$manifest"
+              echo "::endgroup::"
+              echo "::error::$image is not on ghcr — did CI publish this commit?"
+              exit 1
+            }
+            echo "$manifest"
+            echo "::endgroup::"
+            for platform in linux/amd64 linux/arm64; do
+              grep -q "$platform" <<<"$manifest" \
+                || { echo "::error::$image is missing $platform"; exit 1; }
+            done
+            echo "  ok   $image"
+          done < images.txt
+
+      # [skip ci] because ci.yml would rebuild and republish four services for a
+      # commit that changes seven lines of YAML under deploy/, and its stack job
+      # exercises the staging overlay rather than these. What would have checked
+      # prod is the render above, which ci.yml does not do at all.
+      #
+      # This pushes straight to trunk. If branch protection is ever turned on
+      # with `ci` required, that push is refused, and the answer is either a
+      # bypass entry for this workflow or opening a pull request here instead.
+      - name: Commit the bump
+        id: push
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+          SHORT: ${{ steps.commit.outputs.short }}
+          SUBJECT: ${{ steps.commit.outputs.subject }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add deploy/k8s/overlays/prod
+          if git diff --cached --quiet; then
+            echo "prod is already on $SHORT — nothing to push"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # printf rather than a heredoc: the subject is repository content,
+          # and an unquoted heredoc would run a backtick in it.
+          {
+            printf '%s\n\n' "chore(deploy): point prod images at ${SHORT}"
+            printf '%s\n\n' "${SUBJECT}"
+            printf '%s\n' "Dispatched by @${ACTOR}. Argo reconciles prod against trunk,"
+            printf '%s\n\n' "so this commit is the deploy and reverting it is the rollback."
+            printf '%s\n' "[skip ci]"
+          } > "${RUNNER_TEMP}/commit-msg"
+          git commit -F "${RUNNER_TEMP}/commit-msg"
+          git push origin HEAD:trunk
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always() && steps.commit.outputs.sha != ''
+        env:
+          CURRENT: ${{ steps.commit.outputs.current }}
+          SHA: ${{ steps.commit.outputs.sha }}
+          SHORT: ${{ steps.commit.outputs.short }}
+        run: |
+          {
+            if [ "${{ steps.push.outputs.changed }}" = "true" ]; then
+              echo "### prod now points at \`$SHORT\`"
+            elif [ "${{ steps.push.outputs.changed }}" = "false" ]; then
+              echo "### prod was already on \`$SHORT\`"
+            else
+              echo "### not deployed"
+            fi
+            echo
+            echo "- from \`$CURRENT\`"
+            echo "- to \`$SHA\`"
+            echo "- [what changed](${{ github.server_url }}/${{ github.repository }}/compare/$CURRENT...$SHA)"
+            echo
+            echo "Argo syncs within a few minutes; the migration Job runs first."
+          } >> "$GITHUB_STEP_SUMMARY"
