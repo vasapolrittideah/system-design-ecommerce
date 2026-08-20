@@ -21,10 +21,13 @@ api/openapi/            # the REST contract, hand-written — one file per BFF
 pkg/                    # cross-cutting infrastructure — no business logic allowed
 services/<name>/        # one service per directory
 deploy/k8s/
-  infra/kong/kong.yml    # declarative DB-less Kong config
+  infra/                 # the dependencies every cluster shares, described once
+    kong/kong.yml         # declarative DB-less Kong config
   base/<name>/           # the service, described once
   components/<name>-postgres/   # the database an overlay runs itself
+  components/cloudflared/       # the tunnel an internet-facing overlay runs
   overlays/{local,staging,prod}/<name>/
+  overlays/{local,staging,prod}/infra/   # the values that name one cluster
 ```
 
 Single `go.mod` for the whole repo. Do not introduce per-service modules or a `go.work` unless explicitly asked.
@@ -219,7 +222,15 @@ Responses are localised from `Accept-Language`, defaulting to `en`, with the neg
 
 ## Gateway and auth
 
-Kong is declarative and DB-less (`deploy/k8s/infra/kong/kong.yml`, version-controlled — it sits with Jaeger and Reloader because nothing here builds its image). It handles TLS termination, rate limiting, CORS, body size limits, correlation ID, and metrics.
+Kong is declarative and DB-less (`deploy/k8s/infra/kong/kong.yml`, version-controlled — it sits with Jaeger and Reloader because nothing here builds its image). It handles rate limiting, CORS, body size limits, correlation ID, and metrics. TLS is terminated in front of it and never by it: k3d's own listener locally, Cloudflare in prod.
+
+**`kong.yml` is a template with exactly one hole in it, and an init container fills it.** Kong has no interpolation of its own in declarative mode, so the alternative to `CORS_ORIGINS` arriving as an env var is every overlay carrying a whole copy of the gateway config to drift from. One hole is also the budget: a gateway config assembled from a template and an env file is one nobody can read in a diff. Base names no origin and the init container refuses to render an empty one, so a cluster deployed without an infra overlay leaves Kong in CrashLoopBackOff instead of quietly allowing a laptop's origin in production. What Kong reads is the rendered copy in an emptyDir — `kubectl get configmap kong-declarative` shows the template, and Kong Manager shows what is actually loaded.
+
+**In prod nothing is published on the host: the cluster's only inbound path is a Cloudflare tunnel it dials out itself** (`deploy/k8s/components/cloudflared`, included by `overlays/prod/infra` alone). TLS ends at Cloudflare's edge, so there is no certificate in this repo to renew and no port bound on the server — and Kong's Service is patched to `ClusterIP` there, because k3s answers `LoadBalancer` with servicelb by binding 80 and 443 on every node, which would leave the gateway also answering on the public IP, beside the tunnel and past everything Cloudflare does. Three consequences, each easy to undo by accident:
+
+- **Every request now arrives from a cloudflared pod, so the client address is recovered from `X-Forwarded-For`** (`KONG_TRUSTED_IPS`, `KONG_REAL_IP_HEADER`, `KONG_REAL_IP_RECURSIVE=off` — Cloudflare appends the connecting address last). Without it `limit_by: ip` sees two addresses for the whole internet and every rate limit becomes one shared bucket a single client can empty for everybody.
+- **Trusting that header is safe only because the NetworkPolicy makes cloudflared the sole ingress to Kong.** They are one decision written in two files: relax the policy and the rate limit becomes one anyone can spoof their way out of.
+- **The tunnel's only in-cluster destination is the gateway**, held by cloudflared's egress list rather than by its own ingress config. An entry pointing straight at `identity:50051` would publish a service on the internet with nothing routed through Kong — past the rate limits, the body cap, and the correlation ID — and it fails to connect instead.
 
 **Kong does not verify JWTs, and no plugin forwards claims.** Authentication happens once, in the BFF, which re-verifies every token itself under zero-trust — so a verifier at the edge would be a second copy of the public key to rotate, a second `iss`/`aud` policy to keep in step, and a 401 in Kong's error shape rather than this API's. `pkg/auth`'s middleware ignores `X-User-ID` / `X-User-Roles` anyway, so a forwarded claim would have no reader. Kong's `jwt` plugin could not do the job as specified regardless: it checks `exp` and `nbf` and never `aud`, and it forwards `X-Consumer-*` rather than claims.
 
@@ -295,7 +306,7 @@ make test               # go test ./... -race -cover
 make lint               # golangci-lint run
 make cluster-create     # k3d cluster with its registry, once
 make dev                # tilt up — watch, rebuild, redeploy
-make up                 # apply deploy/k8s/infra into the cluster
+make up [OVERLAY=prod]  # apply that cluster's shared infra
 make deploy SVC=x       # build image, run the migration Job, roll out
 make stack OVERLAY=staging  # deploy every service, BFFs last, then smoke
 make stack OVERLAY=prod BUILD=0  # same, pulling the images CI published
@@ -306,7 +317,11 @@ The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for
 
 **There are three overlays, and each one exists to keep the one before it honest.** `local` is the laptop stack, and every line in it is a relaxation that has to earn its place — console logs, gRPC reflection, a 10m CPU request, a two-minute reservation TTL. `staging` overrides almost nothing, so base is deployed as written; what it does override is the database host, the plaintext opt-out, and the JWT `iss`/`aud`, which name the deployment rather than the service precisely so that one environment's token cannot open another's session. Without that second overlay, "base is environment-agnostic" is a claim nobody can check, and the first environment that is not a laptop is where every laptop-shaped default in it gets discovered at once.
 
-`prod` is the cluster that actually serves, and it differs from staging in two things. Its images are pulled from ghcr by SHA rather than built on the machine running the deploy — which is why `make deploy` takes `BUILD=0`: the build path ends in `k3d image import` and means nothing for a cluster that is not on this machine. And its credentials are committed encrypted rather than as literals: staging holds its password in a `secretGenerator` because its cluster lives for the length of one CI job, and a cluster facing the internet cannot take a password from a public repository.
+`prod` is the cluster that actually serves, and it differs from staging in three things. Its images are pulled from ghcr by SHA rather than built on the machine running the deploy — which is why `make deploy` takes `BUILD=0`: the build path ends in `k3d image import` and means nothing for a cluster that is not on this machine. Its credentials are committed encrypted rather than as literals: staging holds its password in a `secretGenerator` because its cluster lives for the length of one CI job, and a cluster facing the internet cannot take a password from a public repository. And it is the one cluster the internet can reach, which turns out to be a difference in the infra rather than in any service — the tunnel, the gateway that stops publishing a port, and a browser origin that is a real domain all live in `overlays/prod/infra`.
+
+**The infra has overlays too, one per cluster, for the same reason the services do.** `deploy/k8s/infra` describes each dependency once and holds no value naming a cluster; `overlays/<env>/infra` says which cluster this is. Until that existed, `make up` applied the infra directory straight into whatever kubectl pointed at: the gateway's allowed origin was a laptop's in every environment, with nothing in the layout admitting it, and there was nowhere to put a tunnel that staging would not also try to run. The infra base stays at `deploy/k8s/infra` rather than moving under `base/`, because nothing in it is built from this repo. `make up` and `make down` take `OVERLAY` like everything else, and only `local` and `staging` are checked against k3d — prod is a cluster somewhere else, and the one thing this repo knows about it is where kubectl is pointing.
+
+Setting up that tunnel is four commands on the operator's machine, and the runbook is in `overlays/prod/infra/cloudflared.yaml` beside the config it produces: `cloudflared tunnel login`, `tunnel create`, copy the credentials JSON into that directory (gitignored, sealed by `make seal OVERLAY=prod`), then `tunnel route dns` to point `api.vasapol.dev` at it. That last one is the step whose absence looks exactly like a healthy deploy — every pod Ready, no request ever arriving.
 
 **Sealed Secrets is how, and the sealing key is the thing to be careful with.** `make seal OVERLAY=prod` encrypts the material into a `sealedsecret.yaml` the overlay lists as a resource, and the controller in the cluster decrypts it into the plain `<svc>-secret` that base mounts with `envFrom`. Three consequences, each of which fails in its own way:
 
