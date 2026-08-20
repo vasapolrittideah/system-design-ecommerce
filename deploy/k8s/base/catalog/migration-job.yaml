@@ -6,10 +6,19 @@
 # The Job is immutable once created, so a redeploy has to delete it before
 # applying — `make deploy` does that, and it is also what orders the migration
 # ahead of the rollout, since kustomize has no notion of hooks.
+#
+# The two annotations below say the same thing to Argo, which does have them:
+# run this before the rest of the sync, wait for it to succeed, and delete the
+# previous one first because of that same immutability. They are inert wherever
+# Argo is not watching — `make deploy` and `make stack` behave exactly as they
+# did — so the two paths describe one ordering rather than competing for it.
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: catalog-migrate
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   # goose runs each migration in a transaction and records nothing when it
   # rolls back, so a lock timeout or a dropped connection clears itself on the
