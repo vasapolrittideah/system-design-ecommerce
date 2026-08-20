@@ -24,6 +24,10 @@ SQLC_VERSION          ?= v1.31.1
 MOCKERY_VERSION       ?= v3.7.3
 GOOSE_VERSION         ?= v3.27.3
 GOLANGCI_LINT_VERSION ?= v2.12.2
+# Must match the controller vendored in deploy/k8s/infra/sealed-secrets: kubeseal
+# and the controller share a wire format, and a client newer than its controller
+# is the one direction that is not supported.
+KUBESEAL_VERSION      ?= v0.38.4
 
 # Not installed by `make tools` — k3d ships its own installer and is expected to
 # come from brew on a laptop. Pinned here anyway so CI, which does install it,
@@ -417,7 +421,13 @@ up: ## Start the shared local infra in the cluster (Jaeger, Loki, Alloy, Kong, P
 	@# Databases are not here: each service brings its own Postgres instance in
 	@# its own overlay, so `make deploy SVC=x` is what starts x's database.
 	kubectl apply -f $(K8S_DIR)/infra/namespace.yaml
+	@# Applied on its own rather than through the infra kustomization, which
+	@# would rewrite its namespace to ecommerce. It belongs in kube-system: the
+	@# sealing key is generated into a Secret beside the controller, and the
+	@# ecommerce namespace is what `make clean-volumes` deletes.
+	kubectl apply -k $(K8S_DIR)/infra/sealed-secrets
 	kubectl apply -k $(K8S_DIR)/infra
+	kubectl -n kube-system rollout status deployment/sealed-secrets-controller --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/jaeger --timeout=180s
 	kubectl -n $(NAMESPACE) rollout status deployment/loki --timeout=180s
 	@# A DaemonSet, so this waits for one Alloy per node. It is the only
@@ -600,6 +610,16 @@ stack: ## Deploy every service into the cluster, then smoke it (OVERLAY=prod BUI
 	@echo
 	$(MAKE) smoke
 
+.PHONY: seal
+seal: ## Encrypt an overlay's secrets so they can be committed (OVERLAY=prod)
+	$(need_overlay)
+	$(call need_bin,kubeseal,make tools)
+	@# Sealed against whichever cluster kubectl currently points at, because the
+	@# key that can read the result exists only there. Sealing for one cluster
+	@# and applying to another produces a SealedSecret nothing can decrypt.
+	@OVERLAY="$(OVERLAY)" NAMESPACE="$(NAMESPACE)" K8S_DIR="$(K8S_DIR)" \
+		scripts/seal.sh
+
 .PHONY: smoke
 smoke: ## Smoke-test the deployed stack through the gateway (BASE_URL=...)
 	$(call need_bin,jq,brew install jq)
@@ -648,6 +668,10 @@ tools: ## Install pinned dev tools into bin/
 	go install github.com/vektra/mockery/v3@$(MOCKERY_VERSION)
 	go install github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@# github.com/bitnami/..., not bitnami-labs: the repository still lives at
+	@# the old path but the module declares the new one, and `go install`
+	@# believes the module.
+	go install github.com/bitnami/sealed-secrets/cmd/kubeseal@$(KUBESEAL_VERSION)
 	@echo "installed into $(BIN_DIR)"
 
 .PHONY: tools-clean

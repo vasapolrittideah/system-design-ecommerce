@@ -1,0 +1,56 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The controller that turns a committed SealedSecret into the Secret a workload
+# mounts. An overlay commits the sealed form; only this controller, in this
+# cluster, holds the key that reads it.
+#
+# Unlike every other directory under infra/, this one is NOT listed in
+# deploy/k8s/infra/kustomization.yaml, and `make up` applies it on its own. That
+# kustomization sets `namespace: ecommerce` over everything it includes, and
+# this belongs in kube-system: the controller generates its sealing key into a
+# Secret beside itself, and `make clean-volumes` deletes the ecommerce
+# namespace. A key living there would make every committed SealedSecret in this
+# repository permanently undecryptable, from a target whose stated purpose is
+# throwing away local data.
+#
+# Back the key up before that matters:
+#
+#	kubectl -n kube-system get secret \
+#	  -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > sealing-key.yaml
+#
+# That one file unseals everything. Keep it somewhere a lost laptop does not.
+#
+# These four files are one upstream document, pinned at v0.38.4 and committed
+# rather than fetched at build time, so `kustomize build` stays offline and a
+# version bump is a reviewable diff. Refresh it with:
+#
+#	curl -sSL -o /tmp/sealed-secrets.yaml \
+#	  https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.38.4/controller.yaml
+#
+# then split it the way it is split here — the CustomResourceDefinition into
+# crd.yaml, the seven ServiceAccount/Role/RoleBinding/ClusterRole documents into
+# rbac.yaml, the Deployment and the two Services into their own — and re-apply
+# the header comment of each. Diff before replacing: upstream may add a
+# document, and one that lands in no file is a permission this controller
+# silently lacks.
+#
+# KUBESEAL_VERSION in the Makefile must move with this. The client and the
+# controller share a wire format, and a client newer than its controller is the
+# one direction upstream does not support.
+#
+# The version deliberately trails the newest release: this controller holds the
+# only key that can read every SealedSecret here, so it takes the version that
+# has been in the field for weeks rather than days.
+
+# Stated rather than left to the files, so a document that arrives from upstream
+# without one cannot land in whatever namespace kubectl happens to point at.
+# Cluster-scoped documents — the CRD and secrets-unsealer — are skipped by this
+# transformer, and the ClusterRoleBinding's ServiceAccount subject is not.
+namespace: kube-system
+
+resources:
+  - crd.yaml
+  - rbac.yaml
+  - service.yaml
+  - deployment.yaml

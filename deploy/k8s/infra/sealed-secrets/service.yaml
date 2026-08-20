@@ -1,0 +1,37 @@
+# Two Services, and neither is how a workload reaches anything: the controller
+# is reached by the API server proxy, which is how `kubeseal` fetches the public
+# certificate without a port-forward. The metrics one is scraped by name.
+#
+# Vendored from upstream v0.38.4 — see the kustomization for how to refresh it.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations: {}
+  labels:
+    name: sealed-secrets-controller
+  name: sealed-secrets-controller
+  namespace: kube-system
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    name: sealed-secrets-controller
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations: {}
+  labels:
+    name: sealed-secrets-controller-metrics
+  name: sealed-secrets-controller-metrics
+  namespace: kube-system
+spec:
+  ports:
+  - port: 8081
+    targetPort: 8081
+  selector:
+    name: sealed-secrets-controller
+  type: ClusterIP
