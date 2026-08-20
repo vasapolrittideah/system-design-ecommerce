@@ -14,6 +14,7 @@ import (
 
 	catalogv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/catalog/v1"
 	identityv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/identity/v1"
+	inventoryv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/inventory/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/httpx"
 )
 
@@ -27,6 +28,7 @@ import (
 type Handler struct {
 	identity  identityv1.IdentityServiceClient
 	catalog   catalogv1.CatalogServiceClient
+	inventory inventoryv1.InventoryServiceClient
 	validator *httpx.Validator
 }
 
@@ -34,9 +36,15 @@ type Handler struct {
 func NewHandler(
 	identity identityv1.IdentityServiceClient,
 	catalog catalogv1.CatalogServiceClient,
+	inventory inventoryv1.InventoryServiceClient,
 	validator *httpx.Validator,
 ) *Handler {
-	return &Handler{identity: identity, catalog: catalog, validator: validator}
+	return &Handler{
+		identity:  identity,
+		catalog:   catalog,
+		inventory: inventory,
+		validator: validator,
+	}
 }
 
 // Mount attaches every route to r, taking the authentication middleware rather
@@ -62,6 +70,7 @@ func (h *Handler) Mount(r chi.Router, authenticate func(http.Handler) http.Handl
 		})
 
 		r.Get("/products", h.listProducts)
+		r.Get("/products/{id}", h.getProduct)
 
 		r.Group(func(r chi.Router) {
 			r.Use(authenticate)

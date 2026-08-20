@@ -48,7 +48,7 @@ func TestSpecIsValid(t *testing.T) {
 // drift, and neither shows up in a handler test.
 func TestSpecDescribesExactlyTheMountedRoutes(t *testing.T) {
 	doc := loadSpec(t)
-	router, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{})
+	router, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{})
 
 	documented := map[string]bool{}
 	for path, item := range doc.Paths.Map() {
@@ -93,6 +93,8 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		WithReason("EMAIL_ALREADY_REGISTERED"))
 	missingUser := errorx.ToGRPC(errorx.New(errorx.KindNotFound, "user not found").
 		WithReason("USER_NOT_FOUND"))
+	missingProduct := errorx.ToGRPC(errorx.New(errorx.KindNotFound, "product not found").
+		WithReason("PRODUCT_NOT_FOUND"))
 
 	cases := []struct {
 		name string
@@ -107,8 +109,9 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		// this test's would produce.
 		authorization string
 
-		identity *stubIdentityClient
-		catalog  *stubCatalogClient
+		identity  *stubIdentityClient
+		catalog   *stubCatalogClient
+		inventory *stubInventoryClient
 
 		wantStatus int
 
@@ -312,6 +315,46 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 			catalog:    &stubCatalogClient{err: status.Error(codes.DeadlineExceeded, "context deadline exceeded")},
 			wantStatus: http.StatusGatewayTimeout,
 		},
+		{
+			name:       "one product",
+			method:     http.MethodGet,
+			path:       "/api/v1/products/" + testProductID,
+			catalog:    &stubCatalogClient{product: testProduct()},
+			inventory:  &stubInventoryClient{items: testStock()},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:   "one product while the warehouse is unreachable",
+			method: http.MethodGet,
+			path:   "/api/v1/products/" + testProductID,
+			// The page is still the answer: availability is the optional half
+			// of it, and a 503 here would take the shop down with the
+			// warehouse.
+			catalog:    &stubCatalogClient{product: testProduct()},
+			inventory:  &stubInventoryClient{err: status.Error(codes.Unavailable, "connection refused")},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:        "one product under an id that is not a uuid",
+			method:      http.MethodGet,
+			path:        "/api/v1/products/oxford-shirt",
+			wantStatus:  http.StatusBadRequest,
+			specRejects: true,
+		},
+		{
+			name:       "one product nobody published",
+			method:     http.MethodGet,
+			path:       "/api/v1/products/" + testProductID,
+			catalog:    &stubCatalogClient{err: missingProduct},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "one product while the catalog is unreachable",
+			method:     http.MethodGet,
+			path:       "/api/v1/products/" + testProductID,
+			catalog:    &stubCatalogClient{err: status.Error(codes.Unavailable, "connection refused")},
+			wantStatus: http.StatusServiceUnavailable,
+		},
 	}
 
 	doc := loadSpec(t)
@@ -333,7 +376,12 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 				catalog = &stubCatalogClient{}
 			}
 
-			srv, signer := newServer(t, identity, catalog)
+			inventory := tc.inventory
+			if inventory == nil {
+				inventory = &stubInventoryClient{}
+			}
+
+			srv, signer := newServer(t, identity, catalog, inventory)
 
 			authorization := tc.authorization
 			if tc.authenticated {

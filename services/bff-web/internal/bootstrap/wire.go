@@ -9,6 +9,7 @@ import (
 
 	catalogv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/catalog/v1"
 	identityv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/identity/v1"
+	inventoryv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/inventory/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/auth"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/httpx"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/bff-web/internal/adapter/in/rest"
@@ -21,8 +22,9 @@ import (
 // call site would send every login to catalog, and nothing but a failing request
 // would say so.
 type Conns struct {
-	Identity *grpc.ClientConn
-	Catalog  *grpc.ClientConn
+	Identity  *grpc.ClientConn
+	Catalog   *grpc.ClientConn
+	Inventory *grpc.ClientConn
 }
 
 // NewRouter assembles the API and returns the handler to serve.
@@ -46,6 +48,7 @@ func NewRouter(cfg Config, conns Conns, log *zap.Logger, reg prometheus.Register
 	handler := rest.NewHandler(
 		identityv1.NewIdentityServiceClient(conns.Identity),
 		catalogv1.NewCatalogServiceClient(conns.Catalog),
+		inventoryv1.NewInventoryServiceClient(conns.Inventory),
 		validator,
 	)
 	handler.Mount(router, auth.Authenticate(auth.MustNewVerifier(cfg.JWT)))

@@ -118,12 +118,134 @@ func lowestPrice(variants []*catalogv1.Variant) *money {
 		}
 	}
 
-	if lowest == nil {
+	return toMoney(lowest)
+}
+
+// toMoney maps a price, and answers nil for an absent one rather than a zero
+// amount: unpriced and free are different facts, and only one of them is a
+// price.
+func toMoney(m *commonv1.Money) *money {
+	if m == nil {
 		return nil
 	}
 
 	return &money{
-		AmountMinor:  lowest.GetAmountMinor(),
-		CurrencyCode: lowest.GetCurrencyCode(),
+		AmountMinor:  m.GetAmountMinor(),
+		CurrencyCode: m.GetCurrencyCode(),
 	}
+}
+
+// productPath is the product page's path parameter, checked through the same
+// `validate` tags a body and a query string go through so this handler verifies
+// nothing by hand either.
+//
+// It is checked here rather than left to catalog's protovalidate, which would
+// also refuse it: a rejection from downstream arrives as a bare 400 where every
+// other bad request in this API carries `error.fields` naming what was wrong.
+// The round trip it saves is the smaller half of the reason.
+type productPath struct {
+	ID string `json:"id" validate:"required,uuid"`
+}
+
+// availableBySKU is how many of each SKU may still be sold, and nil when the
+// warehouse did not answer.
+//
+// A SKU inventory does not track is simply absent from a non-nil map, and reads
+// back as a real zero: nothing has been stocked, so nothing can be bought. Only
+// the nil map means nobody knows.
+type availableBySKU map[string]int32
+
+// quantity reports a SKU's availability, and false when it is not known.
+func (a availableBySKU) quantity(sku string) (int32, bool) {
+	if a == nil {
+		return 0, false
+	}
+
+	return a[sku], true
+}
+
+// What the product page answers with.
+type (
+	productResponse struct {
+		Product productDetail `json:"product"`
+	}
+
+	// productDetail is one product as its own page needs it, which is
+	// everything a card leaves out: the words, and every way it can be bought.
+	//
+	// There is no status field. The storefront is only ever answered about
+	// published products, so it would carry the same value on every response
+	// and tell a client nothing.
+	productDetail struct {
+		ID          string           `json:"id"`
+		Name        string           `json:"name"`
+		Description string           `json:"description"`
+		Category    string           `json:"category"`
+		Variants    []productVariant `json:"variants"`
+	}
+
+	// productVariant is one buyable unit: what it costs, what distinguishes it
+	// from its siblings, and whether there is one left.
+	productVariant struct {
+		ID  string `json:"id"`
+		SKU string `json:"sku"`
+
+		// Null for a variant the catalog holds no price for — a state a
+		// published product should not be in, and one a zero would describe
+		// wrongly.
+		Price *money `json:"price"`
+
+		// Whatever the catalog was told distinguishes this variant — {"size":
+		// "M"}. Opaque here as much as there: no rule in this tier reads a key.
+		Attributes map[string]string `json:"attributes"`
+
+		// How many may still be bought, and null when the warehouse did not
+		// answer — which is a different thing from zero and the client should
+		// render it differently.
+		//
+		// The count is passed through rather than reduced to a flag. Turning it
+		// into "only a few left" is a policy about what a shopper may learn, and
+		// a policy belongs to the service that owns the number.
+		AvailableQuantity *int32 `json:"availableQuantity"`
+	}
+)
+
+// toProductDetail maps a product and what the warehouse said about it onto the
+// page that renders them.
+func toProductDetail(p *catalogv1.Product, available availableBySKU) productDetail {
+	variants := make([]productVariant, 0, len(p.GetVariants()))
+	for _, v := range p.GetVariants() {
+		variants = append(variants, toProductVariant(v, available))
+	}
+
+	return productDetail{
+		ID:          p.GetId(),
+		Name:        p.GetName(),
+		Description: p.GetDescription(),
+		Category:    p.GetCategory(),
+		Variants:    variants,
+	}
+}
+
+func toProductVariant(v *catalogv1.Variant, available availableBySKU) productVariant {
+	attributes := v.GetAttributes()
+	if attributes == nil {
+		// An empty object rather than null, for the reason a user's roles are
+		// an empty array: a client should not need a nil check to read a
+		// collection that is simply empty.
+		attributes = map[string]string{}
+	}
+
+	variant := productVariant{
+		ID:         v.GetId(),
+		SKU:        v.GetSku(),
+		Price:      toMoney(v.GetPrice()),
+		Attributes: attributes,
+	}
+
+	if quantity, known := available.quantity(v.GetSku()); known {
+		variant.AvailableQuantity = &quantity
+	}
+
+	return variant
 }

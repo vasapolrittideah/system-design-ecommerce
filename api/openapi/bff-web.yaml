@@ -383,6 +383,69 @@ paths:
         '504':
           $ref: '#/components/responses/UpstreamTimeout'
 
+  /api/v1/products/{id}:
+    get:
+      operationId: getProduct
+      tags: [storefront]
+      summary: One product, as its own page
+      description: |
+        Anonymous, for the reason the listing is.
+
+        Only published products are answered for. A draft, an archived product,
+        and an id nobody ever minted are all `404 PRODUCT_NOT_FOUND`, and the
+        three are deliberately indistinguishable — otherwise the status code
+        alone would tell anyone walking UUIDs which ones name an unreleased
+        product.
+
+        Availability is the one optional part of this page. When the warehouse
+        does not answer, every variant's `availableQuantity` is `null` and
+        nothing else about the response changes; a client that renders `null` as
+        "sold out" is wrong in the direction that costs a sale.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The product's id, as `products.id` from the listing.
+          schema:
+            type: string
+            format: uuid
+            pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          example: 3f2504e0-4f89-41d3-9a0c-0305e82c3301
+      responses:
+        '200':
+          description: The product, with every way it can be bought.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: |
+            No product on sale under this id — `PRODUCT_NOT_FOUND`.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [PRODUCT_NOT_FOUND]
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -741,6 +804,88 @@ components:
           description: |
             How many ways this product can be bought, so a card knows whether
             `priceFrom` is the price or the lowest of several.
+
+    ProductResponse:
+      type: object
+      required: [product]
+      properties:
+        product:
+          $ref: '#/components/schemas/ProductDetail'
+
+    ProductDetail:
+      type: object
+      description: |
+        One product as its own page needs it, which is everything a card leaves
+        out: the words, and every way the thing can be bought.
+
+        There is no status field. Only published products are ever returned
+        here, so it would carry the same value on every response.
+      required: [id, name, description, category, variants]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        variants:
+          type: array
+          description: |
+            Never empty for a published product — publishing requires one.
+          items:
+            $ref: '#/components/schemas/ProductVariant'
+
+    ProductVariant:
+      type: object
+      description: |
+        One buyable unit: what it costs, what distinguishes it from its
+        siblings, and whether there is one left.
+      required: [id, sku, price, attributes, availableQuantity]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+          description: |
+            What the warehouse, a picking list, and a supplier's invoice all
+            call this thing. Uppercase, and stable.
+          example: SHIRT-OX-M
+        price:
+          oneOf:
+            - $ref: '#/components/schemas/Money'
+            - type: 'null'
+          description: |
+            Null for a variant the catalog holds no price for — a state a
+            published product should not be in, and one a zero would describe
+            wrongly.
+        attributes:
+          type: object
+          description: |
+            Whatever the catalog was told distinguishes this variant. Opaque:
+            read a key only if you put it there. `{}` when there are none.
+          additionalProperties:
+            type: string
+          example:
+            size: M
+        availableQuantity:
+          description: |
+            How many may still be bought. `0` means the warehouse has none;
+            `null` means it did not answer and nobody knows — render the two
+            differently, because treating `null` as sold out hides a product
+            that is on the shelf.
+
+            It is the count and not a flag: whether to say "only 3 left" or just
+            "in stock" is the client's to decide, and any rule about what a
+            shopper may learn belongs to the service that owns the number.
+          oneOf:
+            - type: integer
+              format: int32
+              minimum: 0
+            - type: 'null'
 
     Money:
       type: object

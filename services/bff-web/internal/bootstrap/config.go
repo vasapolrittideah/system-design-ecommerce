@@ -38,8 +38,9 @@ type Config struct {
 	// One block per service this BFF calls, each configured independently: a
 	// listing read and a login are not the same call, and the timeout, retry,
 	// and breaker settings that suit one are not the ones that suit the other.
-	Identity client.Config `envPrefix:"BFF_WEB_IDENTITY_"`
-	Catalog  client.Config `envPrefix:"BFF_WEB_CATALOG_"`
+	Identity  client.Config `envPrefix:"BFF_WEB_IDENTITY_"`
+	Catalog   client.Config `envPrefix:"BFF_WEB_CATALOG_"`
+	Inventory client.Config `envPrefix:"BFF_WEB_INVENTORY_"`
 
 	// RequestTimeout is this tier's share of the cascading budget — Kong 5s,
 	// here, downstream 300ms — and it bounds every fan-out call a request makes,

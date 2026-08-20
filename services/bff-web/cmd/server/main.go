@@ -53,11 +53,12 @@ func run() error {
 	// down at this moment costs nothing at startup — its first calls fail with
 	// Unavailable, which is what the retry and the breaker are for.
 	conns := bootstrap.Conns{
-		Identity: client.MustDial(cfg.Identity, client.WithLogger(log)),
-		Catalog:  client.MustDial(cfg.Catalog, client.WithLogger(log)),
+		Identity:  client.MustDial(cfg.Identity, client.WithLogger(log)),
+		Catalog:   client.MustDial(cfg.Catalog, client.WithLogger(log)),
+		Inventory: client.MustDial(cfg.Inventory, client.WithLogger(log)),
 	}
 
-	// Deliberately no readiness check on identity or catalog.
+	// Deliberately no readiness check on any of them.
 	//
 	// A dependency belongs in readiness when this pod cannot serve without it.
 	// These can: an unreachable service comes back as a 503 carrying a reason
@@ -76,7 +77,7 @@ func run() error {
 	// Serve has returned: the connections have to outlive the requests still
 	// draining, and telemetry has to outlive both, or the last spans before a
 	// shutdown — the interesting ones — are never flushed.
-	closeErr := errors.Join(conns.Identity.Close(), conns.Catalog.Close())
+	closeErr := errors.Join(conns.Identity.Close(), conns.Catalog.Close(), conns.Inventory.Close())
 
 	// ctx is already cancelled by the time this runs, and Shutdown given a
 	// cancelled context skips the flush it exists to perform.
