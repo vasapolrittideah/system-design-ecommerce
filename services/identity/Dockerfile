@@ -7,7 +7,15 @@
 # ------------------------------------------------------------------------------
 # build — every cmd/ in this service, compiled once
 # ------------------------------------------------------------------------------
-FROM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+
+# Set by buildx from --platform, and declared here so the RUNs below can read
+# them. The build stage deliberately stays on the builder's own architecture
+# and cross-compiles instead, which is what keeps an image built for two
+# architectures from costing two emulated compiles — Go needs nothing but
+# these two variables to do it.
+ARG TARGETOS
+ARG TARGETARCH
 
 # Must match GOOSE_VERSION in the Makefile. Both the Makefile and the Tiltfile
 # pass it as a build arg, so the default here is only what a bare `docker build`
@@ -31,14 +39,25 @@ COPY services/identity/ ./services/identity/
 # name a directory that exists on nobody's machine.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags='-s -w' \
       -o /out/ ./services/identity/cmd/...
 
 # Installed here rather than in the migrate stage so that stage needs no Go
 # toolchain and stays a few megabytes.
+#
+# Built in a throwaway module rather than with `go install pkg@version`, which
+# is shorter but has nowhere to put a cross-compiled binary that the COPY below
+# can name: it refuses to run at all with GOBIN set, and without GOBIN it
+# writes to an architecture-suffixed directory that exists only when the target
+# differs from the builder.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go install -trimpath github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+    mkdir /goose && cd /goose && go mod init goose >/dev/null && \
+    go get github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION} && \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags='-s -w' -o /tools/goose \
+      github.com/pressly/goose/v3/cmd/goose
 
 # ------------------------------------------------------------------------------
 # server — the gRPC server, and every other binary this service ships
@@ -72,7 +91,7 @@ FROM alpine:3.22 AS migrate
 
 RUN apk add --no-cache ca-certificates
 
-COPY --from=build /go/bin/goose /usr/local/bin/goose
+COPY --from=build /tools/goose /usr/local/bin/goose
 COPY services/identity/db/migrations/ /migrations/
 
 USER 65532:65532

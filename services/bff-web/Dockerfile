@@ -11,7 +11,15 @@
 # ------------------------------------------------------------------------------
 # build
 # ------------------------------------------------------------------------------
-FROM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+
+# Set by buildx from --platform, and declared here so the RUNs below can read
+# them. The build stage deliberately stays on the builder's own architecture
+# and cross-compiles instead, which is what keeps an image built for two
+# architectures from costing two emulated compiles — Go needs nothing but
+# these two variables to do it.
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -30,7 +38,8 @@ COPY services/bff-web/ ./services/bff-web/
 # name a directory that exists on nobody's machine.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags='-s -w' \
       -o /out/ ./services/bff-web/cmd/...
 
 # ------------------------------------------------------------------------------
