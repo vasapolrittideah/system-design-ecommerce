@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# inventory, deployed somewhere that is not a laptop.
+#
+# What makes this overlay worth having is mostly what is absent from it. There
+# is no patch lowering the CPU request so that several services fit on one
+# machine, and no line turning on gRPC reflection or console logs — so base
+# gets deployed as written, and any value base holds that is quietly wrong
+# outside a laptop fails here rather than in the first real environment.
+#
+# CI applies it to a k3d cluster it creates and throws away, which is what
+# keeps it from drifting: an overlay nothing runs is a file, not an
+# environment. The same overlay is what points at a real host later, and two
+# things have to change first — an image reference that is a digest from a
+# registry rather than a tag imported into the cluster, and the Secret below.
+namespace: ecommerce
+
+resources:
+  - ../../../base/inventory
+
+# The same Postgres instance local runs. A managed database would drop this and
+# change INVENTORY_DB_HOST alone.
+components:
+  - ../../../components/inventory-postgres
+
+configMapGenerator:
+  - name: inventory-config
+    behavior: merge
+    envs:
+      - config.env
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+# A literal, and it must not survive contact with a real host: anything that
+# can read this repository can read this password. It is here because CI's
+# cluster lives for the length of one job and has no secret store to read from.
+# Pointing this overlay at a durable environment means replacing this generator
+# with an External Secrets reference, not editing the string.
+secretGenerator:
+  - name: inventory-secret
+    literals:
+      - INVENTORY_DB_PASSWORD=insecure-staging-only

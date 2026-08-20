@@ -283,10 +283,11 @@ if [[ "$status" == "401" ]]; then
     fail "the token identity just signed was rejected as invalid (401)" \
         "identity signed it with its private key and bff-web could not verify" \
         "it with its public one, so the two are not a pair." \
-        "Both are written by one command into two overlays:" \
-        "  deploy/k8s/overlays/local/identity/jwt-private.pem" \
-        "  deploy/k8s/overlays/local/bff-web/jwt-public.pem" \
-        "Fix: make keys && make deploy SVC=identity && make deploy SVC=bff-web"
+        "Both are written by one command into the overlay being deployed:" \
+        "  deploy/k8s/overlays/<env>/identity/jwt-private.pem" \
+        "  deploy/k8s/overlays/<env>/bff-web/jwt-public.pem" \
+        "Fix: make keys && make deploy SVC=identity && make deploy SVC=bff-web" \
+        "     — adding OVERLAY=staging to each for the staging overlay"
 fi
 [[ "$status" == "200" ]] || fail "expected 200, got ${status}"
 

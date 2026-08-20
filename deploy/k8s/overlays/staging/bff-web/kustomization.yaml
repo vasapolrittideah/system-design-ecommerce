@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# bff-web, deployed somewhere that is not a laptop.
+#
+# What makes this overlay worth having is mostly what is absent from it. There
+# is no patch lowering the CPU request so that several services fit on one
+# machine, no console logging, and above all no line sampling every trace: this
+# process is where a trace begins, so the ratio it runs with decides how many
+# traces the whole system has, and local's 1.0 is a laptop's answer to that.
+# Leaving base's 0.1 in place is most of what separates a deployment shaped
+# like production from a demonstration of one.
+#
+# CI applies it to a k3d cluster it creates and throws away, which is what
+# keeps it from drifting: an overlay nothing runs is a file, not an
+# environment. The same overlay is what points at a real host later, and one
+# thing has to change first — an image reference that is a digest from a
+# registry rather than a tag imported into the cluster. This service holds no
+# Secret of its own: a public verification key is all the credential it has.
+namespace: ecommerce
+
+resources:
+  - ../../../base/bff-web
+
+# The verification key, as a file rather than a config.env line because a PEM
+# does not fit on one. `make keys OVERLAY=staging` writes identity's private
+# half and copies the public half here.
+configMapGenerator:
+  - name: bff-web-config
+    behavior: merge
+    envs:
+      - config.env
+    files:
+      - BFF_WEB_JWT_PUBLIC_KEY=jwt-public.pem
+
+generatorOptions:
+  disableNameSuffixHash: true
