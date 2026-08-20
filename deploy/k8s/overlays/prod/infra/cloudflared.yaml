@@ -1,0 +1,49 @@
+# The tunnel, as cloudflared reads it. Mounted as config.yaml.
+#
+# It is in the overlay rather than in components/cloudflared because every line
+# names this deployment: one tunnel in one Cloudflare account, answering for one
+# hostname. The component describes how cloudflared runs; this says what it is.
+#
+# Setting it up, once, on the operator's machine:
+#
+#	cloudflared tunnel login                       # browser, picks the zone
+#	cloudflared tunnel create ecommerce-prod       # prints the ID below
+#	cp ~/.cloudflared/<id>.json \
+#	   deploy/k8s/overlays/prod/infra/cloudflared-credentials.json
+#	cloudflared tunnel route dns ecommerce-prod api.vasapol.dev
+#	make seal OVERLAY=prod                         # encrypts the credentials
+#	make up OVERLAY=prod
+#
+# `route dns` is what creates the proxied CNAME from api.vasapol.dev to
+# <id>.cfargotunnel.com. Without it the tunnel registers and stays idle, which
+# looks exactly like a healthy deploy — every pod Ready, no request arriving.
+
+# The tunnel this process is. `cloudflared tunnel create` prints it and names
+# the credentials file after it. Left as a placeholder on purpose: cloudflared
+# refuses to start on it, which is a better first deploy than one that silently
+# serves nothing.
+tunnel: 7473f960-5eae-400a-82e5-b1d86a9bfa29
+
+# Written by `make seal OVERLAY=prod` into the SealedSecret beside this file,
+# decrypted by the controller into the Secret the component mounts here.
+credentials-file: /etc/cloudflared/creds/credentials.json
+
+# Everything for this hostname goes to the gateway, and everything else is
+# refused here rather than forwarded. That last rule is the one that matters:
+# without it cloudflared answers a request for any other hostname pointed at
+# this tunnel by proxying it somewhere, and the whole reason the gateway is the
+# only in-cluster destination — rate limits, the body cap, the correlation ID —
+# would depend on nobody adding a second entry.
+#
+# The Service, not a pod: Kong runs one replica and speaks HTTP, so there is no
+# gRPC connection to pin and nothing to balance client-side. Port 80 is the
+# Service's; the NetworkPolicy in the component names 8000, which is what the
+# packet carries after kube-proxy has rewritten it.
+#
+# No TLS anywhere below this line. It was terminated at Cloudflare's edge, and
+# from there to the gateway is the pod network — the same plaintext east-west
+# traffic every gRPC call in this cluster already is, for the same reason.
+ingress:
+  - hostname: api.vasapol.dev
+    service: http://kong.ecommerce.svc.cluster.local:80
+  - service: http_status:404

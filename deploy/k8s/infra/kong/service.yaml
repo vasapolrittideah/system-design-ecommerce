@@ -2,7 +2,9 @@
 #
 # type: LoadBalancer, which k3s answers with its built-in servicelb: it binds
 # ports 80 and 443 on every node, and k3d forwards the host's 8000 and 8443 to
-# them. Those two mappings were declared at cluster creation because k3d cannot
+# them. overlays/prod/infra patches this to ClusterIP, where binding a port on
+# the node would publish the gateway on the public IP beside the tunnel that is
+# supposed to be the only way in. Those two mappings were declared at cluster creation because k3d cannot
 # add one to a running cluster — see the note in `make cluster-create`.
 #
 # The status port is deliberately absent. Probes reach it on the pod, and a

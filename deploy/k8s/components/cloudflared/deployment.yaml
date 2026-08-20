@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  labels:
+    app.kubernetes.io/name: cloudflared
+    # Spelled out here rather than inherited: the labels transformer in
+    # deploy/k8s/infra/kustomization.yaml covers the resources that
+    # kustomization declares, and a component included by the overlay above it
+    # is not one of them. `make up` waits on every infra Deployment by this
+    # label, so a workload without it is one the deploy does not wait for.
+    app.kubernetes.io/part-of: ecommerce
+    app.kubernetes.io/component: infra
+  annotations:
+    # Both the tunnel config and the credentials are read once at startup.
+    # Without this, a hostname added to the ingress list or a rotated
+    # credential applies to nothing until somebody deletes a pod — and a
+    # rotation that reports success and changes nothing is the failure this
+    # annotation exists for everywhere else in this repo.
+    reloader.stakater.com/auto: "true"
+spec:
+  # Two, because this is the only path into the cluster and a rollout of it
+  # would otherwise be an outage. Each replica registers its own connections to
+  # the edge and Cloudflare spreads requests across them, so the second one is
+  # carrying traffic rather than waiting to.
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared
+    spec:
+      # cloudflared stops accepting new requests on SIGTERM and drains what is
+      # in flight. Nothing routes to these pods from inside the cluster, so the
+      # preStop sleep every other workload here carries would protect nothing —
+      # the caller that has to be told is Cloudflare's edge, and the tunnel
+      # unregistering is what tells it.
+      terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.8.2
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config/config.yaml
+            # A flag rather than a `metrics:` line in the tunnel config, and
+            # the config file is in the overlay while the port, the probes, and
+            # the scrape target are all here. Split across the two, an overlay
+            # that forgot the line would leave cloudflared listening on a
+            # random loopback port, every probe failing, and nothing saying
+            # which of the two files was wrong.
+            - --metrics
+            - 0.0.0.0:2000
+            # The binary can replace itself and restart, which in a container
+            # means a process that no longer matches its image tag and a
+            # version nobody can read off the manifest. Upgrading is a bump
+            # here, like every other pinned image in this repo.
+            - --no-autoupdate
+            - run
+          ports:
+            # Named `admin` on purpose: Prometheus discovers a target by that
+            # port name rather than by an annotation, so the tunnel's own
+            # metrics — how many connections are registered, and to which edge
+            # locations — are scraped for following the same layout every Go
+            # service here does.
+            #
+            # It also serves /debug/pprof, which is the other reason nothing
+            # routes to this port and the policy beside this file lets only the
+            # scraper reach it.
+            - name: admin
+              containerPort: 2000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config
+              readOnly: true
+            - name: credentials
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+          # /ready answers 200 once at least one connection to the edge is
+          # registered, which is the only useful statement about a tunnel: the
+          # process being up says nothing about whether traffic can arrive.
+          # Nothing in the cluster routes here, so what this gates is the
+          # rollout — maxUnavailable: 0 above will not retire the old replica
+          # until the new one is actually carrying connections.
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: admin
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: admin
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # The process and nothing else, as everywhere else here. A tunnel that
+          # cannot reach the edge is a network problem, and restarting the pod
+          # on it turns a Cloudflare incident into a crash-loop.
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: admin
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              # Memory only. Every request into this cluster passes through
+              # here, so throttling it would add latency to all of them at once
+              # — the same reason Kong carries no CPU limit either.
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared-config
+        # The tunnel's private credentials, which is what proves to Cloudflare
+        # that this process is that tunnel. Committed encrypted as a
+        # SealedSecret in the overlay; decrypted into this Secret by the
+        # controller in the cluster.
+        - name: credentials
+          secret:
+            secretName: cloudflared-credentials

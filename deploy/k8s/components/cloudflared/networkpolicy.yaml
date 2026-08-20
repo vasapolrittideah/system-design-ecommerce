@@ -1,0 +1,82 @@
+# What the tunnel may reach, which is the rule this file exists for: the
+# gateway, and the internet on the two ports that reach Cloudflare's edge.
+#
+# The egress list is the interesting half. cloudflared is the one pod here that
+# can talk to the outside world and the one pod that receives traffic from it,
+# so an ingress rule added to its config pointing straight at identity:50051
+# would publish a service on the internet with nothing routed through Kong,
+# past the rate limits, the body cap, and the correlation ID. It fails to
+# connect instead. This is the same rule bff-web's egress list carries — who
+# may call whom is enforced on the caller — read from the other end.
+#
+# Ingress is only the scraper. Nothing in the cluster calls a tunnel; requests
+# arrive on a connection this pod opened, which no policy governs.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cloudflared
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 2000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The gateway, and nothing else in this namespace. 8000 is the container
+    # port rather than the 80 on Kong's Service: a policy is evaluated on the
+    # packet after kube-proxy has already rewritten the destination, and a
+    # NetworkPolicy port is a number rather than a Service's port name.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kong
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Cloudflare's edge. 7844 is where a tunnel registers — UDP first, since
+    # QUIC is the default transport, with the TCP entry for the http2 fallback
+    # a network that blocks UDP forces it onto. 443 is the API this reaches
+    # before any tunnel exists, to fetch what it needs to register at all.
+    #
+    # The exceptions are what keep this from being a hole back into the
+    # cluster: without them, "the internet on 443" includes the Kubernetes API
+    # service on 10.43.0.1:443, and the one pod reachable from outside would be
+    # the one that could also talk to the control plane. The two CIDRs are
+    # k3s's defaults for pods and Services; a cluster that moved them leaves
+    # these entries matching nothing, which is wider than intended rather than
+    # broken, and is worth checking on any cluster that is not k3s.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.42.0.0/16
+              - 10.43.0.0/16
+      ports:
+        - protocol: UDP
+          port: 7844
+        - protocol: TCP
+          port: 7844
+        - protocol: TCP
+          port: 443

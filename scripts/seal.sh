@@ -4,13 +4,15 @@
 #
 #	make seal OVERLAY=prod
 #
-# What it produces, one per service that owns a database:
+# What it produces, one per service that owns a database, plus one for the
+# tunnel where the overlay runs one:
 #
 #	deploy/k8s/overlays/<overlay>/<svc>/sealedsecret.yaml
+#	deploy/k8s/overlays/<overlay>/infra/sealedsecret.yaml
 #
 # The overlay lists that file as a resource, the controller in the cluster
-# decrypts it into the plain `<svc>-secret` that base mounts with envFrom, and
-# nothing readable ever reaches git.
+# decrypts it into the plain Secret the workload mounts, and nothing readable
+# ever reaches git.
 #
 # Three things about it are easy to get wrong, and each fails in its own way:
 #
@@ -43,6 +45,26 @@ overlay_dir="${K8S_DIR}/overlays/${OVERLAY}"
 
 info() { printf '  %s\n' "$*"; }
 wrote() { printf '\033[32m  wrote\033[0m %s\n' "$*"; }
+
+# seal_secret NAME OUT [kubectl-create-secret args...]
+#
+# --dry-run=client, so the readable Secret is a stream between two processes and
+# never an object in the cluster or a file on disk.
+seal_secret() {
+    local name="$1" out="$2"
+    shift 2
+
+    kubectl create secret generic "$name" \
+        --namespace "$NAMESPACE" \
+        --dry-run=client -o yaml \
+        "$@" |
+        kubeseal --format yaml \
+            --controller-namespace kube-system \
+            --controller-name sealed-secrets-controller \
+            >"$out"
+
+    wrote "$out"
+}
 
 # The controller has to be reachable, because kubeseal fetches its public
 # certificate before it can encrypt anything. Checking here turns a wall of Go
@@ -90,18 +112,31 @@ for dir in "$overlay_dir"/*/; do
         args+=(--from-file="${prefix}_JWT_PRIVATE_KEY=${key}")
     fi
 
-    # --dry-run=client, so the readable Secret is a stream between two processes
-    # and never an object in the cluster or a file on disk.
-    kubectl create secret generic "${svc}-secret" \
-        --namespace "$NAMESPACE" \
-        --dry-run=client -o yaml \
-        "${args[@]}" |
-        kubeseal --format yaml \
-            --controller-namespace kube-system \
-            --controller-name sealed-secrets-controller \
-            >"${dir}sealedsecret.yaml"
-
-    wrote "${dir}sealedsecret.yaml"
+    seal_secret "${svc}-secret" "${dir}sealedsecret.yaml" "${args[@]}"
 done
+
+# The tunnel's credentials, for an overlay whose cluster is reachable from the
+# internet. They are not generated here the way a database password is: the
+# file is written by `cloudflared tunnel create`, which is what registers the
+# tunnel with Cloudflare in the first place, and there is nothing this script
+# could invent that the edge would recognise.
+infra_dir="${overlay_dir}/infra"
+credentials="${infra_dir}/cloudflared-credentials.json"
+
+if [[ -f "$credentials" ]]; then
+    seal_secret cloudflared-credentials "${infra_dir}/sealedsecret.yaml" \
+        --from-file="credentials.json=${credentials}"
+elif grep -q 'components/cloudflared' "${infra_dir}/kustomization.yaml" 2>/dev/null; then
+    # The overlay runs a tunnel and the credentials for it are missing, which
+    # would otherwise surface as `make up OVERLAY=${OVERLAY}` failing on a
+    # sealedsecret.yaml nobody wrote.
+    echo "${credentials} is missing, and this overlay includes the cloudflared component." >&2
+    echo "Create the tunnel first, then copy its credentials here:" >&2
+    echo >&2
+    echo "    cloudflared tunnel login" >&2
+    echo "    cloudflared tunnel create ecommerce-${OVERLAY}" >&2
+    echo "    cp ~/.cloudflared/<id>.json ${credentials}" >&2
+    exit 1
+fi
 
 printf '\ncommit the sealedsecret.yaml files — the material beside them stays out of git.\n'

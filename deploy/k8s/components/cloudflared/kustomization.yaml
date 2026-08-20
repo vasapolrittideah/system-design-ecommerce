@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# The tunnel that puts this cluster on the internet, for an infra overlay whose
+# cluster is actually reachable from it.
+#
+# A component rather than one more directory under infra/, for the same reason
+# a service's Postgres instance is one: it is not shared infrastructure but a
+# choice a particular deployment makes. `local` and `staging` are k3d clusters
+# on the machine doing the deploy, reached on localhost through k3d's own port
+# mappings, and a tunnel in front of either would be a second front door with
+# nothing behind it. Only `prod` includes this.
+#
+# What it deliberately does not hold is which hostnames the tunnel answers for,
+# or the credentials that let it register. Both name one Cloudflare account and
+# one tunnel, so they come from the including overlay — cloudflared-config as a
+# ConfigMap it generates, cloudflared-credentials as a Secret its SealedSecret
+# decrypts into. This file is the arrangement; the overlay is the deployment.
+#
+# The tunnel dials out, which is the whole point: no port is published on the
+# host, no certificate is renewed here, and the cluster's only inbound path is
+# a connection it opened itself. TLS is terminated at Cloudflare's edge, so
+# everything from cloudflared inward is plaintext — the same trade east-west
+# gRPC already makes, for the same reason.
+resources:
+  - deployment.yaml
+  - networkpolicy.yaml

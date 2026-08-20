@@ -1,6 +1,11 @@
 # The one workload in the namespace that accepts traffic from outside it, which
 # is what the empty `from` below says: the proxy ports are the front door and a
-# request arriving there has not been anywhere else yet.
+# request arriving there has not been anywhere else yet. There is no pod to
+# select on, because a packet off the k3d load balancer has none behind it.
+#
+# overlays/prod/infra replaces this list, because there the front door is a
+# cloudflared pod and the rule can name it — which is also what makes trusting
+# X-Forwarded-For safe on that cluster.
 #
 # That leaves the gateway reachable from inside the namespace as well, and the
 # rule against calling it from inside is not enforced here on purpose. It is a

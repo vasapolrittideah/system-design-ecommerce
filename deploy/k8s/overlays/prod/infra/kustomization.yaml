@@ -1,0 +1,66 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The shared infrastructure, on the cluster that actually serves.
+#
+# It differs from staging in one thing and one only: this cluster is reachable
+# from the internet, and the way it is reachable is a Cloudflare tunnel rather
+# than a port on a host. That single fact is what the four files beside this
+# one are — the tunnel, the gateway no longer publishing itself, the client
+# address arriving in a header, and the policy that makes believing that header
+# safe.
+#
+# `make up OVERLAY=prod` is how it lands. The sealed-secrets controller is
+# applied by that target before this, because the credentials below cannot be
+# decrypted until it holds the key.
+namespace: ecommerce
+
+resources:
+  - ../../../infra
+  # Written by `make seal OVERLAY=prod` from the credentials file beside it,
+  # which stays out of git. See the note at the bottom of this file.
+  - sealedsecret.yaml
+
+# The tunnel. Only this overlay includes it: local and staging are k3d clusters
+# on the machine doing the deploy, and a tunnel in front of either would be a
+# second front door with nothing behind it.
+components:
+  - ../../../components/cloudflared
+
+configMapGenerator:
+  - name: kong-config
+    behavior: merge
+    envs:
+      - config.env
+  # The key is what cloudflared expects to find at the path the component
+  # mounts; the filename is what a person reading this directory needs.
+  - name: cloudflared-config
+    files:
+      - config.yaml=cloudflared.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+patches:
+  - path: patch-kong-service.yaml
+  - path: patch-kong-deployment.yaml
+  - path: patch-kong-networkpolicy.yaml
+
+# There is no secretGenerator here, for the same reason the service overlays in
+# this directory have none: a credential that reaches this cluster is a
+# credential that faces the internet, and one committed as a literal to a
+# public repository is not one.
+#
+# `make seal OVERLAY=prod` encrypts deploy/k8s/overlays/prod/infra/
+# cloudflared-credentials.json into sealedsecret.yaml above, and the controller
+# in the cluster decrypts it into the `cloudflared-credentials` Secret the
+# component mounts. The readable JSON stays on the operator's machine and is
+# gitignored; it is what re-sealing needs after a controller is reinstalled
+# with a new key. Losing it means creating a new tunnel and repointing DNS,
+# rather than re-encrypting what already works.
+#
+# A SealedSecret can be read only by the cluster it was sealed against, and the
+# encryption is scoped to namespace and name together. Sealing on a laptop
+# against the local k3d cluster and applying the result here produces a
+# resource this controller cannot decrypt — and that is the one failure among
+# these that does not resolve itself on a retry.

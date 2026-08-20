@@ -1,0 +1,41 @@
+# What moves when TLS moves to Cloudflare.
+#
+# Two things, and the second is the one that is easy to miss. The 8443 listener
+# goes, because the certificate Kong generates for it is self-signed and there
+# is nothing left to reach it. And the client address has to be recovered from
+# a header, because every request now arrives from a cloudflared pod: without
+# this, `limit_by: ip` counts two addresses for the whole internet and the rate
+# limits in kong.yml become one shared bucket that any single client can empty
+# for everybody.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+spec:
+  template:
+    spec:
+      containers:
+        - name: kong
+          ports:
+            - containerPort: 8443
+              $patch: delete
+          env:
+            - name: KONG_PROXY_LISTEN
+              value: "0.0.0.0:8000"
+            # Trusting a header means trusting whoever set it, and this says
+            # every peer may. It is safe here for one reason only, stated in a
+            # different file: the NetworkPolicy beside this patch lets nothing
+            # but cloudflared open a connection to 8000, and Cloudflare's edge
+            # appends the real client address to X-Forwarded-For itself.
+            # Relax that policy and this line becomes a rate limit anyone can
+            # spoof their way out of.
+            - name: KONG_TRUSTED_IPS
+              value: "0.0.0.0/0,::/0"
+            - name: KONG_REAL_IP_HEADER
+              value: X-Forwarded-For
+            # Off, so nginx takes the last address in the header rather than
+            # walking backwards through it. Cloudflare appends the connecting
+            # address last, so the last entry is the client and anything a
+            # caller put there itself stays in front of it, unread.
+            - name: KONG_REAL_IP_RECURSIVE
+              value: "off"

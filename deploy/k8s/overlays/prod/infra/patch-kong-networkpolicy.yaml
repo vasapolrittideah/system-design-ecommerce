@@ -1,0 +1,32 @@
+# Who may reach the gateway once it is not the front door itself.
+#
+# In base this rule has an empty `from`: Kong is where a request from outside
+# the cluster first lands, and the k3d load balancer's packets have no pod
+# behind them to select on. Here the front door is cloudflared, so the same
+# statement has a subject — and it is what makes KONG_TRUSTED_IPS in the
+# Deployment patch safe to set, since a spoofed X-Forwarded-For would need a
+# connection this refuses.
+#
+# The list replaces base's rather than adding to it. NetworkPolicy ingress is
+# an atomic list in the API, so a patch that names it takes the whole thing —
+# which is why the scraper's rule is repeated below rather than inherited.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kong
+spec:
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflared
+      ports:
+        - protocol: TCP
+          port: 8000
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8100
