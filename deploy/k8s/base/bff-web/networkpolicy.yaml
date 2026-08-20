@@ -68,6 +68,13 @@ spec:
     - to:
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: inventory
+      ports:
+        - protocol: TCP
+          port: 50051
+    - to:
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/name: jaeger
       ports:
         - protocol: TCP

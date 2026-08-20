@@ -23,9 +23,9 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # No application ingress rule yet, and that is the honest state of this
-    # service rather than an omission: nothing calls it. The order service is
-    # what will, and its rule arrives with it —
+    # bff-web reads stock counts for a product page. It is the only caller so
+    # far; the order service is what will reserve, commit, and release, and its
+    # rule arrives with it —
     #
     #     - from:
     #         - podSelector:
@@ -35,13 +35,18 @@ spec:
     #         - protocol: TCP
     #           port: 50051
     #
-    # Until then the gRPC port is reachable from the node — probes and
-    # `kubectl port-forward` are not filtered — which is how grpcurl reaches it
-    # locally, and from nothing inside the namespace. Kong is deliberately
-    # absent and will stay so: north-south traffic terminates at a BFF, and a
-    # gateway that could reach a service directly is the shape this rule exists
-    # to prevent.
-    #
+    # Kong is deliberately absent and will stay so: north-south traffic
+    # terminates at a BFF, and a gateway that could reach a service directly is
+    # the shape this rule exists to prevent. The gRPC port stays reachable from
+    # the node as well — probes and `kubectl port-forward` are not filtered,
+    # which is how grpcurl reaches it locally.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bff-web
+      ports:
+        - protocol: TCP
+          port: 50051
     # The admin port carries /metrics, /healthz, and /readyz. Only the scraper
     # has a reason to reach it from another pod.
     - from:
