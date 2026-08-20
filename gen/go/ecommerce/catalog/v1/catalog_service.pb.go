@@ -24,8 +24,16 @@ const (
 )
 
 type GetProductRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// Unset means ACTIVE only, exactly as it does on a listing.
+	//
+	// A read by id has to be told, where a listing could have been left to its
+	// own default: there is no page to scope it and no filter a caller forgot,
+	// only an id somebody already has. Answering with whatever state that id is
+	// in would put an unfinished draft on a storefront for anyone who guessed a
+	// UUID, and the first sign of it would be the draft on a screen.
+	Status        ProductStatus `protobuf:"varint,2,opt,name=status,proto3,enum=ecommerce.catalog.v1.ProductStatus" json:"status,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -65,6 +73,13 @@ func (x *GetProductRequest) GetId() string {
 		return x.Id
 	}
 	return ""
+}
+
+func (x *GetProductRequest) GetStatus() ProductStatus {
+	if x != nil {
+		return x.Status
+	}
+	return ProductStatus_PRODUCT_STATUS_UNSPECIFIED
 }
 
 type GetProductResponse struct {
@@ -1022,9 +1037,10 @@ var File_ecommerce_catalog_v1_catalog_service_proto protoreflect.FileDescriptor
 
 const file_ecommerce_catalog_v1_catalog_service_proto_rawDesc = "" +
 	"\n" +
-	"*ecommerce/catalog/v1/catalog_service.proto\x12\x14ecommerce.catalog.v1\x1a\x1bbuf/validate/validate.proto\x1a\"ecommerce/catalog/v1/product.proto\x1a\x1fecommerce/common/v1/money.proto\"-\n" +
+	"*ecommerce/catalog/v1/catalog_service.proto\x12\x14ecommerce.catalog.v1\x1a\x1bbuf/validate/validate.proto\x1a\"ecommerce/catalog/v1/product.proto\x1a\x1fecommerce/common/v1/money.proto\"t\n" +
 	"\x11GetProductRequest\x12\x18\n" +
-	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"M\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12E\n" +
+	"\x06status\x18\x02 \x01(\x0e2#.ecommerce.catalog.v1.ProductStatusB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06status\"M\n" +
 	"\x12GetProductResponse\x127\n" +
 	"\aproduct\x18\x01 \x01(\v2\x1d.ecommerce.catalog.v1.ProductR\aproduct\"@\n" +
 	"\x17GetProductsByIDsRequest\x12%\n" +
@@ -1143,50 +1159,51 @@ var file_ecommerce_catalog_v1_catalog_service_proto_goTypes = []any{
 	(*ArchiveProductResponse)(nil),   // 18: ecommerce.catalog.v1.ArchiveProductResponse
 	nil,                              // 19: ecommerce.catalog.v1.NewVariant.AttributesEntry
 	nil,                              // 20: ecommerce.catalog.v1.UpdateVariantRequest.AttributesEntry
-	(*Product)(nil),                  // 21: ecommerce.catalog.v1.Product
-	(ProductStatus)(0),               // 22: ecommerce.catalog.v1.ProductStatus
+	(ProductStatus)(0),               // 21: ecommerce.catalog.v1.ProductStatus
+	(*Product)(nil),                  // 22: ecommerce.catalog.v1.Product
 	(*v1.Money)(nil),                 // 23: ecommerce.common.v1.Money
 }
 var file_ecommerce_catalog_v1_catalog_service_proto_depIdxs = []int32{
-	21, // 0: ecommerce.catalog.v1.GetProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	21, // 1: ecommerce.catalog.v1.GetProductsByIDsResponse.products:type_name -> ecommerce.catalog.v1.Product
-	22, // 2: ecommerce.catalog.v1.ListProductsRequest.status:type_name -> ecommerce.catalog.v1.ProductStatus
-	21, // 3: ecommerce.catalog.v1.ListProductsResponse.products:type_name -> ecommerce.catalog.v1.Product
-	23, // 4: ecommerce.catalog.v1.NewVariant.price:type_name -> ecommerce.common.v1.Money
-	19, // 5: ecommerce.catalog.v1.NewVariant.attributes:type_name -> ecommerce.catalog.v1.NewVariant.AttributesEntry
-	6,  // 6: ecommerce.catalog.v1.CreateProductRequest.variants:type_name -> ecommerce.catalog.v1.NewVariant
-	21, // 7: ecommerce.catalog.v1.CreateProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	21, // 8: ecommerce.catalog.v1.UpdateProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	6,  // 9: ecommerce.catalog.v1.AddVariantRequest.variant:type_name -> ecommerce.catalog.v1.NewVariant
-	21, // 10: ecommerce.catalog.v1.AddVariantResponse.product:type_name -> ecommerce.catalog.v1.Product
-	23, // 11: ecommerce.catalog.v1.UpdateVariantRequest.price:type_name -> ecommerce.common.v1.Money
-	20, // 12: ecommerce.catalog.v1.UpdateVariantRequest.attributes:type_name -> ecommerce.catalog.v1.UpdateVariantRequest.AttributesEntry
-	21, // 13: ecommerce.catalog.v1.UpdateVariantResponse.product:type_name -> ecommerce.catalog.v1.Product
-	21, // 14: ecommerce.catalog.v1.PublishProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	21, // 15: ecommerce.catalog.v1.ArchiveProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	0,  // 16: ecommerce.catalog.v1.CatalogService.GetProduct:input_type -> ecommerce.catalog.v1.GetProductRequest
-	2,  // 17: ecommerce.catalog.v1.CatalogService.GetProductsByIDs:input_type -> ecommerce.catalog.v1.GetProductsByIDsRequest
-	4,  // 18: ecommerce.catalog.v1.CatalogService.ListProducts:input_type -> ecommerce.catalog.v1.ListProductsRequest
-	7,  // 19: ecommerce.catalog.v1.CatalogService.CreateProduct:input_type -> ecommerce.catalog.v1.CreateProductRequest
-	9,  // 20: ecommerce.catalog.v1.CatalogService.UpdateProduct:input_type -> ecommerce.catalog.v1.UpdateProductRequest
-	11, // 21: ecommerce.catalog.v1.CatalogService.AddVariant:input_type -> ecommerce.catalog.v1.AddVariantRequest
-	13, // 22: ecommerce.catalog.v1.CatalogService.UpdateVariant:input_type -> ecommerce.catalog.v1.UpdateVariantRequest
-	15, // 23: ecommerce.catalog.v1.CatalogService.PublishProduct:input_type -> ecommerce.catalog.v1.PublishProductRequest
-	17, // 24: ecommerce.catalog.v1.CatalogService.ArchiveProduct:input_type -> ecommerce.catalog.v1.ArchiveProductRequest
-	1,  // 25: ecommerce.catalog.v1.CatalogService.GetProduct:output_type -> ecommerce.catalog.v1.GetProductResponse
-	3,  // 26: ecommerce.catalog.v1.CatalogService.GetProductsByIDs:output_type -> ecommerce.catalog.v1.GetProductsByIDsResponse
-	5,  // 27: ecommerce.catalog.v1.CatalogService.ListProducts:output_type -> ecommerce.catalog.v1.ListProductsResponse
-	8,  // 28: ecommerce.catalog.v1.CatalogService.CreateProduct:output_type -> ecommerce.catalog.v1.CreateProductResponse
-	10, // 29: ecommerce.catalog.v1.CatalogService.UpdateProduct:output_type -> ecommerce.catalog.v1.UpdateProductResponse
-	12, // 30: ecommerce.catalog.v1.CatalogService.AddVariant:output_type -> ecommerce.catalog.v1.AddVariantResponse
-	14, // 31: ecommerce.catalog.v1.CatalogService.UpdateVariant:output_type -> ecommerce.catalog.v1.UpdateVariantResponse
-	16, // 32: ecommerce.catalog.v1.CatalogService.PublishProduct:output_type -> ecommerce.catalog.v1.PublishProductResponse
-	18, // 33: ecommerce.catalog.v1.CatalogService.ArchiveProduct:output_type -> ecommerce.catalog.v1.ArchiveProductResponse
-	25, // [25:34] is the sub-list for method output_type
-	16, // [16:25] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	21, // 0: ecommerce.catalog.v1.GetProductRequest.status:type_name -> ecommerce.catalog.v1.ProductStatus
+	22, // 1: ecommerce.catalog.v1.GetProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	22, // 2: ecommerce.catalog.v1.GetProductsByIDsResponse.products:type_name -> ecommerce.catalog.v1.Product
+	21, // 3: ecommerce.catalog.v1.ListProductsRequest.status:type_name -> ecommerce.catalog.v1.ProductStatus
+	22, // 4: ecommerce.catalog.v1.ListProductsResponse.products:type_name -> ecommerce.catalog.v1.Product
+	23, // 5: ecommerce.catalog.v1.NewVariant.price:type_name -> ecommerce.common.v1.Money
+	19, // 6: ecommerce.catalog.v1.NewVariant.attributes:type_name -> ecommerce.catalog.v1.NewVariant.AttributesEntry
+	6,  // 7: ecommerce.catalog.v1.CreateProductRequest.variants:type_name -> ecommerce.catalog.v1.NewVariant
+	22, // 8: ecommerce.catalog.v1.CreateProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	22, // 9: ecommerce.catalog.v1.UpdateProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	6,  // 10: ecommerce.catalog.v1.AddVariantRequest.variant:type_name -> ecommerce.catalog.v1.NewVariant
+	22, // 11: ecommerce.catalog.v1.AddVariantResponse.product:type_name -> ecommerce.catalog.v1.Product
+	23, // 12: ecommerce.catalog.v1.UpdateVariantRequest.price:type_name -> ecommerce.common.v1.Money
+	20, // 13: ecommerce.catalog.v1.UpdateVariantRequest.attributes:type_name -> ecommerce.catalog.v1.UpdateVariantRequest.AttributesEntry
+	22, // 14: ecommerce.catalog.v1.UpdateVariantResponse.product:type_name -> ecommerce.catalog.v1.Product
+	22, // 15: ecommerce.catalog.v1.PublishProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	22, // 16: ecommerce.catalog.v1.ArchiveProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	0,  // 17: ecommerce.catalog.v1.CatalogService.GetProduct:input_type -> ecommerce.catalog.v1.GetProductRequest
+	2,  // 18: ecommerce.catalog.v1.CatalogService.GetProductsByIDs:input_type -> ecommerce.catalog.v1.GetProductsByIDsRequest
+	4,  // 19: ecommerce.catalog.v1.CatalogService.ListProducts:input_type -> ecommerce.catalog.v1.ListProductsRequest
+	7,  // 20: ecommerce.catalog.v1.CatalogService.CreateProduct:input_type -> ecommerce.catalog.v1.CreateProductRequest
+	9,  // 21: ecommerce.catalog.v1.CatalogService.UpdateProduct:input_type -> ecommerce.catalog.v1.UpdateProductRequest
+	11, // 22: ecommerce.catalog.v1.CatalogService.AddVariant:input_type -> ecommerce.catalog.v1.AddVariantRequest
+	13, // 23: ecommerce.catalog.v1.CatalogService.UpdateVariant:input_type -> ecommerce.catalog.v1.UpdateVariantRequest
+	15, // 24: ecommerce.catalog.v1.CatalogService.PublishProduct:input_type -> ecommerce.catalog.v1.PublishProductRequest
+	17, // 25: ecommerce.catalog.v1.CatalogService.ArchiveProduct:input_type -> ecommerce.catalog.v1.ArchiveProductRequest
+	1,  // 26: ecommerce.catalog.v1.CatalogService.GetProduct:output_type -> ecommerce.catalog.v1.GetProductResponse
+	3,  // 27: ecommerce.catalog.v1.CatalogService.GetProductsByIDs:output_type -> ecommerce.catalog.v1.GetProductsByIDsResponse
+	5,  // 28: ecommerce.catalog.v1.CatalogService.ListProducts:output_type -> ecommerce.catalog.v1.ListProductsResponse
+	8,  // 29: ecommerce.catalog.v1.CatalogService.CreateProduct:output_type -> ecommerce.catalog.v1.CreateProductResponse
+	10, // 30: ecommerce.catalog.v1.CatalogService.UpdateProduct:output_type -> ecommerce.catalog.v1.UpdateProductResponse
+	12, // 31: ecommerce.catalog.v1.CatalogService.AddVariant:output_type -> ecommerce.catalog.v1.AddVariantResponse
+	14, // 32: ecommerce.catalog.v1.CatalogService.UpdateVariant:output_type -> ecommerce.catalog.v1.UpdateVariantResponse
+	16, // 33: ecommerce.catalog.v1.CatalogService.PublishProduct:output_type -> ecommerce.catalog.v1.PublishProductResponse
+	18, // 34: ecommerce.catalog.v1.CatalogService.ArchiveProduct:output_type -> ecommerce.catalog.v1.ArchiveProductResponse
+	26, // [26:35] is the sub-list for method output_type
+	17, // [17:26] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_ecommerce_catalog_v1_catalog_service_proto_init() }

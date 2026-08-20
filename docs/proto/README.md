@@ -344,6 +344,9 @@ this enum only names the states so a caller can read them.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | id | [string](#string) |  |  |
+| status | [ProductStatus](#ecommerce-catalog-v1-ProductStatus) |  | Unset means ACTIVE only, exactly as it does on a listing.
+
+A read by id has to be told, where a listing could have been left to its own default: there is no page to scope it and no filter a caller forgot, only an id somebody already has. Answering with whatever state that id is in would put an unfinished draft on a storefront for anyone who guessed a UUID, and the first sign of it would be the draft on a screen. |
 
 
 
@@ -606,7 +609,7 @@ domain, and a constraint here could only ever repeat the easy half of them.
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
-| GetProduct | [GetProductRequest](#ecommerce-catalog-v1-GetProductRequest) | [GetProductResponse](#ecommerce-catalog-v1-GetProductResponse) | GetProduct reads one product with its variants. |
+| GetProduct | [GetProductRequest](#ecommerce-catalog-v1-GetProductRequest) | [GetProductResponse](#ecommerce-catalog-v1-GetProductResponse) | GetProduct reads one product with its variants, in the state the caller asked for and not found in any other. A storefront that names no state is answered about published products alone. |
 | GetProductsByIDs | [GetProductsByIDsRequest](#ecommerce-catalog-v1-GetProductsByIDsRequest) | [GetProductsByIDsResponse](#ecommerce-catalog-v1-GetProductsByIDsResponse) | GetProductsByIDs reads many. Every service exposes one of these so a BFF can fill a screen without looping single-item calls. |
 | ListProducts | [ListProductsRequest](#ecommerce-catalog-v1-ListProductsRequest) | [ListProductsResponse](#ecommerce-catalog-v1-ListProductsResponse) | ListProducts pages through the catalog, newest first. |
 | CreateProduct | [CreateProductRequest](#ecommerce-catalog-v1-CreateProductRequest) | [CreateProductResponse](#ecommerce-catalog-v1-CreateProductResponse) | CreateProduct creates a product, in draft, optionally with variants.

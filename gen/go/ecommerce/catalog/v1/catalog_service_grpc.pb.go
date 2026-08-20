@@ -51,7 +51,9 @@ const (
 // product is priced in one currency. Those are invariants, they live in the
 // domain, and a constraint here could only ever repeat the easy half of them.
 type CatalogServiceClient interface {
-	// GetProduct reads one product with its variants.
+	// GetProduct reads one product with its variants, in the state the caller
+	// asked for and not found in any other. A storefront that names no state is
+	// answered about published products alone.
 	GetProduct(ctx context.Context, in *GetProductRequest, opts ...grpc.CallOption) (*GetProductResponse, error)
 	// GetProductsByIDs reads many. Every service exposes one of these so a BFF
 	// can fill a screen without looping single-item calls.
@@ -205,7 +207,9 @@ func (c *catalogServiceClient) ArchiveProduct(ctx context.Context, in *ArchivePr
 // product is priced in one currency. Those are invariants, they live in the
 // domain, and a constraint here could only ever repeat the easy half of them.
 type CatalogServiceServer interface {
-	// GetProduct reads one product with its variants.
+	// GetProduct reads one product with its variants, in the state the caller
+	// asked for and not found in any other. A storefront that names no state is
+	// answered about published products alone.
 	GetProduct(context.Context, *GetProductRequest) (*GetProductResponse, error)
 	// GetProductsByIDs reads many. Every service exposes one of these so a BFF
 	// can fill a screen without looping single-item calls.

@@ -23,7 +23,9 @@ import "ecommerce/common/v1/money.proto";
 // product is priced in one currency. Those are invariants, they live in the
 // domain, and a constraint here could only ever repeat the easy half of them.
 service CatalogService {
-  // GetProduct reads one product with its variants.
+  // GetProduct reads one product with its variants, in the state the caller
+  // asked for and not found in any other. A storefront that names no state is
+  // answered about published products alone.
   rpc GetProduct(GetProductRequest) returns (GetProductResponse);
 
   // GetProductsByIDs reads many. Every service exposes one of these so a BFF
@@ -68,6 +70,15 @@ service CatalogService {
 
 message GetProductRequest {
   string id = 1 [(buf.validate.field).string.uuid = true];
+
+  // Unset means ACTIVE only, exactly as it does on a listing.
+  //
+  // A read by id has to be told, where a listing could have been left to its
+  // own default: there is no page to scope it and no filter a caller forgot,
+  // only an id somebody already has. Answering with whatever state that id is
+  // in would put an unfinished draft on a storefront for anyone who guessed a
+  // UUID, and the first sign of it would be the draft on a screen.
+  ProductStatus status = 2 [(buf.validate.field).enum.defined_only = true];
 }
 
 message GetProductResponse {
