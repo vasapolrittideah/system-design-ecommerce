@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# bff-web, on the cluster that actually serves.
+#
+# It differs from staging in one structural way and one only: the images are
+# pulled from a registry by digest-stable tag rather than built on the machine
+# doing the deploy and imported into its cluster. Everything else staging holds
+# holds here, which is the point of having had staging first — base is deployed
+# as written, and this file is short enough to read in one sitting.
+#
+# `make deploy SVC=bff-web OVERLAY=prod BUILD=0` is how it lands. BUILD=0 is not
+# an optimisation: the build path ends in `k3d image import`, which means
+# nothing for a cluster that is not on this machine.
+namespace: ecommerce
+
+resources:
+  - ../../../base/bff-web
+
+# The verification key, as a file rather than a config.env line because a PEM
+# does not fit on one. `make keys OVERLAY=prod` writes identity's private half
+# beside it and copies the public half here.
+configMapGenerator:
+  - name: bff-web-config
+    behavior: merge
+    envs:
+      - config.env
+    files:
+      - BFF_WEB_JWT_PUBLIC_KEY=jwt-public.pem
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+# Published by the `publish` job in CI, which tags every image with the commit
+# that produced it. The tag is a SHA rather than a branch name on purpose: it
+# names one build forever, so what is running here can be read off this file,
+# and a rollback is a change to these four lines rather than a rebuild.
+#
+# Updating it is `kustomize edit set image` in this directory, or editing the
+# tag by hand. Nothing automates it yet — that arrives with the controller that
+# watches this directory.
+images:
+  - name: ecommerce/bff-web
+    newName: ghcr.io/vasapolrittideah/system-design-ecommerce/bff-web
+    newTag: 93f1b260440af66e318ae7569984e10e06033326
