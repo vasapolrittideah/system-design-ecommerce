@@ -25,11 +25,24 @@ MOCKERY_VERSION       ?= v3.7.3
 GOOSE_VERSION         ?= v3.27.3
 GOLANGCI_LINT_VERSION ?= v2.12.2
 
+# Not installed by `make tools` — k3d ships its own installer and is expected to
+# come from brew on a laptop. Pinned here anyway so CI, which does install it,
+# reads the version from the same place everything else does.
+K3D_VERSION ?= v5.9.0
+
 # ------------------------------------------------------------------------------
 # Knobs
 # ------------------------------------------------------------------------------
 # Service selector for per-service targets: make migrate-up SVC=order
 SVC ?=
+
+# Every service that ships an image, discovered from the tree so that adding one
+# needs no edit here. `make stack` deploys the BFFs last, and the prefix is what
+# says which those are — the same naming rule .golangci.yml matches to decide
+# who may import pkg/httpx.
+SERVICES         := $(notdir $(patsubst %/,%,$(dir $(wildcard services/*/Dockerfile))))
+BFF_SERVICES     := $(filter bff-%,$(SERVICES))
+BACKEND_SERVICES := $(filter-out bff-%,$(SERVICES))
 
 # Local Kubernetes stack. The cluster is created once and outlives everything
 # else; NAMESPACE is where both the infra and the services land.
@@ -37,6 +50,20 @@ CLUSTER   ?= ecommerce
 NAMESPACE ?= ecommerce
 K8S_DIR   := deploy/k8s
 IMAGE_TAG ?= dev
+
+# Which overlay the deploy targets apply. `local` is the laptop stack Tilt also
+# drives; `staging` is base as written, which CI applies to a cluster it creates
+# and throws away. An overlay nobody runs is a file rather than an environment,
+# which is the whole reason the second one is wired into CI rather than left for
+# the day a host exists.
+OVERLAY ?= local
+
+# How many agent nodes `make cluster-create` gives the cluster. Two locally,
+# because a policy that only ever has one node to cross is not being tested.
+# CI passes 1: the second node is what makes a cross-node NetworkPolicy real,
+# and a third k3s container on a runner already hosting the whole stack buys
+# nothing the second did not.
+AGENTS ?= 2
 
 # The k3d-managed registry Tilt pushes to. The name is also a hostname inside
 # the cluster, so it may not contain characters a DNS label cannot.
@@ -142,6 +169,14 @@ define need_reloader
 		echo "Config and secret changes would silently fail to restart anything — run: make up"; \
 		exit 1; \
 	}
+endef
+
+define need_overlay
+	@if [ ! -d "$(K8S_DIR)/overlays/$(OVERLAY)" ]; then \
+		echo "no such overlay: $(OVERLAY)"; \
+		echo "available: $$(ls $(K8S_DIR)/overlays | tr '\n' ' ')"; \
+		exit 1; \
+	fi
 endef
 
 define need_cluster
@@ -354,7 +389,7 @@ cluster-create: ## Create the k3d cluster (run once, survives reboots)
 	@# Without it every rebuild would go through `k3d image import`, which
 	@# copies the whole image into each node on every change.
 	k3d cluster create $(CLUSTER) \
-		--agents 2 \
+		--agents $(AGENTS) \
 		--k3s-arg "--disable=traefik@server:*" \
 		-p "8000:80@loadbalancer" \
 		-p "8443:443@loadbalancer" \
@@ -460,13 +495,14 @@ api-docs: ## Browse a BFF's OpenAPI spec in Swagger UI (ctrl-c to stop, SPEC=...
 ##@ Deploy
 
 .PHONY: keys
-keys: ## Generate the local ES256 keypair and hand the public half to every verifier (gitignored)
+keys: ## Generate an overlay's ES256 keypair, public half to every verifier (gitignored, OVERLAY=staging)
 	@# Every process that verifies a token needs the public half in its own
 	@# overlay directory. kustomize refuses to read a file outside its root, so
 	@# it is copied rather than referenced — add a directory here when a second
 	@# BFF or anything else starts verifying.
-	@signer=$(K8S_DIR)/overlays/local/identity; \
-	verifiers="$(K8S_DIR)/overlays/local/bff-web"; \
+	$(need_overlay)
+	@signer=$(K8S_DIR)/overlays/$(OVERLAY)/identity; \
+	verifiers="$(K8S_DIR)/overlays/$(OVERLAY)/bff-web"; \
 	if [ -f $$signer/jwt-private.pem ]; then \
 		echo "$$signer/jwt-private.pem already exists — delete it to rotate"; \
 	else \
@@ -486,22 +522,32 @@ image: ## Build a service's images and import them into the cluster (SVC=identit
 	$(call need_bin,docker,brew install --cask docker)
 	@# Build context is the repo root: one go.mod covers every service, so a
 	@# context scoped to services/$(SVC) cannot see the module it belongs to.
-	docker build -f services/$(SVC)/Dockerfile --target server \
+	@# --provenance=false is not a preference. With it on, buildx wraps the
+	@# image in a manifest list to carry the attestation, and `--load` refuses
+	@# to export one to the docker daemon on the docker-container driver CI
+	@# builds with — so the build succeeds and the load fails, on the runner
+	@# only.
+	docker buildx build --load --provenance=false \
+		-f services/$(SVC)/Dockerfile --target server \
+		--build-arg GOOSE_VERSION=$(GOOSE_VERSION) \
 		-t ecommerce/$(SVC):$(IMAGE_TAG) .
 	@# The migrate image exists only for a service that owns a database. The
 	@# presence of a migrations directory is what says so — the Composition
 	@# API has neither, and its Dockerfile has no such stage to build.
 	@images="ecommerce/$(SVC):$(IMAGE_TAG)"; \
 	if [ -d services/$(SVC)/db/migrations ]; then \
-		docker build -f services/$(SVC)/Dockerfile --target migrate \
+		docker buildx build --load --provenance=false \
+			-f services/$(SVC)/Dockerfile --target migrate \
+			--build-arg GOOSE_VERSION=$(GOOSE_VERSION) \
 			-t ecommerce/$(SVC)-migrate:$(IMAGE_TAG) . || exit 1; \
 		images="$$images ecommerce/$(SVC)-migrate:$(IMAGE_TAG)"; \
 	fi; \
 	k3d image import -c $(CLUSTER) $$images
 
 .PHONY: deploy
-deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity)
+deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity [OVERLAY=staging])
 	$(need_svc)
+	$(need_overlay)
 	$(need_reloader)
 	$(MAKE) image SVC=$(SVC)
 	@# Kustomize has no hooks, so the migration is ordered here instead. The
@@ -511,7 +557,7 @@ deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity)
 	@if [ -d services/$(SVC)/db/migrations ]; then \
 		kubectl -n $(NAMESPACE) delete job $(SVC)-migrate --ignore-not-found; \
 	fi
-	kubectl apply -k $(K8S_DIR)/overlays/local/$(SVC)
+	kubectl apply -k $(K8S_DIR)/overlays/$(OVERLAY)/$(SVC)
 	@if [ -d services/$(SVC)/db/migrations ]; then \
 		kubectl -n $(NAMESPACE) wait --for=condition=complete job/$(SVC)-migrate --timeout=180s || { \
 			echo "--- migration failed ---"; \
@@ -532,15 +578,30 @@ deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity)
 	@# question, and this is where it gets asked.
 	@if [ "$(SMOKE)" = "1" ]; then $(MAKE) smoke; else echo "smoke skipped (SMOKE=0)"; fi
 
+.PHONY: stack
+stack: ## Deploy every service into the cluster, then smoke it (OVERLAY=staging)
+	$(need_overlay)
+	@# BFFs last, and only because of what happens in between: a BFF registers
+	@# no readiness check for the services it calls, so one deployed first is
+	@# Ready and answering 503 rather than waiting. Nothing is blocked by that
+	@# ordering — it is what makes the smoke test at the end mean something.
+	@for svc in $(BACKEND_SERVICES) $(BFF_SERVICES); do \
+		echo; echo "=== $$svc ==="; \
+		$(MAKE) deploy SVC=$$svc OVERLAY=$(OVERLAY) SMOKE=0 || exit 1; \
+	done
+	@echo
+	$(MAKE) smoke
+
 .PHONY: smoke
 smoke: ## Smoke-test the deployed stack through the gateway (BASE_URL=...)
 	$(call need_bin,jq,brew install jq)
 	@BASE_URL="$(BASE_URL)" scripts/smoke.sh
 
 .PHONY: undeploy
-undeploy: ## Remove a service from the cluster (SVC=identity)
+undeploy: ## Remove a service from the cluster (SVC=identity [OVERLAY=staging])
 	$(need_svc)
-	kubectl delete -k $(K8S_DIR)/overlays/local/$(SVC) --ignore-not-found
+	$(need_overlay)
+	kubectl delete -k $(K8S_DIR)/overlays/$(OVERLAY)/$(SVC) --ignore-not-found
 
 .PHONY: restart
 restart: ## Roll a service's pods without rebuilding (SVC=identity)
@@ -552,9 +613,10 @@ restart: ## Roll a service's pods without rebuilding (SVC=identity)
 	done
 
 .PHONY: render
-render: ## Print the manifests an overlay would apply (SVC=identity)
+render: ## Print the manifests an overlay would apply (SVC=identity [OVERLAY=staging])
 	$(need_svc)
-	kubectl kustomize $(K8S_DIR)/overlays/local/$(SVC)
+	$(need_overlay)
+	kubectl kustomize $(K8S_DIR)/overlays/$(OVERLAY)/$(SVC)
 
 ##@ Load
 
