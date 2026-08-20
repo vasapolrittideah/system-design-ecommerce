@@ -53,8 +53,9 @@ generatorOptions:
 # and a rollback is a change to these four lines rather than a rebuild.
 #
 # Updating it is `kustomize edit set image` in this directory, or editing the
-# tag by hand. Nothing automates it yet — that arrives with the controller that
-# watches this directory.
+# tag by hand — and that edit, committed, is the deploy: Argo watches this
+# directory on trunk and reconciles the cluster against it. What stays manual
+# is choosing the tag, which is the half worth keeping a person in.
 images:
   - name: ecommerce/inventory
     newName: ghcr.io/vasapolrittideah/system-design-ecommerce/inventory
