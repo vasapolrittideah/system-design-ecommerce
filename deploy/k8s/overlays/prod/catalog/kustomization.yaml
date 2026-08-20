@@ -16,6 +16,7 @@ namespace: ecommerce
 
 resources:
   - ../../../base/catalog
+  - sealedsecret.yaml
 
 # The database catalog owns, run in-cluster. A managed instance would drop this
 # and change CATALOG_DB_HOST alone.
@@ -31,14 +32,20 @@ configMapGenerator:
 generatorOptions:
   disableNameSuffixHash: true
 
-# There is deliberately no secretGenerator here, and its absence is the whole
-# difference between this overlay and staging's.
+# No secretGenerator, and its absence is most of the difference between this
+# overlay and staging's. staging holds its password as a literal because its
+# cluster lives for the length of one CI job; this one faces the internet, and a
+# password committed to a public repository is not one.
 #
-# base mounts `catalog-secret` with envFrom, so a Secret that does not exist stops
-# the pod at CreateContainerConfigError — loudly, before it serves anything.
-# That is the correct failure: this cluster faces the internet, and a password
-# committed to a public repository is not one. The Secret is created on the
-# cluster out of band until Sealed Secrets lands.
+# `sealedsecret.yaml` above carries the same values encrypted, written by
+# `make seal OVERLAY=prod` and readable only by the controller in the cluster it
+# was sealed against. That controller decrypts it into the plain
+# `catalog-secret` that base mounts with envFrom.
+#
+# On a first deploy the pod can start before the controller has caught up and
+# stop at CreateContainerConfigError. The kubelet retries and it resolves
+# itself; a pod still there after a minute means the SealedSecret was sealed
+# against a different cluster, which is the one failure that does not heal.
 
 # Published by the `publish` job in CI, which tags every image with the commit
 # that produced it. The tag is a SHA rather than a branch name on purpose: it
