@@ -58,7 +58,7 @@ generatorOptions:
 images:
   - name: ecommerce/catalog
     newName: ghcr.io/vasapolrittideah/system-design-ecommerce/catalog
-    newTag: 93f1b260440af66e318ae7569984e10e06033326
+    newTag: f1716ad19c887b799000e09ed0223bac9ee692e4
   - name: ecommerce/catalog-migrate
     newName: ghcr.io/vasapolrittideah/system-design-ecommerce/catalog-migrate
-    newTag: 93f1b260440af66e318ae7569984e10e06033326
+    newTag: f1716ad19c887b799000e09ed0223bac9ee692e4

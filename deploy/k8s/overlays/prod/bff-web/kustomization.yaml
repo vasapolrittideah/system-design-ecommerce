@@ -42,4 +42,4 @@ generatorOptions:
 images:
   - name: ecommerce/bff-web
     newName: ghcr.io/vasapolrittideah/system-design-ecommerce/bff-web
-    newTag: 93f1b260440af66e318ae7569984e10e06033326
+    newTag: f1716ad19c887b799000e09ed0223bac9ee692e4
