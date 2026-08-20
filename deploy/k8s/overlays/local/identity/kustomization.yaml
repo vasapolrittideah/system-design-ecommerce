@@ -5,8 +5,12 @@ namespace: ecommerce
 
 resources:
   - ../../../base/identity
-  - postgres.yaml
-  - networkpolicy.yaml
+
+# The Postgres instance this service talks to locally, plus the policies that
+# keep it reachable by identity alone. Staging includes the same component; a
+# deploy whose database is managed elsewhere would include neither.
+components:
+  - ../../../components/identity-postgres
 
 configMapGenerator:
   - name: identity-config

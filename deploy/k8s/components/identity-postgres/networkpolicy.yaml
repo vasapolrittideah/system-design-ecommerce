@@ -1,7 +1,7 @@
 # The database half of identity's policy, here rather than in base for the same
-# reason postgres.yaml is: the instance is a local-overlay thing. A production
-# overlay points IDENTITY_DB_HOST at a managed instance outside the cluster, and
-# reaching it is an ipBlock rule rather than a pod selector.
+# reason postgres.yaml is: an overlay whose database is managed elsewhere
+# includes neither, and reaching that instance is an ipBlock rule rather than a
+# pod selector.
 #
 # Both directions are stated. The ingress rule is the one that carries the
 # architecture — "never query another service's tables", enforced by the side

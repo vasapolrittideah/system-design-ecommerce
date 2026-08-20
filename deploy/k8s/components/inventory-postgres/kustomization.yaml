@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# The database inventory owns, for an overlay that has to run one itself.
+#
+# A component rather than a directory each overlay copies: local and staging
+# both bring their own instance, and the same instance described twice is the
+# arrangement where one of them quietly gets a setting the other does not. An
+# overlay pointing at a managed instance includes nothing from here and sets
+# INVENTORY_DB_HOST to wherever that instance lives.
+#
+# It reads the password out of the service's own Secret, which the including
+# overlay generates. That is what keeps this file free of a credential while
+# still guaranteeing the two halves cannot drift into a database nobody can
+# log into.
+resources:
+  - postgres.yaml
+  - networkpolicy.yaml

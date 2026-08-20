@@ -1,9 +1,11 @@
-# The database inventory owns, as its own instance.
+# The database identity owns, as its own instance.
 #
-# It lives in the local overlay rather than in infra because it is not shared
-# infrastructure: Jaeger and Reloader serve every service, this serves exactly
-# one. A production overlay contributes no equivalent — the instance is managed
-# there and the overlay only points INVENTORY_DB_HOST at it.
+# A component rather than part of base, because not every environment runs one:
+# base describes the service, and an overlay decides whether the database it
+# talks to is a pod beside it or a managed instance elsewhere. Not infra either
+# — Jaeger and Reloader serve every service, this serves exactly one, and an
+# overlay with a managed instance includes nothing from here and points
+# IDENTITY_DB_HOST at it.
 #
 # One instance per service rather than one instance with a database per
 # service. The second arrangement is cheaper and was what this stack ran first,
@@ -15,21 +17,22 @@
 # and reaching another service's data would mean reaching another Service — a
 # thing that shows up in a manifest rather than in a grant table.
 #
-# What it costs is honest to state: five services means five Postgres pods on a
-# laptop, and this file gets copied per service. That copy is the point. A
-# shared instance is the arrangement that quietly becomes a shared database.
+# What it costs is honest to state: five services means five Postgres pods in
+# every environment that includes these components, and this file is copied per
+# service. That copy is the point. A shared instance is the arrangement that
+# quietly becomes a shared database.
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: inventory-postgres
+  name: identity-postgres
 spec:
   # Headless because a StatefulSet needs a governing Service and nothing here
-  # wants a virtual IP. `kubectl port-forward svc/inventory-postgres` works
+  # wants a virtual IP. `kubectl port-forward svc/identity-postgres` works
   # either way, which is how a host-run service reaches it.
   clusterIP: None
   selector:
-    app.kubernetes.io/name: inventory-postgres
+    app.kubernetes.io/name: identity-postgres
   ports:
     - name: postgres
       port: 5432
@@ -38,20 +41,20 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: inventory-postgres
+  name: identity-postgres
 spec:
-  serviceName: inventory-postgres
+  serviceName: identity-postgres
   replicas: 1
   selector:
     matchLabels:
-      # Deliberately not app.kubernetes.io/name: inventory. That label is the
-      # selector on inventory's headless Service, and a Postgres pod carrying it
+      # Deliberately not app.kubernetes.io/name: identity. That label is the
+      # selector on identity's headless Service, and a Postgres pod carrying it
       # would be handed to gRPC callers as a backend.
-      app.kubernetes.io/name: inventory-postgres
+      app.kubernetes.io/name: identity-postgres
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: inventory-postgres
+        app.kubernetes.io/name: identity-postgres
         app.kubernetes.io/component: database
     spec:
       containers:
@@ -69,17 +72,17 @@ spec:
             # and no grants to get wrong. The service is the superuser of an
             # instance that holds nothing but its own data.
             - name: POSTGRES_USER
-              value: inventory
+              value: identity
             - name: POSTGRES_DB
-              value: inventory
+              value: identity
             - name: POSTGRES_PASSWORD
               valueFrom:
                 # Read from the same Secret the service reads, so the two
                 # cannot drift. Setting it in both places is how a laptop ends
                 # up with a database nobody can log into.
                 secretKeyRef:
-                  name: inventory-secret
-                  key: INVENTORY_DB_PASSWORD
+                  name: identity-secret
+                  key: IDENTITY_DB_PASSWORD
             # The image only runs its initialisation when it creates the
             # cluster, and it needs the data one level below the mount point —
             # a PVC root already contains lost+found on some drivers.
@@ -90,7 +93,7 @@ spec:
               mountPath: /var/lib/postgresql/data
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "inventory", "-d", "inventory"]
+              command: ["pg_isready", "-U", "identity", "-d", "identity"]
             periodSeconds: 5
           resources:
             requests:
