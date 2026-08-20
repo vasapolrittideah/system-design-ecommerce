@@ -219,6 +219,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: docker/setup-qemu-action@v3
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Read pinned tool versions
@@ -226,7 +228,12 @@ jobs:
         run: echo "goose=$(make print-GOOSE_VERSION)" >> "$GITHUB_OUTPUT"
 
       # Built and thrown away: this proves the Dockerfile still builds, which no
-      # Go test covers. Publishing belongs to a release workflow, not here.
+      # Go test covers. Publishing happens in `publish`, on trunk only.
+      #
+      # Both architectures, because `publish` ships both and a pull request is
+      # where a break in either has to surface. They are not free but they are
+      # close to it: the build stage cross-compiles on the runner's own
+      # architecture, and only the migrate stage's apk runs emulated.
       - uses: docker/build-push-action@v6
         with:
           # The build context is the repository root — one go.mod covers every
@@ -234,6 +241,7 @@ jobs:
           context: .
           file: services/${{ matrix.service }}/Dockerfile
           build-args: GOOSE_VERSION=${{ steps.tools.outputs.goose }}
+          platforms: linux/amd64,linux/arm64
           push: false
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
@@ -337,6 +345,120 @@ jobs:
               --all-containers --prefix --tail=100
             echo "::endgroup::"
           done
+
+  # Immutable images, one set per commit that lands on trunk.
+  #
+  # It runs after `ci`, so nothing is published from a commit whose tests or
+  # manifests failed. A pull request never reaches it: GITHUB_TOKEN has no
+  # packages:write on a fork, and an image built from an unmerged branch has
+  # nothing that should be deploying it.
+  #
+  # The tag is the commit SHA and there is deliberately no moving tag beside it.
+  # A tag that follows trunk is one somebody deploys by accident, and it is also
+  # the tag a GitOps controller cannot see change — the whole reason for
+  # publishing this way is that the reference names one build forever.
+  publish:
+    name: Publish (${{ matrix.service }})
+    needs: [discover, ci]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/trunk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Only this job writes packages. The workflow-level grant stays read-only.
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.discover.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # The server stage cross-compiles and needs no emulation, but the migrate
+      # stage installs ca-certificates with apk, and that RUN executes as the
+      # target architecture.
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read pinned tool versions
+        id: tools
+        run: echo "goose=$(make print-GOOSE_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: push
+        env:
+          SERVICE: ${{ matrix.service }}
+          SHA: ${{ github.sha }}
+          GOOSE_VERSION: ${{ steps.tools.outputs.goose }}
+        run: |
+          # ghcr rejects an upper-case path, and github.repository preserves
+          # whatever case the owner registered.
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
+          build() {
+            local target="$1" image="$2"
+            echo "::group::$image"
+            # Both architectures, because the host this is eventually deployed
+            # to is not chosen yet — Ampere instances are ARM and most rented
+            # servers are not. --provenance=false keeps the index to exactly
+            # the two platform manifests the check below counts; nothing here
+            # consumes an attestation yet.
+            docker buildx build --push --provenance=false \
+              --platform linux/amd64,linux/arm64 \
+              -f "services/${SERVICE}/Dockerfile" --target "$target" \
+              --build-arg "GOOSE_VERSION=${GOOSE_VERSION}" \
+              -t "$image" .
+            echo "::endgroup::"
+          }
+
+          server="ghcr.io/${repo}/${SERVICE}:${SHA}"
+          build server "$server"
+          echo "server=$server" >> "$GITHUB_OUTPUT"
+
+          # A migrate image exists only for a service that owns a database, and
+          # the migrations directory is what says so.
+          if [ -d "services/${SERVICE}/db/migrations" ]; then
+            migrate="ghcr.io/${repo}/${SERVICE}-migrate:${SHA}"
+            build migrate "$migrate"
+            echo "migrate=$migrate" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A push that reported success and left one architecture behind is the
+      # failure this catches, and it would otherwise surface as an ImagePullBackOff
+      # on whichever host happens not to be amd64.
+      - name: Both architectures are present
+        env:
+          SERVER: ${{ steps.push.outputs.server }}
+          MIGRATE: ${{ steps.push.outputs.migrate }}
+        run: |
+          for image in $SERVER $MIGRATE; do
+            echo "::group::$image"
+            manifest=$(docker buildx imagetools inspect "$image")
+            echo "$manifest"
+            echo "::endgroup::"
+            for platform in linux/amd64 linux/arm64; do
+              grep -q "$platform" <<<"$manifest" \
+                || { echo "$image is missing $platform"; exit 1; }
+            done
+            echo "  ok   $image"
+          done
+
+      - name: Summary
+        if: always() && steps.push.outputs.server != ''
+        env:
+          SERVER: ${{ steps.push.outputs.server }}
+          MIGRATE: ${{ steps.push.outputs.migrate }}
+        run: |
+          {
+            for image in $SERVER $MIGRATE; do echo "- \`$image\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # One status check to require in branch protection. Without it, protection has
   # to name every job above, and a job added here would not be required until
