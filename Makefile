@@ -58,6 +58,12 @@ IMAGE_TAG ?= dev
 # the day a host exists.
 OVERLAY ?= local
 
+# Whether `make deploy` builds the image first. Building is a local concern: it
+# ends in `k3d image import`, which only means anything for a cluster running on
+# this machine. A deploy to any other cluster pulls what CI published instead,
+# so it passes BUILD=0 and never needs k3d at all.
+BUILD ?= 1
+
 # How many agent nodes `make cluster-create` gives the cluster. Two locally,
 # because a policy that only ever has one node to cross is not being tested.
 # CI passes 1: the second node is what makes a cross-node NetworkPolicy real,
@@ -549,7 +555,9 @@ deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity [OVE
 	$(need_svc)
 	$(need_overlay)
 	$(need_reloader)
-	$(MAKE) image SVC=$(SVC)
+	@if [ "$(BUILD)" = "1" ]; then $(MAKE) image SVC=$(SVC); else \
+		echo "build skipped (BUILD=0) — the overlay's images come from a registry"; \
+	fi
 	@# Kustomize has no hooks, so the migration is ordered here instead. The
 	@# Job is immutable once created, which is why it is deleted rather than
 	@# re-applied — a changed image on an existing Job is rejected outright.
@@ -579,7 +587,7 @@ deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity [OVE
 	@if [ "$(SMOKE)" = "1" ]; then $(MAKE) smoke; else echo "smoke skipped (SMOKE=0)"; fi
 
 .PHONY: stack
-stack: ## Deploy every service into the cluster, then smoke it (OVERLAY=staging)
+stack: ## Deploy every service into the cluster, then smoke it (OVERLAY=prod BUILD=0)
 	$(need_overlay)
 	@# BFFs last, and only because of what happens in between: a BFF registers
 	@# no readiness check for the services it calls, so one deployed first is
@@ -587,7 +595,7 @@ stack: ## Deploy every service into the cluster, then smoke it (OVERLAY=staging)
 	@# ordering — it is what makes the smoke test at the end mean something.
 	@for svc in $(BACKEND_SERVICES) $(BFF_SERVICES); do \
 		echo; echo "=== $$svc ==="; \
-		$(MAKE) deploy SVC=$$svc OVERLAY=$(OVERLAY) SMOKE=0 || exit 1; \
+		$(MAKE) deploy SVC=$$svc OVERLAY=$(OVERLAY) BUILD=$(BUILD) SMOKE=0 || exit 1; \
 	done
 	@echo
 	$(MAKE) smoke
