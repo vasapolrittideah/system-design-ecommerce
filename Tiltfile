@@ -62,10 +62,16 @@ for key in [
 # The namespace is applied separately because deploy/k8s/infra deliberately
 # excludes it: `make down` has to be able to remove the workloads without taking
 # the PersistentVolumeClaim with them.
+#
+# The local overlay rather than deploy/k8s/infra straight, which is what `make
+# up OVERLAY=local` applies too. deploy/k8s/infra describes each dependency once
+# and holds nothing that names a cluster; the overlay is where this laptop's
+# values are — today that is the browser origin Kong allows, and prod's is
+# where the tunnel lives.
 # ------------------------------------------------------------------------------
 
 k8s_yaml('deploy/k8s/infra/namespace.yaml')
-k8s_yaml(kustomize('deploy/k8s/infra'))
+k8s_yaml(kustomize('deploy/k8s/overlays/local/infra'))
 
 k8s_resource(
     'jaeger',
@@ -131,7 +137,8 @@ k8s_resource(
 #
 # Editing deploy/k8s/infra/kong/kong.yml is enough to apply a routing change —
 # Tilt re-runs kustomize, the ConfigMap content changes, and Reloader restarts
-# the pod.
+# the pod. The same holds for the origin list in overlays/local/infra/config.env,
+# which an init container renders into that file at every start.
 k8s_resource(
     'kong',
     port_forwards=[

@@ -62,6 +62,12 @@ IMAGE_TAG ?= dev
 # the day a host exists.
 OVERLAY ?= local
 
+# The overlays whose cluster k3d created on this machine: `make image` imports
+# into it and `make up` can check that it exists first. Everything not on this
+# list is a cluster somewhere else, and the only thing this repo knows about it
+# is where kubectl is pointing.
+K3D_OVERLAYS ?= local staging
+
 # Whether `make deploy` builds the image first. Building is a local concern: it
 # ends in `k3d image import`, which only means anything for a cluster running on
 # this machine. A deploy to any other cluster pulls what CI published instead,
@@ -89,10 +95,16 @@ REGISTRY  ?= ecommerce-registry:5001
 DB_PASSWORD ?= insecure-local-only
 DSN ?= postgres://$(SVC):$(DB_PASSWORD)@localhost:5432/$(SVC)?sslmode=disable
 
-# Where `make smoke` points. The gateway on the k3d load balancer, never a
-# port-forward: reaching bff-web directly would skip Kong's routes, its
-# upstream, and the Service behind it, which is most of what a deploy breaks.
-BASE_URL ?= http://localhost:8000
+# Where `make smoke` points. The gateway, never a port-forward: reaching bff-web
+# directly would skip Kong's routes, its upstream, and the Service behind it,
+# which is most of what a deploy breaks.
+#
+# It follows the overlay, because the two clusters are not reached the same way.
+# local and staging answer on the k3d load balancer; prod publishes no port at
+# all and is reached through its Cloudflare tunnel, which means a smoke test
+# there also exercises DNS, the edge, and cloudflared — every hop a real client
+# has, and the three that no manifest in this repo can prove on its own.
+BASE_URL ?= $(if $(filter prod,$(OVERLAY)),https://api.vasapol.dev,http://localhost:8000)
 
 # `make deploy SVC=x SMOKE=0` skips the smoke test, for the one case where it is
 # a false alarm: rolling out a service into a cluster that has no bff-web yet.
@@ -192,6 +204,17 @@ endef
 define need_cluster
 	$(call need_bin,k3d,brew install k3d)
 	@k3d cluster list $(CLUSTER) >/dev/null 2>&1 || { echo "cluster '$(CLUSTER)' does not exist — run: make cluster-create"; exit 1; }
+endef
+
+# The same check, but only for the overlays whose cluster is on this machine.
+# prod is somewhere else and reached through whatever kubectl points at, so
+# asking k3d about it would be asking about the wrong cluster — and failing on
+# a laptop that never created one.
+define need_cluster_if_local
+	@if [ -n "$(filter $(OVERLAY),$(K3D_OVERLAYS))" ]; then \
+		command -v k3d >/dev/null 2>&1 || { echo "k3d not found — install with: brew install k3d"; exit 1; }; \
+		k3d cluster list $(CLUSTER) >/dev/null 2>&1 || { echo "cluster '$(CLUSTER)' does not exist — run: make cluster-create"; exit 1; }; \
+	fi
 endef
 
 ##@ General
@@ -413,35 +436,43 @@ cluster-delete: ## Delete the k3d cluster and everything inside it
 	$(call need_bin,k3d,brew install k3d)
 	k3d cluster delete $(CLUSTER)
 
-##@ Local stack
+##@ Cluster stack
 
 .PHONY: up
-up: ## Start the shared local infra in the cluster (Jaeger, Loki, Alloy, Kong, Prometheus, Grafana, Reloader)
-	$(need_cluster)
+up: ## Start an overlay's shared infra in the cluster (Jaeger, Loki, Alloy, Kong, Prometheus, Grafana, Reloader)
+	$(need_overlay)
+	$(need_cluster_if_local)
 	@# Databases are not here: each service brings its own Postgres instance in
 	@# its own overlay, so `make deploy SVC=x` is what starts x's database.
 	kubectl apply -f $(K8S_DIR)/infra/namespace.yaml
-	@# Applied on its own rather than through the infra kustomization, which
-	@# would rewrite its namespace to ecommerce. It belongs in kube-system: the
-	@# sealing key is generated into a Secret beside the controller, and the
-	@# ecommerce namespace is what `make clean-volumes` deletes.
+	@# First, and waited on before anything else is applied. It belongs in
+	@# kube-system rather than in the infra kustomization, which would rewrite
+	@# its namespace: the sealing key is generated into a Secret beside the
+	@# controller, and the ecommerce namespace is what `make clean-volumes`
+	@# deletes. An overlay carrying a SealedSecret has nothing that can read it
+	@# until this is running, so it goes in on its own and finishes first —
+	@# which is also what makes `make seal` possible on a cluster whose overlay
+	@# does not build yet, the state every new cluster starts in.
 	kubectl apply -k $(K8S_DIR)/infra/sealed-secrets
-	kubectl apply -k $(K8S_DIR)/infra
 	kubectl -n kube-system rollout status deployment/sealed-secrets-controller --timeout=180s
-	kubectl -n $(NAMESPACE) rollout status deployment/jaeger --timeout=180s
-	kubectl -n $(NAMESPACE) rollout status deployment/loki --timeout=180s
+	kubectl apply -k $(K8S_DIR)/overlays/$(OVERLAY)/infra
+	@# Every infra Deployment by its label, rather than a list of names. The
+	@# list was one an overlay could add to without anyone noticing — prod runs
+	@# a tunnel that local does not — and a deploy that does not wait for a
+	@# workload is one that reports success while it crash-loops.
+	@for deploy in $$(kubectl -n $(NAMESPACE) get deployments \
+			-l app.kubernetes.io/component=infra -o name); do \
+		kubectl -n $(NAMESPACE) rollout status $$deploy --timeout=180s || exit 1; \
+	done
 	@# A DaemonSet, so this waits for one Alloy per node. It is the only
 	@# workload here whose replica count follows the cluster.
 	kubectl -n $(NAMESPACE) rollout status daemonset/alloy --timeout=180s
-	kubectl -n $(NAMESPACE) rollout status deployment/kong --timeout=180s
-	kubectl -n $(NAMESPACE) rollout status deployment/prometheus --timeout=180s
-	kubectl -n $(NAMESPACE) rollout status deployment/grafana --timeout=180s
-	kubectl -n $(NAMESPACE) rollout status deployment/reloader-reloader --timeout=180s
-	@echo "gateway: http://localhost:8000 (https://localhost:8443 — self-signed)"
+	@echo "gateway: $(BASE_URL)"
 
 .PHONY: down
-down: ## Remove the shared local infra, keeping the namespace and every volume
-	kubectl delete -k $(K8S_DIR)/infra --ignore-not-found
+down: ## Remove an overlay's shared infra, keeping the namespace and every volume
+	$(need_overlay)
+	kubectl delete -k $(K8S_DIR)/overlays/$(OVERLAY)/infra --ignore-not-found
 
 .PHONY: clean-volumes
 clean-volumes: ## Delete the namespace and its volumes — destroys local data

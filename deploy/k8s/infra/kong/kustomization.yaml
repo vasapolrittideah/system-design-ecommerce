@@ -20,3 +20,9 @@ configMapGenerator:
   - name: kong-declarative
     files:
       - kong.yml
+  # Read by the init container that renders kong.yml, and empty here: every
+  # value in it names a particular deployment, so each infra overlay merges its
+  # own over this one.
+  - name: kong-config
+    envs:
+      - config.env

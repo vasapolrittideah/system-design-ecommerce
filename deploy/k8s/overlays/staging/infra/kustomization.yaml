@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The shared infrastructure, on the k3d cluster CI creates and throws away.
+#
+# It overrides one value, which is the point of this overlay existing at all:
+# everything else in deploy/k8s/infra is applied exactly as written, on every
+# push, against an empty cluster. A gateway that only ever starts on a laptop
+# where yesterday's ConfigMap is still there is one nobody has deployed.
+namespace: ecommerce
+
+resources:
+  - ../../../infra
+
+configMapGenerator:
+  - name: kong-config
+    behavior: merge
+    envs:
+      - config.env
+
+generatorOptions:
+  disableNameSuffixHash: true

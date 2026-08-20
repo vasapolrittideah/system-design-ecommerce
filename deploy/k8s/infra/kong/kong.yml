@@ -2,8 +2,8 @@
 # does is decided in this file and reviewed in a diff, rather than reconstructed
 # from the Admin API of a process someone once configured by hand.
 #
-# Kong is deliberately thin here: TLS, how much and how often a client may ask,
-# CORS, a correlation ID, and the hand-off to bff-web. It does not verify JWTs,
+# Kong is deliberately thin here: how much and how often a client may ask, CORS,
+# a correlation ID, and the hand-off to bff-web. It does not verify JWTs,
 # which is a decision and not an omission — the BFF re-verifies every token
 # itself under zero-trust, so a second verifier at the edge would put the public
 # key in two places to rotate and would answer 401 in Kong's own error shape
@@ -92,8 +92,17 @@ plugins:
 
   - name: cors
     config:
-      origins:
-        - http://localhost:3000
+      # The only value in this file that differs between clusters, and the
+      # reason an init container renders the file rather than Kong reading it
+      # straight from the ConfigMap: an allowed origin names a deployment, and
+      # there is no deployment-independent value that is also safe.
+      #
+      # Each infra overlay sets CORS_ORIGINS, base names none, and the init
+      # container refuses to render an empty one — so a cluster deployed without
+      # one leaves Kong in CrashLoopBackOff rather than quietly allowing a
+      # laptop's origin in production. The value is a YAML flow sequence,
+      # brackets included, because that is what this line becomes.
+      origins: ${CORS_ORIGINS}
       methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
       headers: [Accept, Accept-Language, Authorization, Content-Type, X-Correlation-ID]
       # A browser cannot read a response header it was not handed: the language

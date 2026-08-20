@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The shared infrastructure, on a laptop.
+#
+# deploy/k8s/infra describes every dependency once; this is where the values
+# that name *this* cluster are set, the same arrangement base/<svc> and
+# overlays/<env>/<svc> already have for the services. Until there was a second
+# cluster there was nothing to vary and `make up` applied the infra directory
+# straight — which meant the gateway's allowed origin was a laptop's, in every
+# cluster, with nothing in the layout admitting it.
+#
+# The infra base stays at deploy/k8s/infra rather than moving under base/,
+# because nothing in it is built from this repo: it sits with Jaeger and Kong
+# as a dependency, not as a service with a Dockerfile.
+namespace: ecommerce
+
+resources:
+  - ../../../infra
+
+configMapGenerator:
+  # Merged over the empty one in infra/kong, and read by the init container
+  # that renders kong.yml.
+  - name: kong-config
+    behavior: merge
+    envs:
+      - config.env
+
+generatorOptions:
+  disableNameSuffixHash: true

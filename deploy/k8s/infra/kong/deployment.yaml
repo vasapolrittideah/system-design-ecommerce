@@ -3,9 +3,10 @@ kind: Deployment
 metadata:
   name: kong
   annotations:
-    # kong.yml is a mounted ConfigMap read once at startup, and DB-less Kong has
-    # no way to be told the file underneath it changed. Without this an edited
-    # route or rate limit applies to nothing until somebody deletes a pod.
+    # kong.yml is read once at startup — by the init container that renders it
+    # and then by DB-less Kong, neither of which has any way to be told the file
+    # underneath it changed. Without this an edited route, rate limit, or origin
+    # list applies to nothing until somebody deletes a pod.
     reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
@@ -33,6 +34,52 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # kong.yml is a template with one hole in it, and this fills it. Kong
+        # has no interpolation of its own in declarative mode, so a per-cluster
+        # origin list arrives either this way or by every overlay carrying a
+        # full copy of the gateway config to drift from.
+        #
+        # The gateway's own image, so there is no second tag to pin and no
+        # second layer to pull. What Kong reads is the rendered copy in an
+        # emptyDir, which means `kubectl get configmap kong-declarative` shows
+        # the template rather than what is running — the loaded config is what
+        # Kong Manager displays.
+        #
+        # Reloader restarts this pod when kong-config changes, the same as for
+        # kong.yml itself: it looks for a reference in the init containers too.
+        - name: render-config
+          image: kong:3.9.3
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              if [ -z "${CORS_ORIGINS:-}" ]; then
+                echo "CORS_ORIGINS is unset — this cluster's infra overlay has to name its browser origins" >&2
+                exit 1
+              fi
+              sed "s|\${CORS_ORIGINS}|${CORS_ORIGINS}|g" \
+                /kong/declarative-template/kong.yml >/kong/declarative/kong.yml
+          envFrom:
+            - configMapRef:
+                name: kong-config
+          volumeMounts:
+            - name: declarative-template
+              mountPath: /kong/declarative-template
+              readOnly: true
+            - name: declarative
+              mountPath: /kong/declarative
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
       containers:
         - name: kong
           image: kong:3.9.3
@@ -179,9 +226,12 @@ spec:
             capabilities:
               drop: ["ALL"]
       volumes:
-        - name: declarative
+        - name: declarative-template
           configMap:
             name: kong-declarative
+        # The rendered config, written by the init container and read by Kong.
+        - name: declarative
+          emptyDir: {}
         - name: prefix
           emptyDir: {}
         - name: tmp

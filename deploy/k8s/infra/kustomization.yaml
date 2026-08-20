@@ -7,10 +7,13 @@ kind: Kustomization
 #
 # Kong is here rather than under base/ and overlays/ because it is a dependency
 # and not a service: nothing in this repo builds its image, so it belongs beside
-# Jaeger and Reloader. Its declarative config is local-shaped in one place, the
-# CORS origin, which an overlay would have to override by replacing the whole
-# file — that trade is worth revisiting the day a second environment is deployed
-# from this repo, and not before.
+# Jaeger and Reloader.
+#
+# This directory is a base, and it is not applied on its own. Everything in it
+# is described once and holds no value naming a cluster; what does is
+# overlays/<env>/infra, which `make up OVERLAY=<env>` applies. The gateway's
+# allowed browser origin is the whole of that today, and prod adds the tunnel
+# that puts the cluster on the internet.
 #
 # Databases are not here. Each service runs its own Postgres instance, declared
 # in its own local overlay, because an instance serving exactly one service is
