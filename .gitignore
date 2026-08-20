@@ -16,6 +16,18 @@ coverage.html
 # identity, so it is created per machine and never shared, not even for local.
 *.pem
 
+# One exception, and it is a public key: prod's bff-web mounts it through a
+# configMapGenerator, so the overlay cannot be rendered at all without it — and
+# prod is the one overlay rendered by something other than the machine that ran
+# `make keys`. Argo checks the repository out and builds it there, where a file
+# that exists only on an operator's laptop does not exist.
+#
+# Committing it costs nothing: this half can verify a signature and never make
+# one. The private half stays out of git and reaches the cluster sealed. local
+# and staging keep generating their own, because the machine that generates
+# them is also the machine that deploys them.
+!deploy/k8s/overlays/prod/bff-web/jwt-public.pem
+
 # The Cloudflare tunnel's credentials, copied here from `cloudflared tunnel
 # create`. They are what proves to the edge that a process is that tunnel; the
 # sealed copy beside them is what gets committed. Losing this file means
