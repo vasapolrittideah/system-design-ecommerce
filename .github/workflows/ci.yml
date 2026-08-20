@@ -300,8 +300,12 @@ jobs:
       - name: Generate the signing key pair
         run: make keys OVERLAY=staging
 
+      # The staging overlay of the infra, for the same reason the services below
+      # are deployed from theirs: base holds no value that names a cluster, so
+      # something has to supply the gateway's origin list, and an overlay nobody
+      # applies is a file rather than an environment.
       - name: Shared infrastructure
-        run: make up
+        run: make up OVERLAY=staging
 
       # Serial, and the first service pays for all four: they share a go.mod, so
       # the module-download layer is built once and reused by the rest.
