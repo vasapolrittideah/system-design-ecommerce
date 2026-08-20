@@ -238,13 +238,113 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
+  # The manifests, applied to a cluster that did not exist a minute ago.
+  #
+  # Everything else in this workflow tests the Go code. This tests the half that
+  # has no Go test and that `make deploy` on a laptop cannot: an apply against an
+  # empty cluster rather than over yesterday's objects, so a resource nobody
+  # creates any more, a policy that only works because an old one is still there,
+  # and an ordering that only holds when the database is already running all
+  # surface here.
+  #
+  # It applies overlays/staging rather than overlays/local, which is what keeps
+  # that overlay honest — base is deployed as written, with none of the laptop
+  # relaxations, and it is exercised on every push instead of on the day a real
+  # host appears.
+  #
+  # It builds its own images rather than depending on the `images` job above.
+  # That job's artifacts are thrown away, and its build cache cannot be reached
+  # from a plain `run:` step — the GitHub cache backend needs runtime credentials
+  # that only the docker build action is handed. Sharing it would mean adding a
+  # third-party action to export them, which is a larger decision than the few
+  # minutes it saves; running the two in parallel gets the green build in sooner
+  # anyway.
+  stack:
+    name: Stack on k3d
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Read pinned tool versions
+        id: tools
+        run: echo "k3d=$(make print-K3D_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Install k3d
+        run: |
+          curl -sfL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh \
+            | TAG=${{ steps.tools.outputs.k3d }} bash
+          k3d version
+
+      # One agent rather than the two a laptop gets, so the cluster is two nodes.
+      # The second node is what makes a cross-node NetworkPolicy real; a third
+      # k3s container on a runner already hosting the whole stack buys nothing
+      # the second did not.
+      - name: Create the cluster
+        run: make cluster-create AGENTS=1
+
+      # The same command a developer runs, writing into the staging overlay
+      # instead. Both halves of the pair land in one step, which is the failure
+      # this cannot have: a private key and a public key from different runs
+      # leave every pod Ready and every login answering 401.
+      - name: Generate the signing key pair
+        run: make keys OVERLAY=staging
+
+      - name: Shared infrastructure
+        run: make up
+
+      # Serial, and the first service pays for all four: they share a go.mod, so
+      # the module-download layer is built once and reused by the rest.
+      - name: Build and import images
+        run: |
+          for svc in $(make print-SERVICES); do
+            echo "::group::$svc"
+            make image SVC="$svc"
+            echo "::endgroup::"
+          done
+
+      # Deploys every service, runs each migration Job, waits for every rollout,
+      # and finishes on scripts/smoke.sh through Kong — which is the assertion
+      # that matters here, since a pod reporting Ready is a claim it makes about
+      # itself and says nothing about whether the system serves.
+      - name: Deploy and smoke
+        run: make stack OVERLAY=staging
+
+      # A cluster that failed with no output is a job nobody can act on, and the
+      # cluster is gone by the time anyone looks.
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          echo "::group::pods"
+          kubectl -n ecommerce get pods -o wide
+          echo "::endgroup::"
+          echo "::group::jobs and endpoints"
+          kubectl -n ecommerce get jobs,endpoints
+          echo "::endgroup::"
+          echo "::group::events"
+          kubectl -n ecommerce get events --sort-by=.lastTimestamp | tail -60
+          echo "::endgroup::"
+          echo "::group::not running"
+          kubectl -n ecommerce get pods \
+            --field-selector=status.phase!=Running -o yaml
+          echo "::endgroup::"
+          for svc in $(make print-SERVICES); do
+            echo "::group::logs $svc"
+            kubectl -n ecommerce logs -l "app.kubernetes.io/name=$svc" \
+              --all-containers --prefix --tail=100
+            echo "::endgroup::"
+          done
+
   # One status check to require in branch protection. Without it, protection has
   # to name every job above, and a job added here would not be required until
   # someone remembered to add it there too.
   ci:
     name: CI
     if: always()
-    needs: [lint, proto, generated, test, vulnerabilities, images]
+    needs: [lint, proto, generated, test, vulnerabilities, images, stack]
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every job succeeded
