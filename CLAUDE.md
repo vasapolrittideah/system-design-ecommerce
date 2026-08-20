@@ -28,6 +28,7 @@ deploy/k8s/
   components/cloudflared/       # the tunnel an internet-facing overlay runs
   overlays/{local,staging,prod}/<name>/
   overlays/{local,staging,prod}/infra/   # the values that name one cluster
+  apps/prod/             # what Argo reconciles prod against — one file per overlay
 ```
 
 Single `go.mod` for the whole repo. Do not introduce per-service modules or a `go.work` unless explicitly asked.
@@ -310,6 +311,7 @@ make up [OVERLAY=prod]  # apply that cluster's shared infra
 make deploy SVC=x       # build image, run the migration Job, roll out
 make stack OVERLAY=staging  # deploy every service, BFFs last, then smoke
 make stack OVERLAY=prod BUILD=0  # same, pulling the images CI published
+make argocd             # install the controller that reconciles prod from trunk
 make load SCENARIO=me   # k6 through Kong, with its rate limits raised for the run
 ```
 
@@ -332,6 +334,18 @@ Setting up that tunnel is four commands on the operator's machine, and the runbo
 **Images are published to ghcr on every trunk commit, tagged with that commit's SHA and nothing else.** `ghcr.io/<owner>/<repo>/<service>:<sha>`, plus `<service>-migrate` where the service owns a database. A tag that follows a branch is one somebody deploys by accident, and it is also the tag a GitOps controller cannot see change — the reference has to name one build forever, which is what makes a rollback a reference change rather than a rebuild. `overlays/prod` is what points at them, one `newTag` line per image, updated with `kustomize edit set image` and read back off the file to know what is running. `local` and `staging` keep building and importing, because the clusters running those are on the machine doing the deploy.
 
 They carry `linux/amd64` and `linux/arm64` both, since the host they will eventually run on is not chosen and the cheapest ones are ARM. That is close to free rather than twice the work — the build stage runs on the builder's own architecture and cross-compiles, so only the migrate stage's `apk` is emulated — but it holds two rules in the Dockerfiles that fail in one direction only, and therefore never on a laptop building for itself: the `build` stage must be pinned to `$BUILDPLATFORM` and pass `GOOS`/`GOARCH` down, and goose has to be built into a fixed path, because `go install pkg@version` refuses to run with `GOBIN` set while cross-compiling and otherwise hides the binary in a directory named after an architecture. The pull request build covers both platforms for that reason.
+
+**prod is reconciled from `trunk` by Argo CD, and a commit is what a deploy to it now is.** `deploy/k8s/infra/argocd` holds the controller, vendored and pinned the way sealed-secrets is; `deploy/k8s/apps/prod` holds one Application per overlay and a root that manages the directory they sit in, so adding a service is adding a file and removing one is removing a file. `make argocd` installs it, `kubectl apply -f deploy/k8s/apps/prod/root.yaml` starts it, and after that a push is the deploy and a `git revert` is the rollback.
+
+What it deliberately does not do is decide which image runs: a `newTag` is still bumped by a person and committed, and an updater that writes tags back into git is a separate and much larger decision. What it buys is that deploying no longer depends on where an operator's `kubectl` happens to point — a failure this repository has already had once, when a `make seal OVERLAY=prod` sealed every credential against a laptop's cluster.
+
+- **`prune` is on and `selfHeal` is off.** Prune, because a workload nothing describes is the state this exists to make impossible. selfHeal off, because reverting a hand edit within minutes is right in principle and the wrong thing to meet during an incident — which is also what keeps `make deploy SVC=x OVERLAY=prod` usable as the emergency path instead of being quietly undone.
+- **The Applications run under an AppProject that is an allow-list**, rather than Argo's `default`, which permits any repository, any cluster, and any kind. This one names one repository, one namespace, and exactly two cluster-scoped kinds — the ClusterRole and ClusterRoleBinding that Prometheus and Alloy need. A Namespace, a CRD, or a webhook is refused. Same instinct as the NetworkPolicies: the rule sits beside what it constrains, and a change that steps outside it fails rather than working.
+- **Argo tracks what it owns by annotation, not by label.** The default writes `app.kubernetes.io/instance` onto every managed object; labels here are read by Service selectors, NetworkPolicies, and the scrape config, and ownership by a controller is not that kind of fact.
+- **The migration Job carries `PreSync` and `BeforeHookCreation`**, which tell Argo what `make deploy` does by hand — delete the previous Job because a Job is immutable, run it, wait for it, then roll out. Both annotations are inert where Argo is not watching, so the two paths describe one ordering rather than competing for it.
+- **`make argocd` applies server-side, and it is the only apply here that does.** A client-side apply records the whole object in a `last-applied-configuration` annotation, and an annotation holds 262,144 bytes: the Application CRD is 406KB and the ApplicationSet CRD is 1.4MB.
+
+**Anything a prod overlay references has to be in git, and `.gitignore` is where that breaks.** `overlays/prod/bff-web` mounts the ES256 verification key through a `configMapGenerator` while `*.pem` is ignored, so that overlay could not be rendered from a clean checkout from the day it was written — and nothing reported it, because every path that had ever rendered it was also the machine that ran `make keys`. Argo is the first thing here that reads this repository without having written to it, and it failed on the first sync. The public half is committed now, by a negation narrow enough to name one file; it verifies a signature and cannot make one. The rule it leaves behind is the general one: prod is rendered somewhere else, so a file that only an operator has is a file prod does not have.
 
 CI applies `staging` to a k3d cluster it creates and throws away, which is what keeps it from being a file rather than an environment — and is the only place the manifests meet an *empty* cluster. `make deploy` on a laptop always applies over yesterday's objects, so a resource nobody creates any more, a policy that only works because an older one is still there, and an ordering that only holds when the database is already running are all invisible locally and fail there. It is not a substitute for a durable environment: it has no registry, no TLS, no secret store, and it lives for the length of one job.
 
