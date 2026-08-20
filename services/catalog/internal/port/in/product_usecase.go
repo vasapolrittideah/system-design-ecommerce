@@ -66,6 +66,17 @@ type UpdateVariantCommand struct {
 	Attributes map[string]string
 }
 
+// GetProductQuery is one product read, scoped to the state its caller may see.
+type GetProductQuery struct {
+	ID string
+
+	// Status is the one state this read will answer about, and empty means the
+	// default rather than "any" — for the same reason a listing's does, and with
+	// more at stake: a listing that lost its filter shows a draft among many,
+	// where this one hands a specific draft to whoever asked for it by id.
+	Status domain.ProductStatus
+}
+
 // ListProductsQuery is one page of a browse.
 type ListProductsQuery struct {
 	// Category filters on an exact slug, or every category when empty.
@@ -103,8 +114,9 @@ type ProductPage struct {
 // that the rest has no use for.
 type ProductUseCase interface {
 	// GetProduct reads one product with its variants, and reports not found
-	// rather than nil.
-	GetProduct(ctx context.Context, id string) (*domain.Product, error)
+	// rather than nil — including for a product that exists in a state the
+	// query did not ask about.
+	GetProduct(ctx context.Context, query GetProductQuery) (*domain.Product, error)
 
 	// GetProductsByIDs reads many, returning only the ones that exist. This is
 	// the read a BFF fans out to fill a screen, so one archived product must not

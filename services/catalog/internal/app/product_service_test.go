@@ -140,7 +140,7 @@ func TestGetProduct(t *testing.T) {
 
 		products.EXPECT().FindByID(mock.Anything, stored.ID()).Return(stored, nil).Once()
 
-		got, err := service.GetProduct(context.Background(), stored.ID().String())
+		got, err := service.GetProduct(context.Background(), in.GetProductQuery{ID: stored.ID().String()})
 		if err != nil {
 			t.Fatalf("GetProduct() error = %v, want nil", err)
 		}
@@ -156,10 +156,51 @@ func TestGetProduct(t *testing.T) {
 		// typo.
 		_, _, service := setup(t)
 
-		_, err := service.GetProduct(context.Background(), "not-a-uuid")
+		_, err := service.GetProduct(context.Background(), in.GetProductQuery{ID: "not-a-uuid"})
 
 		if got := errorx.KindOf(err); got != errorx.KindInvalidInput {
 			t.Errorf("KindOf() = %q, want %q", got, errorx.KindInvalidInput)
+		}
+	})
+
+	t.Run("a draft is not found for a query that named no status", func(t *testing.T) {
+		// The storefront's read, and the whole reason the status is on the
+		// request: a draft handed back here reaches a shopper who guessed a
+		// UUID.
+		products, _, service := setup(t)
+		stored := storedProduct(t, domain.StatusDraft)
+
+		products.EXPECT().FindByID(mock.Anything, stored.ID()).Return(stored, nil).Once()
+
+		_, err := service.GetProduct(context.Background(), in.GetProductQuery{ID: stored.ID().String()})
+
+		if got := errorx.KindOf(err); got != errorx.KindNotFound {
+			t.Errorf("KindOf() = %q, want %q", got, errorx.KindNotFound)
+		}
+
+		// Not found and not forbidden, so the two answers do not tell a prober
+		// which ids name a draft.
+		if got := errorx.Reason(err); got != "PRODUCT_NOT_FOUND" {
+			t.Errorf("Reason() = %q, want PRODUCT_NOT_FOUND", got)
+		}
+	})
+
+	t.Run("a draft is found by a query that asked for one", func(t *testing.T) {
+		products, _, service := setup(t)
+		stored := storedProduct(t, domain.StatusDraft)
+
+		products.EXPECT().FindByID(mock.Anything, stored.ID()).Return(stored, nil).Once()
+
+		got, err := service.GetProduct(context.Background(), in.GetProductQuery{
+			ID:     stored.ID().String(),
+			Status: domain.StatusDraft,
+		})
+		if err != nil {
+			t.Fatalf("GetProduct() error = %v, want nil", err)
+		}
+
+		if got.ID() != stored.ID() {
+			t.Errorf("GetProduct() id = %q, want %q", got.ID(), stored.ID())
 		}
 	})
 }

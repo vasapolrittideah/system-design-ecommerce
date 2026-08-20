@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/catalog/internal/domain"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/catalog/internal/port/in"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/catalog/internal/port/out"
@@ -35,14 +36,40 @@ func NewProductService(products out.ProductRepository, tx out.TxManager) *Produc
 	return &ProductService{products: products, tx: tx}
 }
 
-// GetProduct reads one product with its variants.
-func (s *ProductService) GetProduct(ctx context.Context, id string) (*domain.Product, error) {
-	productID, err := domain.ParseProductID(id)
+// GetProduct reads one product with its variants, in the state the query asked
+// about and not found in any other.
+//
+// The state is checked here rather than in the query the repository runs because
+// there is no page to narrow: the row is fetched by primary key either way, and
+// a second WHERE clause would only move the same comparison into SQL.
+func (s *ProductService) GetProduct(ctx context.Context, query in.GetProductQuery) (*domain.Product, error) {
+	productID, err := domain.ParseProductID(query.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.products.FindByID(ctx, productID)
+	status := query.Status
+	if status == "" {
+		// The storefront is the caller, and of the two ways to be wrong here,
+		// handing a shopper an unfinished draft is the one nobody notices until
+		// it is on a screen.
+		status = domain.StatusActive
+	}
+
+	product, err := s.products.FindByID(ctx, productID)
+	if err != nil {
+		return nil, err
+	}
+
+	if product.Status() != status {
+		// Not found and not forbidden: whether a draft exists under this id is
+		// itself something a caller asking about published products does not
+		// get to learn, and the two answers are distinguishable.
+		return nil, errorx.New(errorx.KindNotFound, "product %s not found", query.ID).
+			WithReason("PRODUCT_NOT_FOUND")
+	}
+
+	return product, nil
 }
 
 // GetProductsByIDs reads many.

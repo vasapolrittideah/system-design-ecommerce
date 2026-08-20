@@ -16,12 +16,17 @@ import (
 //
 // There is no authorization check, and that is a decision rather than an
 // omission: this RPC is reached over east-west gRPC, and a published catalog is
-// what the storefront shows everybody.
+// what the storefront shows everybody. What is *not* published is kept out by
+// the status on the request rather than by a caller's identity — an unset one
+// asks about active products, so a BFF gets that answer by saying nothing.
 func (h *CatalogHandler) GetProduct(
 	ctx context.Context,
 	req *catalogv1.GetProductRequest,
 ) (*catalogv1.GetProductResponse, error) {
-	product, err := h.products.GetProduct(ctx, req.GetId())
+	product, err := h.products.GetProduct(ctx, in.GetProductQuery{
+		ID:     req.GetId(),
+		Status: fromProtoStatus(req.GetStatus()),
+	})
 	if err != nil {
 		return nil, errorx.ToGRPC(err)
 	}
@@ -182,7 +187,7 @@ func fromProtoVariant(variant *catalogv1.NewVariant) in.NewVariant {
 	}
 }
 
-// fromProtoStatus maps the filter a listing carries.
+// fromProtoStatus maps the state filter a read carries.
 //
 // An unspecified status becomes the empty one rather than a default chosen here:
 // what the storefront sees when it does not ask is a decision the use case owns,

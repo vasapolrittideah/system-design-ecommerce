@@ -25,6 +25,7 @@ type stubUseCase struct {
 	addVariant    in.AddVariantCommand
 	updateVariant in.UpdateVariantCommand
 	query         in.ListProductsQuery
+	get           in.GetProductQuery
 	id            string
 	ids           []string
 
@@ -33,8 +34,8 @@ type stubUseCase struct {
 	err     error
 }
 
-func (s *stubUseCase) GetProduct(_ context.Context, id string) (*domain.Product, error) {
-	s.id = id
+func (s *stubUseCase) GetProduct(_ context.Context, query in.GetProductQuery) (*domain.Product, error) {
+	s.get = query
 
 	return s.product, s.err
 }
