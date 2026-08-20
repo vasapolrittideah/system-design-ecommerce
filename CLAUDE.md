@@ -24,7 +24,7 @@ deploy/k8s/
   infra/kong/kong.yml    # declarative DB-less Kong config
   base/<name>/           # the service, described once
   components/<name>-postgres/   # the database an overlay runs itself
-  overlays/{local,staging}/<name>/
+  overlays/{local,staging,prod}/<name>/
 ```
 
 Single `go.mod` for the whole repo. Do not introduce per-service modules or a `go.work` unless explicitly asked.
@@ -298,14 +298,17 @@ make dev                # tilt up — watch, rebuild, redeploy
 make up                 # apply deploy/k8s/infra into the cluster
 make deploy SVC=x       # build image, run the migration Job, roll out
 make stack OVERLAY=staging  # deploy every service, BFFs last, then smoke
+make stack OVERLAY=prod BUILD=0  # same, pulling the images CI published
 make load SCENARIO=me   # k6 through Kong, with its rate limits raised for the run
 ```
 
 The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies every service shares (Jaeger, Kong DB-less, Reloader; Kafka in KRaft mode as the phase needing it arrives) and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/<env>/<name>` for the services.
 
-**There are two overlays, and the second one exists to keep the first honest.** `local` is the laptop stack, and every line in it is a relaxation that has to earn its place — console logs, gRPC reflection, a 10m CPU request, a two-minute reservation TTL. `staging` overrides almost nothing, so base is deployed as written; what it does override is the database host, the plaintext opt-out, and the JWT `iss`/`aud`, which name the deployment rather than the service precisely so that one environment's token cannot open another's session. Without a second overlay, "base is environment-agnostic" is a claim nobody can check, and the first environment that is not a laptop is where every laptop-shaped default in it gets discovered at once.
+**There are three overlays, and each one exists to keep the one before it honest.** `local` is the laptop stack, and every line in it is a relaxation that has to earn its place — console logs, gRPC reflection, a 10m CPU request, a two-minute reservation TTL. `staging` overrides almost nothing, so base is deployed as written; what it does override is the database host, the plaintext opt-out, and the JWT `iss`/`aud`, which name the deployment rather than the service precisely so that one environment's token cannot open another's session. Without that second overlay, "base is environment-agnostic" is a claim nobody can check, and the first environment that is not a laptop is where every laptop-shaped default in it gets discovered at once.
 
-**Images are published to ghcr on every trunk commit, tagged with that commit's SHA and nothing else.** `ghcr.io/<owner>/<repo>/<service>:<sha>`, plus `<service>-migrate` where the service owns a database. A tag that follows a branch is one somebody deploys by accident, and it is also the tag a GitOps controller cannot see change — the reference has to name one build forever, which is what makes a rollback a reference change rather than a rebuild. Nothing in the repo points at these yet: the overlays deploy images built locally and imported, because the only cluster running them is one CI throws away.
+`prod` is the cluster that actually serves, and it differs from staging in two things. Its images are pulled from ghcr by SHA rather than built on the machine running the deploy — which is why `make deploy` takes `BUILD=0`: the build path ends in `k3d image import` and means nothing for a cluster that is not on this machine. And it declares no Secret at all. base mounts `<svc>-secret` with `envFrom`, so a Secret that does not exist stops the pod at `CreateContainerConfigError`, loudly, before it serves anything — which is the correct failure for a cluster facing the internet, where the alternative is a password committed to a public repository. The Secret is created out of band.
+
+**Images are published to ghcr on every trunk commit, tagged with that commit's SHA and nothing else.** `ghcr.io/<owner>/<repo>/<service>:<sha>`, plus `<service>-migrate` where the service owns a database. A tag that follows a branch is one somebody deploys by accident, and it is also the tag a GitOps controller cannot see change — the reference has to name one build forever, which is what makes a rollback a reference change rather than a rebuild. `overlays/prod` is what points at them, one `newTag` line per image, updated with `kustomize edit set image` and read back off the file to know what is running. `local` and `staging` keep building and importing, because the clusters running those are on the machine doing the deploy.
 
 They carry `linux/amd64` and `linux/arm64` both, since the host they will eventually run on is not chosen and the cheapest ones are ARM. That is close to free rather than twice the work — the build stage runs on the builder's own architecture and cross-compiles, so only the migrate stage's `apk` is emulated — but it holds two rules in the Dockerfiles that fail in one direction only, and therefore never on a laptop building for itself: the `build` stage must be pinned to `$BUILDPLATFORM` and pass `GOOS`/`GOARCH` down, and goose has to be built into a fixed path, because `go install pkg@version` refuses to run with `GOBIN` set while cross-compiling and otherwise hides the binary in a directory named after an architecture. The pull request build covers both platforms for that reason.
 
