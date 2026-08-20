@@ -1,0 +1,38 @@
+# The one object applied by hand, and the last one.
+#
+#	kubectl apply -f deploy/k8s/apps/prod/root.yaml
+#
+# It manages the directory beside it, so every Application in this deployment is
+# a file in git rather than something somebody created in a UI once. Adding a
+# service is adding a file here; removing one is removing a file, and prune
+# below is what makes the second half true.
+#
+# It is not self-managing on purpose. Argo can watch the file that defines Argo
+# watching things, and the failure mode when that goes wrong is a controller
+# that has deleted its own reason to exist — recoverable only by the command at
+# the top of this comment, at which point the self-management bought nothing.
+#
+# Its project is `default` rather than `ecommerce`, because what it creates are
+# Applications in the argocd namespace, which is precisely what the ecommerce
+# project exists to forbid. This is the only Application in the cluster with
+# that reach, which is why there is exactly one of it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vasapolrittideah/system-design-ecommerce.git
+    targetRevision: trunk
+    path: deploy/k8s/apps/prod/apps
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false

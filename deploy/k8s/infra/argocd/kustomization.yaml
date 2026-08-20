@@ -32,3 +32,6 @@ resources:
   - namespace.yaml
   - crds.yaml
   - install.yaml
+
+patches:
+  - path: patch-tracking.yaml

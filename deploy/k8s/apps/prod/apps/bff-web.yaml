@@ -1,0 +1,23 @@
+# bff-web, reconciled from its prod overlay.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bff-web
+  namespace: argocd
+spec:
+  project: ecommerce
+  source:
+    repoURL: https://github.com/vasapolrittideah/system-design-ecommerce.git
+    # A branch, and this is the one place in the repository where following one
+    # is right. An image tag may never move, because it has to name one build
+    # forever; a git revision is the opposite — it is what "the current state of
+    # the system" means, and the commit that changes it is the deploy.
+    targetRevision: trunk
+    path: deploy/k8s/overlays/prod/bff-web
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ecommerce
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false

@@ -1,0 +1,18 @@
+# How Argo marks the resources it owns.
+#
+# The default is a label — it writes app.kubernetes.io/instance onto every
+# object it manages. That works, and it would mean the controller silently
+# adding a label to every Deployment, Service, and NetworkPolicy in this
+# repository that none of these files declare and that `make deploy` would
+# strip off again on the next apply.
+#
+# An annotation says the same thing where nothing selects on it. Labels in this
+# repository carry meaning that something reads — a Service's selector, a
+# NetworkPolicy's podSelector, Prometheus's relabelling, Loki's stream — and
+# ownership by a controller is not that kind of fact.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  application.resourceTrackingMethod: annotation

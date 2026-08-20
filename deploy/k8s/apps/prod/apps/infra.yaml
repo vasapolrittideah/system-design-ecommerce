@@ -1,0 +1,37 @@
+# The shared infrastructure and the tunnel, reconciled from overlays/prod/infra.
+#
+# It is one Application rather than one per component because that directory is
+# one kustomization: Kong, Jaeger, Loki, Alloy, Prometheus, Grafana, Reloader,
+# and cloudflared are deployed together or not at all, and splitting them here
+# would invent a boundary the manifests do not have.
+#
+# The SealedSecret in it is applied like any other resource. What the controller
+# in kube-system decrypts out of it is a Secret this Application never sees and
+# never prunes — it carries no tracking annotation, having been created by
+# something else. That is the whole of what makes secrets and GitOps compatible
+# here, and it needs no configuration.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: infra
+  namespace: argocd
+spec:
+  project: ecommerce
+  source:
+    repoURL: https://github.com/vasapolrittideah/system-design-ecommerce.git
+    targetRevision: trunk
+    path: deploy/k8s/overlays/prod/infra
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ecommerce
+  syncPolicy:
+    automated:
+      # Deleting a file deletes the object. Without this, removing a workload
+      # from the repository leaves it running with nothing describing it, which
+      # is the state GitOps exists to make impossible.
+      prune: true
+      # Deliberately off for now. With it on, a kubectl edit made at three in
+      # the morning is reverted within minutes — correct in principle, and the
+      # wrong thing to discover during an incident. Turn it on once the shape
+      # of this is familiar.
+      selfHeal: false

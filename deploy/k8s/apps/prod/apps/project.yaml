@@ -1,0 +1,38 @@
+# The boundary every Application below is allowed to act inside.
+#
+# Argo ships a `default` project that permits any repository, any cluster, any
+# namespace, and any kind — which makes an Application a thing that can do
+# anything the controller can. This one says what these five actually need, and
+# it is the same instinct as the NetworkPolicies beside the workloads: the rule
+# is written next to the thing it constrains, and a change that steps outside it
+# fails rather than working.
+#
+# The cluster-scoped allow-list is two kinds, and it is a list rather than an
+# empty set because `overlays/prod/infra` genuinely holds two: the ClusterRole
+# and ClusterRoleBinding that let Prometheus discover pods and Alloy read them.
+# Everything else cluster-wide — a Namespace, a CRD, a webhook, a
+# PersistentVolume — is refused, which is what makes this worth writing down.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ecommerce
+  namespace: argocd
+  annotations:
+    # Before the Applications that name it. Argo has no dependency graph; a
+    # wave is how one resource is made to land first.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: The e-commerce stack, reconciled from trunk into one namespace
+
+  sourceRepos:
+    - https://github.com/vasapolrittideah/system-design-ecommerce.git
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: ecommerce
+
+  clusterResourceWhitelist:
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
