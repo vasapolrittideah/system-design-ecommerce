@@ -1,0 +1,48 @@
+name: Release
+
+# What this does and, more importantly, what it does not.
+#
+# It maintains one pull request against trunk holding the next version and the
+# changelog entries for every commit since the last release. Merging that pull
+# request is what cuts the release: the tag and the GitHub Release are created
+# from the merge, not from this run.
+#
+# It touches no image and no overlay. Image tags stay commit SHAs, chosen by a
+# person and committed into deploy/k8s/overlays/prod — a version here names a
+# point in the repository's history, which is a different question from which
+# build is running in the cluster, and conflating the two is how a tag that has
+# to name one build forever starts moving.
+on:
+  push:
+    branches: [trunk]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    name: Release pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Creating the tag and the GitHub Release on merge.
+      contents: write
+      # Opening and updating the release pull request.
+      pull-requests: write
+    steps:
+      # The default GITHUB_TOKEN is deliberate, and it has one consequence worth
+      # knowing: a pull request opened with it does not trigger other workflows,
+      # so `ci` never runs on the release pull request. That is tolerable only
+      # because the release pull request changes CHANGELOG.md and the manifest
+      # and nothing else — no Go, no proto, no manifest under deploy/.
+      #
+      # If branch protection requires the `ci` check, that pull request cannot
+      # merge on its own. The way out is a PAT with `contents: write` and
+      # `pull_requests: write` in `token:` below, which makes the pull request
+      # look like it came from a person and lets CI run on it as usual.
+      - uses: googleapis/release-please-action@v4
+        with:
+          target-branch: trunk
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
