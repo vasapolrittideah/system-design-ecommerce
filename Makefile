@@ -715,7 +715,7 @@ argocd: ## Install the GitOps controller that reconciles prod against this repo
 .PHONY: smoke
 smoke: ## Smoke-test the deployed stack through the gateway (BASE_URL=...)
 	$(call need_bin,jq,brew install jq)
-	@BASE_URL="$(BASE_URL)" scripts/smoke.sh
+	@BASE_URL="$(BASE_URL)" NAMESPACE="$(NAMESPACE)" scripts/smoke.sh
 
 .PHONY: undeploy
 undeploy: ## Remove a service from the cluster (SVC=identity [OVERLAY=staging])

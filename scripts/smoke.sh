@@ -45,6 +45,12 @@ set -euo pipefail
 BASE_URL="${1:-${BASE_URL:-http://localhost:8000}}"
 BASE_URL="${BASE_URL%/}"
 
+# Only ever printed, never used to reach anything — this script talks to the
+# gateway over HTTP and to no cluster. It exists so that a failure hint names
+# the namespace the run was actually about, since staging and prod share a
+# cluster and differ by nothing else.
+NAMESPACE="${NAMESPACE:-ecommerce}"
+
 # Unique per run: register is not idempotent, and a fixed address would turn the
 # second run into a conflict that looks like a broken deploy.
 EMAIL="smoke-$(date +%s)-${RANDOM}@example.test"
@@ -132,9 +138,10 @@ begin 'gateway answers'
 # that just became Ready is not in the ring balancer until the DNS record it
 # resolves expires. Both are transient, so the first check is the one that waits.
 attempt=0
+connect_attempt=0
 until status="$(request GET /smoke-does-not-exist)" && [[ "$status" != "000" ]]; do
-    attempt=$((attempt + 1))
-    if ((attempt >= 20)); then
+    connect_attempt=$((connect_attempt + 1))
+    if ((connect_attempt >= 20)); then
         fail "no answer from ${BASE_URL} after 20 attempts" \
             "Is the stack up? Try: make up && make dev" \
             "The gateway is k3d's load balancer on 8000, not a port-forward."
@@ -142,12 +149,28 @@ until status="$(request GET /smoke-does-not-exist)" && [[ "$status" != "000" ]];
     sleep 3
 done
 
+# A separate budget from the connect loop above, and a much wider one, because
+# this wait has a measured floor rather than an unknown cause.
+#
+# A Kong that resolved its upstream while bff-web had no ready endpoint does not
+# pick it up when the endpoint appears — it picks it up on its own cycle, which
+# measured at 59 seconds twice, on a laptop cluster, watching a healthy bff-web
+# be answered 503 the whole time. Lowering KONG_DNS_NOT_FOUND_TTL to 5 changed
+# nothing, so the number is not the negative-DNS cache and is not a knob this
+# repo currently knows how to turn.
+#
+# Two situations enter that window: a Kong restart while bff-web is between
+# pods, and every fresh cluster, where `make up` starts the gateway before the
+# service it routes to exists. The second is what CI does on every run, which
+# made a 20-attempt budget shared with the loop above a coin flip — CI failed on
+# it, then passed on a rerun of the identical commit. 40 attempts is 120s, which
+# clears the measured 59 with room rather than by a second.
 while [[ "$status" == "502" || "$status" == "503" ]]; do
     attempt=$((attempt + 1))
-    if ((attempt >= 20)); then
-        fail "gateway still answering ${status} after 20 attempts" \
+    if ((attempt >= 40)); then
+        fail "gateway still answering ${status} after 40 attempts (120s)" \
             "Kong is up but has no healthy bff-web to route to." \
-            "Try: kubectl -n ecommerce get pods,endpoints -l app=bff-web"
+            "Try: kubectl -n ${NAMESPACE} get pods,endpoints -l app.kubernetes.io/name=bff-web"
     fi
     sleep 3
     status="$(request GET /smoke-does-not-exist)"
