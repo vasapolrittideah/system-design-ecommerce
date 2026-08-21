@@ -14,6 +14,9 @@ metadata:
   name: inventory-reaper
   annotations:
     reloader.stakater.com/auto: "true"
+    # After the migration in wave 1, so pods never start against a schema the
+    # release has not applied yet. Inert where Argo is not watching.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   # One replica, and no HPA. FOR UPDATE SKIP LOCKED means a second one would be
   # correct rather than harmful — which is what makes a rolling restart safe —

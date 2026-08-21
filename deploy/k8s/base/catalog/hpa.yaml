@@ -2,6 +2,11 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: catalog
+  annotations:
+    # Last, because Argo waits for a wave to report healthy before starting the
+    # next and an HPA whose target does not exist yet reports ScalingActive
+    # false. Ordered after the Deployment it scales, it has something to find.
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   scaleTargetRef:
     apiVersion: apps/v1

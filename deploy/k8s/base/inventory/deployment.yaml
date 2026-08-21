@@ -14,6 +14,9 @@ metadata:
     # byte-identical and kubectl apply rolls nothing. `make deploy` refuses to
     # run when Reloader is not Available for exactly that reason.
     reloader.stakater.com/auto: "true"
+    # After the migration in wave 1, so pods never start against a schema the
+    # release has not applied yet. Inert where Argo is not watching.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   # No replicas field: the HPA owns it. Setting both makes kustomize apply and
   # the autoscaler fight, and every deploy resets the pod count.
