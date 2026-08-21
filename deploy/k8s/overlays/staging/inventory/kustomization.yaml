@@ -53,7 +53,7 @@ generatorOptions:
 images:
   - name: ecommerce/inventory
     newName: ghcr.io/vasapolrittideah/system-design-ecommerce/inventory
-    newTag: 771f3cbaa3f1bf4993f7355edd412e58db802d4d
+    newTag: 0b7a22d0dc405e97d87f6ac289482049beb55ec6
   - name: ecommerce/inventory-migrate
     newName: ghcr.io/vasapolrittideah/system-design-ecommerce/inventory-migrate
-    newTag: 771f3cbaa3f1bf4993f7355edd412e58db802d4d
+    newTag: 0b7a22d0dc405e97d87f6ac289482049beb55ec6
