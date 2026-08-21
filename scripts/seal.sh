@@ -94,7 +94,20 @@ for dir in "$overlay_dir"/*/; do
     # new password here would leave the database on the old one and the service
     # unable to log in — with both halves insisting they agree.
     if [[ ! -f "$password_file" ]]; then
-        openssl rand -base64 24 | tr -d '\n' >"$password_file"
+        # URL-safe base64, and the substitution is load-bearing rather than
+        # tidiness. Every consumer of this password builds a DSN by
+        # interpolating it into postgres://user:pass@host:port/db — the
+        # migration Job in a shell, pkg/postgres in Go — and plain base64 emits
+        # '/' and '+'. A '/' ends the URI authority, so the password's tail
+        # becomes a path and the parser reports "invalid port after host",
+        # naming a fragment of the credential in a log line as it goes.
+        #
+        # It cost staging its first identity migration and it had never fired
+        # in prod, whose three passwords happen to contain no punctuation at
+        # all. A one-in-a-few chance per rotation is not a thing to leave
+        # standing. 24 bytes is divisible by 3, so there is no '=' padding to
+        # worry about either.
+        openssl rand -base64 24 | tr '+/' '-_' | tr -d '\n' >"$password_file"
         chmod 600 "$password_file"
         wrote "$password_file"
     else
