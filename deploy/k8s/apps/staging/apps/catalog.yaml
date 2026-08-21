@@ -1,0 +1,30 @@
+# catalog, reconciled from its staging overlay.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  # Suffixed, because an Application name is unique within the argocd namespace
+  # and prod already holds the plain one.
+  name: catalog-staging
+  namespace: argocd
+spec:
+  project: ecommerce-staging
+  source:
+    repoURL: https://github.com/vasapolrittideah/system-design-ecommerce.git
+    # A branch, and this is the one place in the repository where following one
+    # is right. An image tag may never move, because it has to name one build
+    # forever; a git revision is the opposite — it is what "the current state of
+    # the system" means, and the commit that changes it is the deploy.
+    targetRevision: trunk
+    path: deploy/k8s/overlays/staging/catalog
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ecommerce-staging
+  syncPolicy:
+    automated:
+      prune: true
+      # Off here for the same reason it is off in prod: reverting a hand edit
+      # within minutes is right in principle and the wrong thing to meet while
+      # debugging. It is also what keeps `make deploy SVC=catalog
+      # OVERLAY=staging` usable for a one-off experiment instead of being
+      # quietly undone thirty seconds later.
+      selfHeal: false

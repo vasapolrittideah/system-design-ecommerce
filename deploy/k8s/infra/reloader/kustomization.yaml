@@ -1,8 +1,24 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# No namespace and no shared labels here: the infra kustomization that includes
-# this directory sets both, the same way it does for every other dependency.
+# The controller that restarts a workload when a ConfigMap or Secret it reads
+# has changed content. Configuration is read from env once, at container start,
+# so without this a rotated signing key reports success and takes effect on
+# nothing.
+#
+# Unlike the other dependencies under infra/, this one is NOT listed in
+# deploy/k8s/infra/kustomization.yaml, and `make up` applies it on its own into
+# kube-system. It is a cluster singleton, the same as the sealed-secrets
+# controller beside it, and for a reason that only became visible when two
+# environments started sharing a cluster: its RBAC is a ClusterRole and a
+# ClusterRoleBinding, which are cluster-scoped objects with one name each.
+# Deployed once per namespace, the prod and staging copies would be two Argo
+# Applications owning one object and rewriting each other's — a binding
+# flapping between two ServiceAccounts, and a reloader intermittently unable to
+# read the ConfigMaps it watches.
+#
+# One instance watches every namespace, which is what the ClusterRole was
+# always for.
 
 # These two files are one upstream document, pinned at v1.4.21 and committed
 # rather than fetched at build time, so `kustomize build` stays offline and a
@@ -15,6 +31,13 @@ kind: Kustomization
 # rbac.yaml and the Deployment into deployment.yaml — and re-apply the header
 # comment of each. Diff before replacing: upstream may add a document, and one
 # that lands in neither file is a permission this operator silently lacks.
+namespace: kube-system
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: ecommerce
+
 resources:
   - rbac.yaml
   - deployment.yaml

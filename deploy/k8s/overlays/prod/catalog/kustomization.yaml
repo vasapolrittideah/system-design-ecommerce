@@ -3,14 +3,17 @@ kind: Kustomization
 
 # catalog, on the cluster that actually serves.
 #
-# It differs from staging in one structural way and one only: the images are
-# pulled from a registry by digest-stable tag rather than built on the machine
-# doing the deploy and imported into its cluster. Everything else staging holds
-# holds here, which is the point of having had staging first — base is deployed
-# as written, and this file is short enough to read in one sitting.
+# It is the staging overlay with one value changed — the namespace — and one
+# behaviour changed: the tag below moves when a person runs `Deploy prod`,
+# rather than on every push to trunk. That is the entire difference, and it is
+# meant to be: an environment that stood in front of prod while differing
+# structurally from it would be proving something about itself.
 #
-# `make deploy SVC=catalog OVERLAY=prod BUILD=0` is how it lands. BUILD=0 is not
-# an optimisation: the build path ends in `k3d image import`, which means
+# The two run on one k3s host, in two namespaces, reconciled by two Argo roots.
+#
+# `make deploy SVC=catalog OVERLAY=prod BUILD=0` is the emergency path, for the
+# incident where waiting on a commit and a sync is the wrong shape. BUILD=0 is
+# not an optimisation: the build path ends in `k3d image import`, which means
 # nothing for a cluster that is not on this machine.
 namespace: ecommerce
 
@@ -32,10 +35,10 @@ configMapGenerator:
 generatorOptions:
   disableNameSuffixHash: true
 
-# No secretGenerator, and its absence is most of the difference between this
-# overlay and staging's. staging holds its password as a literal because its
-# cluster lives for the length of one CI job; this one faces the internet, and a
-# password committed to a public repository is not one.
+# No secretGenerator, and staging has none either — `local` is the one overlay
+# that holds its password as a literal, because its cluster is a laptop's and
+# has nothing on it worth stealing. Both durable environments face the internet,
+# and a password committed to a public repository is not one.
 #
 # `sealedsecret.yaml` above carries the same values encrypted, written by
 # `make seal OVERLAY=prod` and readable only by the controller in the cluster it
@@ -50,12 +53,13 @@ generatorOptions:
 # Published by the `publish` job in CI, which tags every image with the commit
 # that produced it. The tag is a SHA rather than a branch name on purpose: it
 # names one build forever, so what is running here can be read off this file,
-# and a rollback is a change to these four lines rather than a rebuild.
+# and a rollback is a change to these lines rather than a rebuild.
 #
-# Updating it is `kustomize edit set image` in this directory, or editing the
-# tag by hand — and that edit, committed, is the deploy: Argo watches this
-# directory on trunk and reconciles the cluster against it. What stays manual
-# is choosing the tag, which is the half worth keeping a person in.
+# Moved by the `Deploy prod` workflow, and that commit is the deploy: Argo
+# watches this directory on trunk and reconciles the cluster against it.
+# Choosing the tag stays a person's job here, which is the difference from
+# staging — CI bumps that one on every push, so the tag a person picks here has
+# already been running somewhere for a while.
 images:
   - name: ecommerce/catalog
     newName: ghcr.io/vasapolrittideah/system-design-ecommerce/catalog

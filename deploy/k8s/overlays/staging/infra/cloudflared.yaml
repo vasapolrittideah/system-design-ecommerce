@@ -1,0 +1,48 @@
+# The tunnel, as cloudflared reads it. Mounted as config.yaml.
+#
+# A second tunnel rather than a second hostname on prod's, and the distinction
+# matters. One tunnel's replicas all register to the same Cloudflare tunnel, and
+# the edge spreads requests for every hostname across every connection — so a
+# staging hostname added to prod's tunnel would arrive at prod's cloudflared
+# pods, whose ingress list would answer 404, roughly half the time. Two tunnels
+# means two credentials, two DNS routes, and one destination each.
+#
+# Setting it up, once, on the operator's machine:
+#
+#	cloudflared tunnel login                          # browser, picks the zone
+#	cloudflared tunnel create ecommerce-staging       # prints the ID below
+#	cp ~/.cloudflared/<id>.json \
+#	   deploy/k8s/overlays/staging/infra/cloudflared-credentials.json
+#	cloudflared tunnel route dns ecommerce-staging staging-api.vasapol.dev
+#	make seal OVERLAY=staging                         # encrypts the credentials
+#	make up OVERLAY=staging
+#
+# `route dns` is what creates the proxied CNAME from staging-api.vasapol.dev to
+# <id>.cfargotunnel.com. Without it the tunnel registers and stays idle, which
+# looks exactly like a healthy deploy — every pod Ready, no request arriving.
+
+# The tunnel this process is. `cloudflared tunnel create` prints it and names
+# the credentials file after it. Left as a placeholder on purpose: cloudflared
+# refuses to start on it, which is a better first deploy than one that silently
+# serves nothing.
+tunnel: 943c6d43-e7d8-4e16-a5e9-e90b418e30fe
+
+# Written by `make seal OVERLAY=staging` into the SealedSecret beside this file,
+# decrypted by the controller into the Secret the component mounts here.
+credentials-file: /etc/cloudflared/creds/credentials.json
+
+# The gateway in this namespace, named in full. `kong` alone would resolve
+# through the pod's search path to whichever namespace this happens to run in,
+# which is right until somebody copies this file — and the copy it would be
+# copied from is prod's. Spelling out ecommerce-staging is what makes the
+# difference between the two files visible in a diff.
+#
+# Everything else is refused here rather than forwarded, which is the rule that
+# matters: without it cloudflared answers a request for any other hostname
+# pointed at this tunnel by proxying it somewhere, and the whole reason the
+# gateway is the only in-cluster destination — rate limits, the body cap, the
+# correlation ID — would depend on nobody adding a second entry.
+ingress:
+  - hostname: staging-api.vasapol.dev
+    service: http://kong.ecommerce-staging.svc.cluster.local:80
+  - service: http_status:404

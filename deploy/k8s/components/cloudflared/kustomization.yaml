@@ -6,10 +6,12 @@ kind: Component
 #
 # A component rather than one more directory under infra/, for the same reason
 # a service's Postgres instance is one: it is not shared infrastructure but a
-# choice a particular deployment makes. `local` and `staging` are k3d clusters
-# on the machine doing the deploy, reached on localhost through k3d's own port
-# mappings, and a tunnel in front of either would be a second front door with
-# nothing behind it. Only `prod` includes this.
+# choice a particular deployment makes. `local` is a k3d cluster on the machine
+# doing the deploy, reached on localhost through k3d's own port mappings, and a
+# tunnel in front of it would be a second front door with nothing behind it. `staging` and `prod` each include this and each run their
+# own tunnel — one per hostname, because the edge spreads a tunnel's traffic
+# across every replica registered to it, and two hostnames on one tunnel would
+# reach the wrong ingress list half the time.
 #
 # What it deliberately does not hold is which hostnames the tunnel answers for,
 # or the credentials that let it register. Both name one Cloudflare account and

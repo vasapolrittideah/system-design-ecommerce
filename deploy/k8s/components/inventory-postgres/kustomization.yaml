@@ -3,8 +3,8 @@ kind: Component
 
 # The database inventory owns, for an overlay that has to run one itself.
 #
-# A component rather than a directory each overlay copies: local and staging
-# both bring their own instance, and the same instance described twice is the
+# A component rather than a directory each overlay copies: all three overlays
+# bring their own instance, and the same instance described twice is the
 # arrangement where one of them quietly gets a setting the other does not. An
 # overlay pointing at a managed instance includes nothing from here and sets
 # INVENTORY_DB_HOST to wherever that instance lives.

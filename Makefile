@@ -51,22 +51,36 @@ BACKEND_SERVICES := $(filter-out bff-%,$(SERVICES))
 # Local Kubernetes stack. The cluster is created once and outlives everything
 # else; NAMESPACE is where both the infra and the services land.
 CLUSTER   ?= ecommerce
-NAMESPACE ?= ecommerce
+
+# The namespace an environment's workloads land in, and for staging it is the
+# only thing separating it from prod: the two share one k3s host. Every other
+# overlay keeps the plain name, because those clusters hold one environment
+# each and a manifest copied between them then needs no edit.
+#
+# Renaming staging's invalidates every SealedSecret in that overlay — sealing is
+# scoped to namespace and name together — so this is not a value to tidy.
+NAMESPACE ?= $(if $(filter staging,$(OVERLAY)),ecommerce-staging,ecommerce)
 K8S_DIR   := deploy/k8s
 IMAGE_TAG ?= dev
 
-# Which overlay the deploy targets apply. `local` is the laptop stack Tilt also
-# drives; `staging` is base as written, which CI applies to a cluster it creates
-# and throws away. An overlay nobody runs is a file rather than an environment,
-# which is the whole reason the second one is wired into CI rather than left for
-# the day a host exists.
+# Which overlay the deploy targets apply. There are three, one per place this
+# system actually runs:
+#
+#   local     the laptop stack Tilt drives; every line in it is a relaxation
+#   staging   trunk's tip, on the k3s host, in a namespace of its own
+#   prod      the cluster that serves, one deliberate promotion behind staging
+#
+# CI applies `local` to a cluster it creates and throws away, which is the only
+# place any overlay meets an *empty* cluster. `staging` is the only one that
+# moves without a person: CI bumps its image tags on every push to trunk.
 OVERLAY ?= local
 
 # The overlays whose cluster k3d created on this machine: `make image` imports
 # into it and `make up` can check that it exists first. Everything not on this
 # list is a cluster somewhere else, and the only thing this repo knows about it
-# is where kubectl is pointing.
-K3D_OVERLAYS ?= local staging
+# is where kubectl is pointing — staging and prod are both the k3s host, told
+# apart by NAMESPACE rather than by kubeconfig.
+K3D_OVERLAYS ?= local
 
 # Whether `make deploy` builds the image first. Building is a local concern: it
 # ends in `k3d image import`, which only means anything for a cluster running on
@@ -99,12 +113,15 @@ DSN ?= postgres://$(SVC):$(DB_PASSWORD)@localhost:5432/$(SVC)?sslmode=disable
 # directly would skip Kong's routes, its upstream, and the Service behind it,
 # which is most of what a deploy breaks.
 #
-# It follows the overlay, because the two clusters are not reached the same way.
-# local and staging answer on the k3d load balancer; prod publishes no port at
-# all and is reached through its Cloudflare tunnel, which means a smoke test
-# there also exercises DNS, the edge, and cloudflared — every hop a real client
-# has, and the three that no manifest in this repo can prove on its own.
-BASE_URL ?= $(if $(filter prod,$(OVERLAY)),https://api.vasapol.dev,http://localhost:8000)
+# It follows the overlay, because the three are not reached the same way. local
+# answers on the k3d load balancer. staging and prod publish no port at all and
+# are reached through a Cloudflare tunnel each, which means a smoke test against either also exercises
+# DNS, the edge, and cloudflared — every hop a real client has, and the three
+# that no manifest in this repo can prove on its own.
+GATEWAY_local   := http://localhost:8000
+GATEWAY_staging := https://staging-api.vasapol.dev
+GATEWAY_prod    := https://api.vasapol.dev
+BASE_URL ?= $(GATEWAY_$(OVERLAY))
 
 # `make deploy SVC=x SMOKE=0` skips the smoke test, for the one case where it is
 # a false alarm: rolling out a service into a cluster that has no bff-web yet.
@@ -124,6 +141,12 @@ DURATION ?= 1m
 WARMUP   ?= 20s
 USERS    ?= 10
 LIMITER  ?= open
+
+# `make load OVERLAY=prod` is refused unless this says prod. The limits Kong
+# holds are what stands between one client and everybody else's service, and a
+# generator behind them is a denial of service with a Makefile target. staging
+# runs the same images from the same registry, which is what it is for.
+CONFIRM  ?=
 
 # `buf breaking` baseline. CI on a PR may want '.git\#branch=origin/trunk'.
 # The backslash is required: an unescaped # starts a Make comment.
@@ -186,8 +209,8 @@ endef
 # without it means a rotated key or a changed setting reports success and takes
 # effect on nothing.
 define need_reloader
-	@kubectl -n $(NAMESPACE) wait --for=condition=Available deployment/reloader-reloader --timeout=30s >/dev/null 2>&1 || { \
-		echo "Reloader is not available in namespace '$(NAMESPACE)'."; \
+	@kubectl -n kube-system wait --for=condition=Available deployment/reloader-reloader --timeout=30s >/dev/null 2>&1 || { \
+		echo "Reloader is not available in kube-system."; \
 		echo "Config and secret changes would silently fail to restart anything — run: make up"; \
 		exit 1; \
 	}
@@ -428,7 +451,7 @@ cluster-create: ## Create the k3d cluster (run once, survives reboots)
 		-p "8443:443@loadbalancer" \
 		--registry-create $(REGISTRY) \
 		--wait
-	kubectl apply -f $(K8S_DIR)/infra/namespace.yaml
+	kubectl apply -k $(K8S_DIR)/overlays/local/namespace
 	kubectl config set-context --current --namespace=$(NAMESPACE)
 
 .PHONY: cluster-delete
@@ -444,7 +467,7 @@ up: ## Start an overlay's shared infra in the cluster (Jaeger, Loki, Alloy, Kong
 	$(need_cluster_if_local)
 	@# Databases are not here: each service brings its own Postgres instance in
 	@# its own overlay, so `make deploy SVC=x` is what starts x's database.
-	kubectl apply -f $(K8S_DIR)/infra/namespace.yaml
+	kubectl apply -k $(K8S_DIR)/overlays/$(OVERLAY)/namespace
 	@# First, and waited on before anything else is applied. It belongs in
 	@# kube-system rather than in the infra kustomization, which would rewrite
 	@# its namespace: the sealing key is generated into a Secret beside the
@@ -455,6 +478,14 @@ up: ## Start an overlay's shared infra in the cluster (Jaeger, Loki, Alloy, Kong
 	@# does not build yet, the state every new cluster starts in.
 	kubectl apply -k $(K8S_DIR)/infra/sealed-secrets
 	kubectl -n kube-system rollout status deployment/sealed-secrets-controller --timeout=180s
+	@# The other cluster singleton, and applied here for the same reason: its
+	@# RBAC is a ClusterRole and a ClusterRoleBinding, which are one object each
+	@# for the whole cluster. Deployed per environment, prod's and staging's
+	@# copies would be two Argo Applications rewriting each other's. One
+	@# instance in kube-system watches every namespace, which is what that
+	@# ClusterRole was always for.
+	kubectl apply -k $(K8S_DIR)/infra/reloader
+	kubectl -n kube-system rollout status deployment/reloader-reloader --timeout=180s
 	kubectl apply -k $(K8S_DIR)/overlays/$(OVERLAY)/infra
 	@# Every infra Deployment by its label, rather than a list of names. The
 	@# list was one an overlay could add to without anyone noticing — prod runs
@@ -628,7 +659,7 @@ deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity [OVE
 	@if [ "$(SMOKE)" = "1" ]; then $(MAKE) smoke; else echo "smoke skipped (SMOKE=0)"; fi
 
 .PHONY: stack
-stack: ## Deploy every service into the cluster, then smoke it (OVERLAY=prod BUILD=0)
+stack: ## Deploy every service into the cluster, then smoke it (OVERLAY=staging BUILD=0)
 	$(need_overlay)
 	@# BFFs last, and only because of what happens in between: a BFF registers
 	@# no readiness check for the services it calls, so one deployed first is
@@ -655,9 +686,10 @@ seal: ## Encrypt an overlay's secrets so they can be committed (OVERLAY=prod)
 argocd: ## Install the GitOps controller that reconciles prod against this repo
 	@# Applied on its own rather than through the infra kustomization, which
 	@# would rewrite its namespace to ecommerce — this belongs in one of its
-	@# own. Deliberately not part of `make up`: local and staging are clusters
-	@# on the machine running the deploy, and pushing at them is the whole
-	@# point, which is the opposite of reconciling them from a branch.
+	@# own. Deliberately not part of `make up`: local is a cluster on the
+	@# machine running the deploy, and pushing at it is the whole point, which
+	@# is the opposite of reconciling it from a branch. staging and prod are
+	@# what this reconciles, one root app each.
 	@# --server-side, and it is the one apply in this repository that needs it.
 	@# A client-side apply records the whole object in a
 	@# last-applied-configuration annotation, and an annotation may hold
@@ -670,8 +702,11 @@ argocd: ## Install the GitOps controller that reconciles prod against this repo
 		kubectl -n argocd rollout status $$deploy --timeout=300s || exit 1; \
 	done
 	@echo
-	@echo "argocd is up, and manages nothing until the root app is applied:"
+	@echo "argocd is up, and manages nothing until a root app is applied:"
+	@echo "  kubectl apply -f $(K8S_DIR)/apps/staging/root.yaml"
 	@echo "  kubectl apply -f $(K8S_DIR)/apps/prod/root.yaml"
+	@echo
+	@echo "one root per environment, so either can be taken down without the other"
 	@echo
 	@echo "the UI is not published — reach it the way Grafana is reached:"
 	@echo "  kubectl -n argocd port-forward svc/argocd-server 8080:443   # https://localhost:8080"
@@ -706,12 +741,21 @@ render: ## Print the manifests an overlay would apply (SVC=identity [OVERLAY=sta
 ##@ Load
 
 .PHONY: load
-load: ## Load-test the deployed stack through the gateway (SCENARIO=me|login RATE=50 DURATION=1m)
+load: ## Load-test a deployed stack through its gateway (OVERLAY=staging SCENARIO=me RATE=50)
+	$(need_overlay)
 	$(call need_bin,k6,brew install k6)
 	@# Deliberately not part of `make deploy` and not in CI. It takes minutes,
 	@# it restarts the gateway twice to move the rate limits and back, and its
-	@# numbers are about a laptop — a gate built on that is a flaky test.
+	@# numbers are about whichever machine it ran against — a gate built on that
+	@# is a flaky test.
+	@#
+	@# OVERLAY reaches the script for two reasons beyond BASE_URL and NAMESPACE:
+	@# it is what refuses a run against prod without CONFIRM=prod, and it is what
+	@# the run prints beside the kubectl context so that a limiter patched into
+	@# the wrong cluster is visible in the first three lines rather than in the
+	@# error rate.
 	@SCENARIO="$(SCENARIO)" BASE_URL="$(BASE_URL)" NAMESPACE="$(NAMESPACE)" \
+		OVERLAY="$(OVERLAY)" CONFIRM="$(CONFIRM)" \
 		RATE="$(RATE)" DURATION="$(DURATION)" WARMUP="$(WARMUP)" USERS="$(USERS)" \
 		LIMITER="$(LIMITER)" scripts/load/run.sh
 

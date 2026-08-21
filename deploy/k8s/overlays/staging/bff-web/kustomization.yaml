@@ -1,30 +1,28 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# bff-web, deployed somewhere that is not a laptop.
+# bff-web, on the environment that stands in front of prod.
 #
-# What makes this overlay worth having is mostly what is absent from it. There
-# is no patch lowering the CPU request so that several services fit on one
-# machine, no console logging, and above all no line sampling every trace: this
-# process is where a trace begins, so the ratio it runs with decides how many
-# traces the whole system has, and local's 1.0 is a laptop's answer to that.
-# Leaving base's 0.1 in place is most of what separates a deployment shaped
-# like production from a demonstration of one.
+# Every mechanism prod's deploy depends on is exercised here first, on the same
+# host, against the same registry, through the same controller. What separates
+# the two is the namespace at the top of this file and nothing structural.
 #
-# CI applies it to a k3d cluster it creates and throws away, which is what
-# keeps it from drifting: an overlay nothing runs is a file, not an
-# environment. The same overlay is what points at a real host later, and one
-# thing has to change first — an image reference that is a digest from a
-# registry rather than a tag imported into the cluster. This service holds no
-# Secret of its own: a public verification key is all the credential it has.
-namespace: ecommerce
+# It moves on its own: CI bumps the tags below to every commit that lands on
+# trunk, so this environment is trunk's tip and prod is a deliberate promotion
+# away from it.
+namespace: ecommerce-staging
 
 resources:
   - ../../../base/bff-web
 
 # The verification key, as a file rather than a config.env line because a PEM
 # does not fit on one. `make keys OVERLAY=staging` writes identity's private
-# half and copies the public half here.
+# half beside it and copies the public half here.
+#
+# It is committed, and it has to be: Argo renders this directory from a clean
+# checkout on the cluster, where a file that exists only on an operator's laptop
+# does not exist. Committing costs nothing — this half verifies a signature and
+# can never make one — and .gitignore names it explicitly for that reason.
 configMapGenerator:
   - name: bff-web-config
     behavior: merge
@@ -35,3 +33,13 @@ configMapGenerator:
 
 generatorOptions:
   disableNameSuffixHash: true
+
+# This service holds no Secret: a public verification key is all the credential
+# it has, so there is no sealedsecret.yaml here the way there is beside every
+# service that owns a database.
+
+# Bumped by the `promote-staging` job in CI on every push to trunk.
+images:
+  - name: ecommerce/bff-web
+    newName: ghcr.io/vasapolrittideah/system-design-ecommerce/bff-web
+    newTag: 13d2328f2615e7593dbfc0d0d6eb1f80940f3e76

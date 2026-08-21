@@ -1,0 +1,35 @@
+# The boundary every staging Application is allowed to act inside.
+#
+# A project of its own rather than sharing prod's, and the reason is the whole
+# reason two environments can share a cluster at all: this one names
+# ecommerce-staging as its only destination namespace, so an Application here
+# that was pointed at a prod overlay by a bad merge is refused rather than
+# applied. The namespace is the boundary between the two environments, and this
+# is what stops an Argo object from stepping over it.
+#
+# The cluster-scoped allow-list is empty, and that is a statement rather than an
+# omission: nothing either environment deploys is cluster-scoped any more. The
+# one thing that was — Reloader's ClusterRole and ClusterRoleBinding — is now a
+# cluster singleton `make up` installs into kube-system, precisely because two
+# environments cannot own one cluster-scoped object between them. A Namespace, a
+# CRD, a webhook, or a PersistentVolume appearing in a render is refused here.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ecommerce-staging
+  namespace: argocd
+  annotations:
+    # Before the Applications that name it. Argo has no dependency graph; a
+    # wave is how one resource is made to land first.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: The e-commerce stack on trunk's tip, reconciled into ecommerce-staging
+
+  sourceRepos:
+    - https://github.com/vasapolrittideah/system-design-ecommerce.git
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: ecommerce-staging
+
+  clusterResourceWhitelist: []

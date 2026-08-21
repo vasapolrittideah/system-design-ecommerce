@@ -1,0 +1,38 @@
+# The one object applied by hand for this environment, and the last one.
+#
+#	kubectl apply -f deploy/k8s/apps/staging/root.yaml
+#
+# It manages the directory beside it, so every Application in staging is a file
+# in git rather than something somebody created in a UI once. Adding a service
+# is adding a file here; removing one is removing a file, and prune below is
+# what makes the second half true.
+#
+# It is a second root rather than a second path under prod's, because the two
+# environments have to be startable and stoppable independently: taking staging
+# down for an afternoon is one `kubectl delete` of this object, and it leaves
+# prod's reconcile untouched.
+#
+# Its project is `default` rather than `ecommerce-staging`, because what it
+# creates are Applications in the argocd namespace, which is precisely what that
+# project exists to forbid. Two Applications in this cluster have that reach —
+# this and prod's root — and nothing else does.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-staging
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vasapolrittideah/system-design-ecommerce.git
+    targetRevision: trunk
+    path: deploy/k8s/apps/staging/apps
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false

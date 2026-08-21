@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The namespace an environment runs in, and the posture it starts from.
+#
+# It is a base of its own rather than a file, because two environments share one
+# cluster: prod and staging are both on the k3s host, told apart by nothing but
+# their namespace. overlays/<env>/namespace sets which one, and kustomize's
+# namespace transformer renames the Namespace object itself — so the name is
+# written once, in the overlay, and the NetworkPolicy below follows it.
+#
+# Deliberately not listed in the infra kustomization beside Kong and Jaeger.
+# `make down` removes that one, and a default-deny that goes away with the
+# monitoring stack is not a default. Taking the namespace down — and with it
+# every PersistentVolumeClaim — is `make clean-volumes`, which should take a
+# second command to say.
+resources:
+  - namespace.yaml

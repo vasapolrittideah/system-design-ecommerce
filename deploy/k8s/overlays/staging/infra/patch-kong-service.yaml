@@ -1,0 +1,19 @@
+# The gateway stops being published on the host.
+#
+# k3s answers type: LoadBalancer with servicelb, which binds ports 80 and 443
+# on every node — on a laptop that is how localhost:8000 reaches Kong, and on a
+# server facing the internet it is the gateway answering on the public IP
+# directly, beside the tunnel and past everything Cloudflare does. This is the
+# one patch here whose absence would not break anything: the tunnel would work,
+# and the front door would simply also be open.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong
+spec:
+  type: ClusterIP
+  ports:
+    # TLS is Cloudflare's now, so nothing terminates it here and there is no
+    # listener left behind this port.
+    - port: 443
+      $patch: delete

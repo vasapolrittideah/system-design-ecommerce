@@ -6,9 +6,11 @@ kind: Kustomization
 # It is applied on its own rather than through deploy/k8s/infra, for the same
 # reason sealed-secrets is: that kustomization sets `namespace: ecommerce` over
 # everything it includes, and this belongs in a namespace of its own. `make
-# argocd` is what applies it, and it is not part of `make up` — local and
-# staging are clusters that live on the machine doing the deploy and are
-# deployed by pushing at them, which is the opposite of what this is for.
+# argocd` is what applies it, and it is not part of `make up` — local is a
+# cluster that lives on the machine doing the deploy and is deployed by pushing
+# at it, which is the opposite of what this is for. What it does
+# reconcile is staging and prod, which share the k3s host: one root app each,
+# under one AppProject each, so either can be taken down without the other.
 #
 # What Argo does here is reconcile, not deploy. The images an overlay names are
 # still bumped by a person committing a new `newTag`; what changes is that the

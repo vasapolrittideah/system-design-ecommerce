@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The namespace staging runs in, and the only thing separating it from prod.
+#
+# They share one k3s host, so this name is the boundary: the Services resolve
+# inside it, the default-deny below applies to it alone, and a SealedSecret
+# sealed for it cannot be read in the other. Renaming it invalidates every
+# sealed credential in this overlay — encryption is scoped to namespace and
+# name together — so it is not a value to tidy.
+namespace: ecommerce-staging
+
+resources:
+  - ../../../infra/namespace

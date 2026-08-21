@@ -59,18 +59,30 @@ for key in [
 # ------------------------------------------------------------------------------
 # Infrastructure
 #
-# The namespace is applied separately because deploy/k8s/infra deliberately
+# Three applies rather than one, matching what `make up OVERLAY=local` does and
+# for the same reasons.
+#
+# The namespace comes from its own overlay because deploy/k8s/infra deliberately
 # excludes it: `make down` has to be able to remove the workloads without taking
 # the PersistentVolumeClaim with them.
 #
-# The local overlay rather than deploy/k8s/infra straight, which is what `make
-# up OVERLAY=local` applies too. deploy/k8s/infra describes each dependency once
-# and holds nothing that names a cluster; the overlay is where this laptop's
-# values are — today that is the browser origin Kong allows, and prod's is
-# where the tunnel lives.
+# Reloader is separate because it is a cluster singleton in kube-system, not a
+# per-environment workload — its RBAC is cluster-scoped, so staging and prod
+# cannot each deploy a copy. Every service below depends on this resource, so a
+# tree where it went missing would fail at `tilt up` rather than by quietly not
+# restarting anything on a config change.
+#
+# The local overlay rather than deploy/k8s/infra straight. deploy/k8s/infra
+# describes each dependency once and holds nothing that names a cluster; the
+# overlay is where this laptop's values are — today that is the browser origin
+# Kong allows, and the durable environments' is where the tunnel lives.
+#
+# The sealed-secrets controller is deliberately absent: local's credentials are
+# a secretGenerator in the overlay, and nothing here is sealed.
 # ------------------------------------------------------------------------------
 
-k8s_yaml('deploy/k8s/infra/namespace.yaml')
+k8s_yaml(kustomize('deploy/k8s/overlays/local/namespace'))
+k8s_yaml(kustomize('deploy/k8s/infra/reloader'))
 k8s_yaml(kustomize('deploy/k8s/overlays/local/infra'))
 
 k8s_resource(
@@ -79,6 +91,8 @@ k8s_resource(
     labels=['infra'],
 )
 
+# In kube-system rather than in the namespace it serves, which is why it is not
+# under the `infra` label's overlay above.
 k8s_resource(
     'reloader-reloader',
     new_name='reloader',

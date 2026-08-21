@@ -20,11 +20,17 @@ kind: Kustomization
 # that service's dependency rather than shared infrastructure — and a shared
 # instance is the arrangement that quietly becomes a shared database.
 
-# namespace.yaml is deliberately not listed. It is applied on its own by
-# `make up`, so that `make down` can remove the workloads without taking the
-# namespace — and with it every PersistentVolumeClaim — down as well. Throwing
-# away the database is `make clean-volumes`, and it should take a second
-# command to say so.
+# Two directories under infra/ are deliberately not listed here, and both are
+# cluster singletons that `make up` applies on their own: sealed-secrets, whose
+# key must not live in a namespace `make clean-volumes` deletes, and reloader,
+# whose RBAC is cluster-scoped and would be one object two environments fought
+# over. Everything listed below is per-environment and can be deployed twice on
+# one cluster without collision.
+#
+# namespace/ is not listed either. It is applied on its own by `make up` too, so
+# that `make down` can remove the workloads without taking the namespace — and
+# with it every PersistentVolumeClaim — down as well. Throwing away the database
+# is `make clean-volumes`, and it should take a second command to say so.
 resources:
   - alloy
   - grafana
@@ -32,7 +38,6 @@ resources:
   - kong
   - loki
   - prometheus
-  - reloader
 
 namespace: ecommerce
 

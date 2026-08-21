@@ -1,22 +1,55 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# The shared infrastructure, on the k3d cluster CI creates and throws away.
+# The shared infrastructure, on the environment that stands in front of prod.
 #
-# It overrides one value, which is the point of this overlay existing at all:
-# everything else in deploy/k8s/infra is applied exactly as written, on every
-# push, against an empty cluster. A gateway that only ever starts on a laptop
-# where yesterday's ConfigMap is still there is one nobody has deployed.
-namespace: ecommerce
+# It is prod's infra overlay with a different namespace and a different tunnel,
+# and the fact that those are the only two differences is what the environment
+# is for: the gateway that stops publishing a port, the client address arriving
+# in a header, and the policy that makes believing that header safe are all
+# exercised here before a release reaches the cluster that serves.
+#
+# Staging runs its own Jaeger, Loki, Alloy, Prometheus and Grafana rather than
+# reporting into prod's. Sharing them would put two environments' spans and
+# series under one `service` label, and `service` is the single name that lets a
+# dashboard move between a metric, a span, and a log line — so one shared
+# backend would not be a saving, it would be the end of that.
+#
+# Reloader is deliberately absent from both this and prod, and is applied by
+# `make up` into kube-system instead: it is a cluster singleton whose RBAC is
+# cluster-scoped, and two environments deploying it would be two Argo
+# Applications owning one ClusterRoleBinding.
+#
+# `make up OVERLAY=staging` is how it lands.
+namespace: ecommerce-staging
 
 resources:
   - ../../../infra
+  # Written by `make seal OVERLAY=staging` from the credentials file beside it,
+  # which stays out of git.
+  - sealedsecret.yaml
+
+# The tunnel. staging and prod each include it and each run their own; local is
+# a k3d cluster on the machine doing the deploy, reached on localhost, and a
+# tunnel in front of it would be a second front door with nothing behind it.
+components:
+  - ../../../components/cloudflared
 
 configMapGenerator:
   - name: kong-config
     behavior: merge
     envs:
       - config.env
+  # The key is what cloudflared expects to find at the path the component
+  # mounts; the filename is what a person reading this directory needs.
+  - name: cloudflared-config
+    files:
+      - config.yaml=cloudflared.yaml
 
 generatorOptions:
   disableNameSuffixHash: true
+
+patches:
+  - path: patch-kong-service.yaml
+  - path: patch-kong-deployment.yaml
+  - path: patch-kong-networkpolicy.yaml

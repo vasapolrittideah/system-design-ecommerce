@@ -287,7 +287,7 @@ if [[ "$status" == "401" ]]; then
         "  deploy/k8s/overlays/<env>/identity/jwt-private.pem" \
         "  deploy/k8s/overlays/<env>/bff-web/jwt-public.pem" \
         "Fix: make keys && make deploy SVC=identity && make deploy SVC=bff-web" \
-        "     — adding OVERLAY=staging to each for the staging overlay"
+        "     — adding OVERLAY=<env> to each for anything but local"
 fi
 [[ "$status" == "200" ]] || fail "expected 200, got ${status}"
 

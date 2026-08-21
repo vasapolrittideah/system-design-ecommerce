@@ -12,7 +12,7 @@ name: Deploy prod
 #
 # Two things it does that the manual edit could not:
 #
-#   - it moves all four overlays together, so a half-bumped prod is not a state
+#   - it moves every prod overlay together, so a half-bumped prod is not a state
 #     that can be pushed
 #   - it refuses a tag whose images are not on ghcr, both architectures present,
 #     which is otherwise discovered as ImagePullBackOff after Argo has synced
@@ -91,6 +91,10 @@ jobs:
 
           : > images.txt
           for dir in deploy/k8s/overlays/prod/*/; do
+            # namespace/ renders a Namespace and a NetworkPolicy and pulls
+            # nothing; it is in this directory because it is per-environment,
+            # not because it is a workload.
+            [ "$(basename "$dir")" = "namespace" ] && continue
             echo "::group::$(basename "$dir")"
             kubectl kustomize "$dir" > rendered.yaml || exit 1
             grep -oE "image: ${prefix}[^[:space:]]+" rendered.yaml \
@@ -143,12 +147,16 @@ jobs:
 
       # [skip ci] because ci.yml would rebuild and republish four services for a
       # commit that changes seven lines of YAML under deploy/, and its stack job
-      # exercises the staging overlay rather than these. What would have checked
+      # exercises the local overlay rather than these. What would have checked
       # prod is the render above, which ci.yml does not do at all.
       #
       # This pushes straight to trunk. If branch protection is ever turned on
       # with `ci` required, that push is refused, and the answer is either a
       # bypass entry for this workflow or opening a pull request here instead.
+      #
+      # --rebase before pushing, because ci.yml's promote-staging job writes to
+      # this branch too. The two touch different directories, so the rebase is a
+      # formality — but a rejected push here is a deploy that reported nothing.
       - name: Commit the bump
         id: push
         env:
@@ -177,8 +185,18 @@ jobs:
             printf '%s\n' "[skip ci]"
           } > "${RUNNER_TEMP}/commit-msg"
           git commit -F "${RUNNER_TEMP}/commit-msg"
-          git push origin HEAD:trunk
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash origin trunk || exit 1
+            if git push origin HEAD:trunk; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "push rejected, trunk moved — retrying ($attempt)"
+            sleep 5
+          done
+          echo "::error::could not push the prod bump after three attempts"
+          exit 1
 
       - name: Summary
         if: always() && steps.commit.outputs.sha != ''

@@ -1,26 +1,28 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# inventory, deployed somewhere that is not a laptop.
+# inventory, on the environment that stands in front of prod.
 #
-# What makes this overlay worth having is mostly what is absent from it. There
-# is no patch lowering the CPU request so that several services fit on one
-# machine, and no line turning on gRPC reflection or console logs — so base
-# gets deployed as written, and any value base holds that is quietly wrong
-# outside a laptop fails here rather than in the first real environment.
+# Every mechanism prod's deploy depends on is exercised here first, on the same
+# host, against the same registry, through the same controller: images pulled
+# by immutable tag, credentials that arrive sealed, and a reconcile driven by a
+# commit rather than by where somebody's kubectl points. What separates the two
+# is the namespace at the top of this file and nothing structural — which is
+# what makes a green staging a statement about prod instead of about staging.
 #
-# CI applies it to a k3d cluster it creates and throws away, which is what
-# keeps it from drifting: an overlay nothing runs is a file, not an
-# environment. The same overlay is what points at a real host later, and two
-# things have to change first — an image reference that is a digest from a
-# registry rather than a tag imported into the cluster, and the Secret below.
-namespace: ecommerce
+# It moves on its own. CI bumps the tags below to every commit that lands on
+# trunk, so this environment is trunk's tip and prod is a deliberate promotion
+# away from it. That asymmetry is the reason to have it.
+namespace: ecommerce-staging
 
 resources:
   - ../../../base/inventory
+  - sealedsecret.yaml
 
-# The same Postgres instance local runs. A managed database would drop this and
-# change INVENTORY_DB_HOST alone.
+# The database inventory owns, run in-cluster — the same component prod includes,
+# so the instance staging exercises is the instance prod runs. It lands in this
+# namespace and its NetworkPolicy admits pods labelled inventory in this namespace,
+# so prod's inventory cannot reach it and it cannot reach prod's.
 components:
   - ../../../components/inventory-postgres
 
@@ -33,12 +35,25 @@ configMapGenerator:
 generatorOptions:
   disableNameSuffixHash: true
 
-# A literal, and it must not survive contact with a real host: anything that
-# can read this repository can read this password. It is here because CI's
-# cluster lives for the length of one job and has no secret store to read from.
-# Pointing this overlay at a durable environment means replacing this generator
-# with an External Secrets reference, not editing the string.
-secretGenerator:
-  - name: inventory-secret
-    literals:
-      - INVENTORY_DB_PASSWORD=insecure-staging-only
+# No secretGenerator. This cluster is on the internet and its repository is
+# public, so the same rule prod follows applies unchanged: `make seal
+# OVERLAY=staging` encrypts the material into sealedsecret.yaml above, and the
+# controller in kube-system decrypts it into the plain `inventory-secret` that
+# base mounts with envFrom.
+#
+# Sealing is scoped to namespace and name together, so a SealedSecret written
+# for ecommerce cannot be copied here by editing its namespace field — staging's
+# have to be sealed as staging's. That is a feature: it is also why a credential
+# cannot be shared between the two environments by accident.
+
+# Bumped by the `promote-staging` job in CI on every push to trunk, which is
+# what makes this environment trunk's tip without anyone deploying it. The tag
+# is still a SHA and never a branch: an image reference has to name one build
+# forever, or a rollback is a rebuild and a controller cannot see it change.
+images:
+  - name: ecommerce/inventory
+    newName: ghcr.io/vasapolrittideah/system-design-ecommerce/inventory
+    newTag: 13d2328f2615e7593dbfc0d0d6eb1f80940f3e76
+  - name: ecommerce/inventory-migrate
+    newName: ghcr.io/vasapolrittideah/system-design-ecommerce/inventory-migrate
+    newTag: 13d2328f2615e7593dbfc0d0d6eb1f80940f3e76

@@ -7,11 +7,17 @@
 # is written next to the thing it constrains, and a change that steps outside it
 # fails rather than working.
 #
-# The cluster-scoped allow-list is two kinds, and it is a list rather than an
-# empty set because `overlays/prod/infra` genuinely holds two: the ClusterRole
-# and ClusterRoleBinding that let Prometheus discover pods and Alloy read them.
-# Everything else cluster-wide — a Namespace, a CRD, a webhook, a
-# PersistentVolume — is refused, which is what makes this worth writing down.
+# It also names one namespace, which is what keeps prod and staging apart now
+# that they share a cluster: an Application here that a bad merge pointed at a
+# staging overlay is refused rather than applied.
+#
+# The cluster-scoped allow-list is empty, and that is a statement rather than an
+# omission. It once held two kinds for Reloader's ClusterRole and
+# ClusterRoleBinding; those moved to kube-system, installed by `make up` as a
+# cluster singleton, precisely because two environments cannot own one
+# cluster-scoped object between them. Prometheus and Alloy need nothing here —
+# their discovery is namespace-scoped and so is their RBAC. So a Namespace, a
+# CRD, a webhook, or a PersistentVolume appearing in a render is refused.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -22,7 +28,7 @@ metadata:
     # wave is how one resource is made to land first.
     argocd.argoproj.io/sync-wave: "-1"
 spec:
-  description: The e-commerce stack, reconciled from trunk into one namespace
+  description: The e-commerce stack, reconciled from trunk into ecommerce
 
   sourceRepos:
     - https://github.com/vasapolrittideah/system-design-ecommerce.git
@@ -31,8 +37,4 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: ecommerce
 
-  clusterResourceWhitelist:
-    - group: rbac.authorization.k8s.io
-      kind: ClusterRole
-    - group: rbac.authorization.k8s.io
-      kind: ClusterRoleBinding
+  clusterResourceWhitelist: []

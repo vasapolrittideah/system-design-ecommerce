@@ -4,6 +4,7 @@
 #
 #	scripts/load/run.sh [scenario]     # me (default) | login
 #	make load SCENARIO=login RATE=100 DURATION=2m
+#	make load OVERLAY=staging RATE=100 # through the tunnel, at the k3s host
 #
 # It asks a different question from `make smoke`. That one asks whether the
 # deploy serves at all; this asks how it behaves while it is being pushed — does
@@ -11,10 +12,33 @@
 # added, does the 800ms budget hold, and what gives way first when it does not.
 #
 # The absolute numbers are not a capacity result and should never be quoted as
-# one. The generator, the cluster, and every database share one laptop, and the
-# local overlays request 10m of CPU per pod so that the autoscaler is reachable
-# at all. What transfers to production is the shape: which limit is met first,
+# one. What transfers to production is the shape: which limit is met first,
 # which error the system answers with, and whether scaling out changes it.
+#
+# Against `local` that is because the generator, the cluster, and every database
+# share one laptop, and the local overlays request 10m of CPU per pod so that
+# the autoscaler is reachable at all.
+#
+# Against `staging` it is for two different reasons, and both are worth knowing
+# before quoting a p99 off this run:
+#
+#   the path       Requests leave this machine, cross the internet to a
+#                  Cloudflare edge, and arrive down a tunnel. Every number
+#                  carries that round trip, and the generator's own uplink is
+#                  the first thing to saturate — well before the cluster is.
+#                  A run whose subject is the cluster rather than the path
+#                  belongs on the k3s host itself, with BASE_URL pointed at a
+#                  port-forward of Kong.
+#
+#   the neighbour  staging shares its host and its kernel with prod. Load here
+#                  is CPU prod does not get, so a heavy run is a prod incident
+#                  waiting for a coincidence. Watch prod's dashboards during
+#                  one, and keep RATE somewhere a shared box can absorb.
+#
+# What staging does answer that a laptop cannot: whether the images CI published
+# actually run, whether the sealed credentials decrypt, whether the tunnel and
+# the gateway carry a sustained load at all, and whether the HPA reacts on a
+# machine with real CPU requests rather than 10m ones.
 #
 # Traffic goes through Kong on 8000 for the reason the smoke test does — reaching
 # bff-web on a port-forward would skip the routes, the upstream, and the Service,
@@ -49,6 +73,7 @@ BASE_URL="${BASE_URL:-http://localhost:8000}"
 BASE_URL="${BASE_URL%/}"
 NAMESPACE="${NAMESPACE:-ecommerce}"
 LIMITER="${LIMITER:-open}"
+OVERLAY="${OVERLAY:-local}"
 
 # Offered load, not achieved load: k6 starts an iteration on a schedule rather
 # than waiting for the last one to finish, so a system that slows down builds a
@@ -74,6 +99,19 @@ fail() {
 need() {
     command -v "$1" >/dev/null 2>&1 || fail "$1 not found" "install it with: $2"
 }
+
+# prod is reachable by exactly the same machinery as staging, and raising its
+# rate limits for a run is a thing this script can do and must not do by
+# accident. The limits are what stands between one client and everybody else's
+# service; a generator behind them is a denial of service with a Makefile
+# target.
+if [[ "$OVERLAY" == "prod" && "${CONFIRM:-}" != "prod" ]]; then
+    printf '\033[31m  refusing\033[0m to load-test prod.\n' >&2
+    printf '       staging runs the same images from the same registry — use that.\n' >&2
+    printf '       If this is deliberate and someone is watching:\n' >&2
+    printf '           make load OVERLAY=prod LIMITER=keep CONFIRM=prod\n' >&2
+    exit 1
+fi
 
 SCRIPT="${LOAD_DIR}/${SCENARIO}.js"
 if [[ ! -f "$SCRIPT" ]]; then
@@ -162,6 +200,18 @@ open_limiter() {
     need kubectl "brew install kubectl"
     need jq "brew install jq"
 
+    # The limiter lives in the cluster kubectl points at, while the load goes to
+    # BASE_URL. Nothing connects those two, so a kubeconfig left pointing at the
+    # laptop while BASE_URL names the k3s host would patch the wrong gateway,
+    # restart it, and then measure a limiter that never moved. Asking the target
+    # namespace whether it has a Kong is the cheapest way to notice.
+    if ! kubectl -n "$NAMESPACE" get deployment kong >/dev/null 2>&1; then
+        fail "no kong deployment in namespace ${NAMESPACE}" \
+            "kubectl points at $(kubectl config current-context 2>/dev/null || echo 'nothing')," \
+            "which is not where ${BASE_URL} is served from." \
+            "Switch context, or run with LIMITER=keep to leave the gateway alone."
+    fi
+
     local opened
     opened="$(mktemp)"
     # Only the rate-limiting plugins spell `minute:` in this file, so matching
@@ -215,6 +265,8 @@ wait_for_gateway() {
 # ------------------------------------------------------------------------------
 
 printf 'load: %s scenario against %s\n' "$SCENARIO" "$BASE_URL"
+printf '      overlay %s, namespace %s, context %s\n' \
+    "$OVERLAY" "$NAMESPACE" "$(kubectl config current-context 2>/dev/null || echo '-')"
 printf '      %s req/s offered for %s after a %s warm-up, %s users\n' "$RATE" "$DURATION" "$WARMUP" "$USERS"
 printf '      correlation ids start with %s\n' "$RUN_ID"
 

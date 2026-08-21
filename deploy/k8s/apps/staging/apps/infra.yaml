@@ -1,0 +1,28 @@
+# The shared infrastructure and staging's tunnel, from overlays/staging/infra.
+#
+# One Application rather than one per component because that directory is one
+# kustomization: Kong, Jaeger, Loki, Alloy, Prometheus, Grafana and cloudflared
+# are deployed together or not at all.
+#
+# The SealedSecret in it is applied like any other resource. What the controller
+# in kube-system decrypts out of it is a Secret this Application never sees and
+# never prunes — it carries no tracking annotation, having been created by
+# something else.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: infra-staging
+  namespace: argocd
+spec:
+  project: ecommerce-staging
+  source:
+    repoURL: https://github.com/vasapolrittideah/system-design-ecommerce.git
+    targetRevision: trunk
+    path: deploy/k8s/overlays/staging/infra
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ecommerce-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
