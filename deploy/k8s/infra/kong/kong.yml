@@ -69,10 +69,23 @@ upstreams:
   # address: Kong re-resolves it when the DNS record's TTL expires, which is
   # what lets a pod the HPA just added receive anything. bff-web's Service is
   # headless so that answer is the pod IPs rather than one virtual IP.
+  #
+  # The namespace is the pod's own, from the downward API, and it may never be
+  # written literally here. This file is one template shared by every
+  # environment, and a literal namespace in it points every gateway at one
+  # environment's BFF: staging's Kong spent its first deploy reaching for prod's
+  # bff-web, which prod's NetworkPolicy refused, and the symptom was a 502 from
+  # a gateway whose own BFF was Ready the whole time. Had that policy been a
+  # shade wider it would have worked instead, which is the worse outcome — one
+  # environment's storefront served by another's.
+  #
+  # It is a second hole in a file whose budget was one, and it earns the
+  # exception by not being a value anybody supplies: no overlay can set it, so
+  # there is nothing to drift and nothing to forget.
   - name: bff-web
     algorithm: round-robin
     targets:
-      - target: bff-web.ecommerce.svc.cluster.local:8080
+      - target: bff-web.${POD_NAMESPACE}.svc.cluster.local:8080
         weight: 100
 
 plugins:

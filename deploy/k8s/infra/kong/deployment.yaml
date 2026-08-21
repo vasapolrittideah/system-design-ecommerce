@@ -58,11 +58,29 @@ spec:
                 echo "CORS_ORIGINS is unset — this cluster's infra overlay has to name its browser origins" >&2
                 exit 1
               fi
-              sed "s|\${CORS_ORIGINS}|${CORS_ORIGINS}|g" \
+              # Cannot happen from the downward API, and checked anyway: an
+              # empty value here renders an upstream pointing at
+              # bff-web..svc.cluster.local, which Kong accepts and then answers
+              # 502 on every request.
+              if [ -z "${POD_NAMESPACE:-}" ]; then
+                echo "POD_NAMESPACE is unset — the downward API entry in this Deployment is missing" >&2
+                exit 1
+              fi
+              sed -e "s|\${CORS_ORIGINS}|${CORS_ORIGINS}|g" \
+                  -e "s|\${POD_NAMESPACE}|${POD_NAMESPACE}|g" \
                 /kong/declarative-template/kong.yml >/kong/declarative/kong.yml
           envFrom:
             - configMapRef:
                 name: kong-config
+          env:
+            # Which environment this gateway belongs to. The upstream in
+            # kong.yml is resolved with it, so a gateway can only ever route to
+            # the BFF in its own namespace — staging and prod run this same
+            # template and must never reach each other.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           volumeMounts:
             - name: declarative-template
               mountPath: /kong/declarative-template
