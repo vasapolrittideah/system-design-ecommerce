@@ -174,11 +174,15 @@ Failure handling that must exist in any such flow:
 
 | Risk | Mitigation |
 | --- | --- |
-| Duplicate client submit | `Idempotency-Key` header → store `(key, request_hash) → response` in Redis for 24h |
+| Duplicate client submit | `Idempotency-Key` on the request → `(key, request_hash) → response` in the orchestrator's own database, kept 24h and swept |
 | External call times out with unknown outcome | stay pending, reconcile against the provider, accept webhook confirmation |
 | Stranded reservation | `expires_at` on the reservation + cron that returns expired capacity |
 | Saga stuck mid-flight | `saga_instance` table + timeout worker that forces compensation |
 | Overselling / lost update | `UPDATE stock SET available = available - $1 WHERE sku = $2 AND available >= $1` — let the DB be the final guard, never read-then-write |
+
+**That first row is a table in the orchestrator's own database, not a key in Redis.** Claiming the key and persisting the aggregate have to be one act: a claim that commits against a write that rolls back answers the client's retry with a replayed response for an order that does not exist, and Redis cannot join the transaction that would prevent it. In Postgres it is the same `INSERT ... ON CONFLICT DO NOTHING` a consumer makes in `processed_events`, on the transaction already writing the aggregate. It stores a response rather than only a claim, so it needs what the claim does not: the request hash, to tell a retry from a key reused for different content, and a state for in-flight, so the second of two concurrent submits waits or is refused instead of being told nothing happened.
+
+**The key arrives as a field on the request, never as gRPC metadata.** A BFF has no database and cannot deduplicate, so the header has to reach the service that owns the aggregate. `pkg/grpcx/client` propagates a fixed set — correlation ID, user ID, roles — because each is a fact about the whole request chain; an idempotency key is a fact about one call, and adding it there would attach a single key to every hop a fan-out touches. As a field it is also validated by protovalidate and visible in the contract, which is where a client looks to find out that a method honours it at all.
 
 ## BFF
 
