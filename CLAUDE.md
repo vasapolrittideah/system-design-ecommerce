@@ -152,7 +152,7 @@ Topics: `ecommerce.<domain>.<entity>.<version>`, e.g. `ecommerce.order.events.v1
 - Payload schema is protobuf reused from `proto/ecommerce/events/v1`, wrapped in an `EventEnvelope` carrying `event_id`, `event_type`, `aggregate_id`, `version`, `occurred_at`, `correlation_id`, `traceparent`, and an `Any` payload.
 - Events are **facts that already happened** (`OrderPaid`), never commands (`SendEmail`). Consumers decide what to do.
 
-Delivery is at-least-once, so **every consumer must be idempotent**: claim the `event_id` in a `processed_events (consumer_group, event_id)` table with `INSERT ... ON CONFLICT DO NOTHING` inside the same transaction as the business work; skip if already claimed.
+Delivery is at-least-once, so **every consumer must be idempotent**: `inbox.Claim` takes the `event_id` in a `processed_events (consumer_group, event_id)` table, on the same `txmanager.DBTX` the business work is running on, and reports false for a delivery already handled. The table is keyed by the consumer group as well as the event, because two groups both wanting `OrderPaid` is the ordinary case. `pkg/inbox` prunes nothing: retention has to outlive the topics a particular service consumes, and an event redelivered after its claim was swept is an event handled twice.
 
 Commit offsets manually, only after successful processing. Retry three times, then route to the DLQ with an `error_reason` header. Never block a consumer long enough to trigger a rebalance.
 
