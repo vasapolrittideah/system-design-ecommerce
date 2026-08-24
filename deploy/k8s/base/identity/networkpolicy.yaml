@@ -67,3 +67,15 @@ spec:
       ports:
         - protocol: TCP
           port: 4317
+    # The broker, for the outbox relay. It wears app.kubernetes.io/name:
+    # identity like every other workload this service ships, so this rule
+    # reaches it without a policy of its own — and the server, which publishes
+    # nothing, gains a route it never dials.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka
+              app.kubernetes.io/component: broker
+      ports:
+        - protocol: TCP
+          port: 9092

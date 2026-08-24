@@ -32,6 +32,10 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: identity
+        # What the headless Service selects on, so that the outbox relay's pods
+        # and a running migration Job — both of which wear the name label — are
+        # not handed to gRPC callers as backends. See service.yaml.
+        app.kubernetes.io/component: server
         # Read back through the downward API below. It has to be spelled out
         # here rather than left to a transformer: a fieldRef to a label that
         # does not exist resolves to the empty string, which overrides the

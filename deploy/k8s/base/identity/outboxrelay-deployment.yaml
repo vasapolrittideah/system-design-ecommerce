@@ -1,0 +1,115 @@
+# The process that moves identity's outbox rows to Kafka.
+#
+# Its own workload rather than a goroutine inside the server, and deliberately
+# one replica. FOR UPDATE SKIP LOCKED means a second relay would be safe rather
+# than harmful — which is what makes a rolling restart safe — but two running
+# permanently would let one publish an aggregate's later event while the other
+# still holds the earlier one, and per-aggregate ordering is the guarantee the
+# message key exists to keep.
+#
+# The same image as the server, picking a different binary. One image holds all
+# of cmd/, so there is no second build to keep in step.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity-outboxrelay
+  annotations:
+    reloader.stakater.com/auto: "true"
+    # After the migration in wave 1, so the relay never starts against a schema
+    # the release has not applied yet. Inert where Argo is not watching.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: identity
+      app.kubernetes.io/component: outboxrelay
+  strategy:
+    # Recreate rather than RollingUpdate, and here it is about ordering as well
+    # as scheduling: a surge relay overlapping the old one is the two-relay case
+    # above, for the length of a rollout. With one replica a rolling update also
+    # needs somewhere to put the surge pod, which on a laptop is a pod that never
+    # schedules.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: identity
+        app.kubernetes.io/component: outboxrelay
+        app.kubernetes.io/version: dev
+    spec:
+      # No preStop sleep: nothing routes to this pod, so there is no endpoint
+      # list to drain out of. What the grace period covers is the cycle in
+      # flight — its transaction rolls back on SIGTERM and the rows are still
+      # unpublished for the next process, which is the same path a crash takes.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: outboxrelay
+          image: ecommerce/identity
+          imagePullPolicy: IfNotPresent
+          # The one line that makes this a different workload from the server.
+          command: ["/app/outboxrelay"]
+          ports:
+            # No gRPC port: this process serves nothing. The admin port is here
+            # because Prometheus discovers targets by a port being called
+            # `admin`, and the backlog gauge it scrapes is the only thing that
+            # shows a relay has stopped — the API answers, the database is
+            # healthy, and events simply never leave.
+            - name: admin
+              containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: identity-config
+            - secretRef:
+                name: identity-secret
+          env:
+            - name: OBS_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/version']
+            - name: LOG_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/version']
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            periodSeconds: 10
+            failureThreshold: 3
+          # Readiness is here even though no Service selects this pod, because
+          # it is what `kubectl rollout status` waits on — without it a deploy
+          # reports success against a process that has not reached its database.
+          # It covers the database and deliberately not the broker: a relay that
+          # cannot publish should keep trying, not be restarted.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: admin
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

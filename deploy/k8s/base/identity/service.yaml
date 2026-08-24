@@ -13,8 +13,16 @@ spec:
   # Left at the default false: a pod that is not ready must not be in the list
   # a caller resolves.
   publishNotReadyAddresses: false
+  # Three workloads wear app.kubernetes.io/name: identity — the server, the
+  # outbox relay, and the migration Job — because that is what the
+  # NetworkPolicies and the database's ingress rule are written against. A
+  # selector naming only that would put the relay's pods and a running
+  # migration into this Service's endpoint list, where a gRPC caller would
+  # resolve them and dial a port nothing is listening on. Neither pod would
+  # report anything wrong.
   selector:
     app.kubernetes.io/name: identity
+    app.kubernetes.io/component: server
   ports:
     - name: grpc
       port: 50051
