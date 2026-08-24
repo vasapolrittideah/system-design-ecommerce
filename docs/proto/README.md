@@ -38,6 +38,12 @@
   
     - [CatalogService](#ecommerce-catalog-v1-CatalogService)
   
+- [ecommerce/events/v1/envelope.proto](#ecommerce_events_v1_envelope-proto)
+    - [EventEnvelope](#ecommerce-events-v1-EventEnvelope)
+  
+- [ecommerce/events/v1/identity.proto](#ecommerce_events_v1_identity-proto)
+    - [UserRegistered](#ecommerce-events-v1-UserRegistered)
+  
 - [ecommerce/identity/v1/user.proto](#ecommerce_identity_v1_user-proto)
     - [User](#ecommerce-identity-v1-User)
   
@@ -624,6 +630,97 @@ Wholesale rather than a patch: with three fields, a field mask buys nothing but 
 The SKU is not among the fields it can change. Orders, carts, and the warehouse all refer to a variant by that string, so renaming one would rename a thing other systems have already written down. |
 | PublishProduct | [PublishProductRequest](#ecommerce-catalog-v1-PublishProductRequest) | [PublishProductResponse](#ecommerce-catalog-v1-PublishProductResponse) | PublishProduct moves a draft into the storefront. |
 | ArchiveProduct | [ArchiveProductRequest](#ecommerce-catalog-v1-ArchiveProductRequest) | [ArchiveProductResponse](#ecommerce-catalog-v1-ArchiveProductResponse) | ArchiveProduct withdraws a product from sale. Nothing is deleted, and the move is one-way — a product that should sell again is a new one, because reviving an archived product silently revives whatever was wrong with it. |
+
+ 
+
+
+
+<a name="ecommerce_events_v1_envelope-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/events/v1/envelope.proto
+
+
+
+<a name="ecommerce-events-v1-EventEnvelope"></a>
+
+### EventEnvelope
+EventEnvelope is what every message on every topic actually is: the routing,
+ordering, and tracing a consumer needs, wrapped around a payload it decides
+for itself whether to open.
+
+One envelope for the whole system rather than one per topic, because
+everything that reads a message before dispatching it — the relay, a DLQ
+router, a consumer&#39;s idempotency claim — needs these fields and needs them in
+the same place regardless of which topic it is reading.
+
+Nothing here is declared with protovalidate. A Kafka message reaches no
+interceptor, so a constraint on this message would be enforced by nobody
+while reading, in the contract, exactly like a guarantee.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_id | [string](#string) |  | Unique per event, a UUID minted when the event was raised. It is what a consumer claims in processed_events, so a redelivery carries the same value and a genuinely new event never does. Not the outbox row id: that is unique only within one service&#39;s database. |
+| event_type | [string](#string) |  | The name consumers dispatch on, e.g. &#34;OrderPaid&#34; — the vocabulary of the service that owns the aggregate. It is API: a consumer branches on it, so renaming one is a breaking change even though no generated code mentions it. Kept beside the payload&#39;s own type_url rather than derived from it, because the type is where a message is defined and this is what it means. |
+| aggregate_id | [string](#string) |  | The aggregate the event happened to, and the Kafka message key, which is what keeps two events for one order in the order they were raised. |
+| version | [int64](#int64) |  | The aggregate&#39;s version at the moment the event was raised — the same optimistic-locking counter the row carries. A consumer that keeps its own copy of an aggregate uses it to ignore what it has already seen; one that does not can ignore this field. |
+| occurred_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | When the fact became true, decided by the producer rather than by whoever reads it. An event may be published seconds after it was raised and consumed hours after that, so this is the only timestamp with a fixed meaning. |
+| correlation_id | [string](#string) |  | The one user-visible operation this event descends from, carried across the hop where the context that produced it is long gone. Without it a checkout and the emails it caused are unrelated lines in the log. |
+| traceparent | [string](#string) |  | W3C trace context, so a consumer&#39;s spans attach to the trace that caused them instead of starting a second one nobody can find. |
+| payload | [google.protobuf.Any](#google-protobuf-Any) |  | The event itself. Any rather than bytes so the payload names its own type: a consumer handed something it did not expect refuses it, instead of unmarshalling one message&#39;s bytes into another message&#39;s fields and succeeding. |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="ecommerce_events_v1_identity-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/events/v1/identity.proto
+
+
+
+<a name="ecommerce-events-v1-UserRegistered"></a>
+
+### UserRegistered
+UserRegistered says that an account now exists. Published to
+ecommerce.identity.events.v1.
+
+The fields are declared here rather than by embedding
+ecommerce.identity.v1.User, though the two overlap today. That message is the
+answer to GetUser and may be changed to suit callers of it; this one is a
+fact already written to a topic, which consumers older than the producer are
+still reading. Sharing the shape would make one contract&#39;s change the other
+contract&#39;s break.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| user_id | [string](#string) |  |  |
+| email | [string](#string) |  | Carried because a consumer that wants to welcome this user would otherwise call identity back for it — for every event, at consumer speed. |
+| roles | [string](#string) | repeated | What the account was created with, which is not what it holds now: a role granted later is its own event, and reading this one as current is how a consumer builds a stale copy of a user. |
+| registered_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
 
  
 

@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package ecommerce.events.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+
+// EventEnvelope is what every message on every topic actually is: the routing,
+// ordering, and tracing a consumer needs, wrapped around a payload it decides
+// for itself whether to open.
+//
+// One envelope for the whole system rather than one per topic, because
+// everything that reads a message before dispatching it — the relay, a DLQ
+// router, a consumer's idempotency claim — needs these fields and needs them in
+// the same place regardless of which topic it is reading.
+//
+// Nothing here is declared with protovalidate. A Kafka message reaches no
+// interceptor, so a constraint on this message would be enforced by nobody
+// while reading, in the contract, exactly like a guarantee.
+message EventEnvelope {
+  // Unique per event, a UUID minted when the event was raised. It is what a
+  // consumer claims in processed_events, so a redelivery carries the same value
+  // and a genuinely new event never does. Not the outbox row id: that is unique
+  // only within one service's database.
+  string event_id = 1;
+
+  // The name consumers dispatch on, e.g. "OrderPaid" — the vocabulary of the
+  // service that owns the aggregate. It is API: a consumer branches on it, so
+  // renaming one is a breaking change even though no generated code mentions
+  // it. Kept beside the payload's own type_url rather than derived from it,
+  // because the type is where a message is defined and this is what it means.
+  string event_type = 2;
+
+  // The aggregate the event happened to, and the Kafka message key, which is
+  // what keeps two events for one order in the order they were raised.
+  string aggregate_id = 3;
+
+  // The aggregate's version at the moment the event was raised — the same
+  // optimistic-locking counter the row carries. A consumer that keeps its own
+  // copy of an aggregate uses it to ignore what it has already seen; one that
+  // does not can ignore this field.
+  int64 version = 4;
+
+  // When the fact became true, decided by the producer rather than by whoever
+  // reads it. An event may be published seconds after it was raised and
+  // consumed hours after that, so this is the only timestamp with a fixed
+  // meaning.
+  google.protobuf.Timestamp occurred_at = 5;
+
+  // The one user-visible operation this event descends from, carried across the
+  // hop where the context that produced it is long gone. Without it a checkout
+  // and the emails it caused are unrelated lines in the log.
+  string correlation_id = 6;
+
+  // W3C trace context, so a consumer's spans attach to the trace that caused
+  // them instead of starting a second one nobody can find.
+  string traceparent = 7;
+
+  // The event itself. Any rather than bytes so the payload names its own type:
+  // a consumer handed something it did not expect refuses it, instead of
+  // unmarshalling one message's bytes into another message's fields and
+  // succeeding.
+  google.protobuf.Any payload = 8;
+}
