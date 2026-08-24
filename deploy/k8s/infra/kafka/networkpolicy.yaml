@@ -1,0 +1,39 @@
+# Who may reach the broker. Every service's outbox relay publishes here and
+# every consumer reads here, so this list grows by one entry per service that
+# joins the event flow — and a service that ships no entry finds out when its
+# relay logs a publish cycle failing, which is the better of the two failures.
+#
+# The topics Job is admitted by its own labels rather than by the namespace,
+# for the same reason the rest of this file names workloads: a topic is created
+# by something that can reach 9092, and a broker with no authentication is one
+# where the NetworkPolicy is the whole of the access control.
+#
+# No egress rules. The broker calls nothing: its controller listener is on
+# localhost, and clients come to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kafka
+      app.kubernetes.io/component: broker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # identity's relay. Every workload a service ships wears the service's
+        # name label, so this one rule covers the server, the relay, and any
+        # worker it grows later.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: identity
+        # The Job beside this file, which declares the topics.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka
+              app.kubernetes.io/component: topics
+      ports:
+        - protocol: TCP
+          port: 9092

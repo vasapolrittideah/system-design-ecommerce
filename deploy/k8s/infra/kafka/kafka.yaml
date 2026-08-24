@@ -1,0 +1,193 @@
+# The broker every service publishes its outbox to, in KRaft mode: no
+# ZooKeeper, one process holding both the controller and the broker role.
+#
+# One replica, and the replication factors below are 1 to match. The topic
+# policy this repo states — replication.factor=3, min.insync.replicas=2 — is
+# what a real multi-broker cluster is for, and it cannot be honoured here by
+# writing 3: staging and prod share one k3s host, so three replicas would be
+# three copies of every partition on one disk, costing three times the memory
+# to survive exactly the failure that takes all three. The setting to change on
+# the day there are three machines is here rather than hidden, and until then
+# the durability this cluster actually has is the one written down.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+spec:
+  # Headless because a StatefulSet needs a governing Service, and because a
+  # cluster IP in front of a broker is a lie the client would find out about:
+  # a producer resolves the bootstrap address, then talks to whichever broker
+  # the metadata names as the leader of its partition.
+  clusterIP: None
+  # The component is in the selector, not just the name. The topics Job beside
+  # this file ships pods wearing app.kubernetes.io/name: kafka too — every
+  # workload a component ships wears it, which is what the NetworkPolicies are
+  # written against — and a Job pod listening on nothing would otherwise be
+  # handed to a producer as a broker for as long as it ran.
+  selector:
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/component: broker
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: kafka
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka
+      app.kubernetes.io/component: broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka
+        app.kubernetes.io/component: broker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # The uid the image's files are owned by. fsGroup is what makes the
+        # empty directories below writable: the image generates its config at
+        # startup and log4j opens files under /opt/kafka/logs, and neither is
+        # writable by a non-root user without it.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kafka
+          # 3.9 is the last line before 4.0 removed the ZooKeeper protocol and
+          # with it the older client versions; pinned for the same reason
+          # Prometheus and Loki are, since a broker is not something anyone
+          # wants to spend a morning bumping.
+          image: apache/kafka:3.9.1
+          ports:
+            - name: kafka
+              containerPort: 9092
+            - name: controller
+              containerPort: 9093
+          env:
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: broker,controller
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: 1@localhost:9093
+            - name: KAFKA_LISTENERS
+              value: PLAINTEXT://:9092,CONTROLLER://:9093
+            # What the broker tells clients to come back to, which is why it
+            # names the pod rather than the Service: the Service is headless
+            # and resolves to this pod anyway, but a second broker would need
+            # an address of its own and this is already that address.
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: PLAINTEXT://kafka-0.kafka:9092
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: CONTROLLER
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: PLAINTEXT
+            # Plaintext east-west, as everywhere else here: TLS is terminated
+            # at the edge and internal encryption is the mesh's job, not one
+            # more keystore per component.
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            - name: KAFKA_DEFAULT_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_MIN_INSYNC_REPLICAS
+              value: "1"
+            # Topics are declared by the Job beside this file. A broker that
+            # creates them on demand makes them with num.partitions, and a
+            # partition count cannot be raised later without changing which
+            # partition a key lands on — so a typo in a topic name would become
+            # a permanent single-partition topic nobody meant to have.
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "false"
+            - name: KAFKA_NUM_PARTITIONS
+              value: "6"
+            - name: KAFKA_LOG_DIRS
+              value: /var/lib/kafka/data
+            # KRaft stores the cluster's identity in the log directory, and the
+            # image formats it on first start when this is set. It is a fixed
+            # value rather than a generated one because a re-format with a
+            # different id against an existing volume refuses to start.
+            - name: CLUSTER_ID
+              value: 4L6g3nShT-eMCtK--X86sw
+            - name: KAFKA_HEAP_OPTS
+              value: -Xms256m -Xmx512m
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+            # The image writes its generated server.properties here at startup,
+            # so the directory has to be writable even though nothing in it
+            # outlives the pod.
+            - name: config
+              mountPath: /opt/kafka/config
+            # log4j opens file appenders regardless of also logging to stdout,
+            # which is what Alloy actually tails.
+            - name: logs
+              mountPath: /opt/kafka/logs
+            - name: tmp
+              mountPath: /tmp
+          # A TCP accept is as much as a broker offers without a client, and it
+          # is enough: what readiness gates here is the topics Job and the
+          # relays, both of which fail on connect rather than on a bad answer.
+          startupProbe:
+            tcpSocket:
+              port: kafka
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: kafka
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # No liveness probe, as everywhere else here. A broker replaying a
+          # long log at startup is slow rather than broken, and restarting it
+          # into replaying the same log again is how one slow start becomes a
+          # loop.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              # Memory only. A CPU limit would throttle the broker during
+              # exactly the backlog it exists to absorb, and a publish it
+              # cannot acknowledge is a relay cycle rolled back.
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # The log every unread event is sitting in. A relay publishes within
+            # a second of the write, so this holds retention rather than
+            # backlog — and the retention that matters is a consumer's claim
+            # outliving it, not the disk.
+            storage: 2Gi

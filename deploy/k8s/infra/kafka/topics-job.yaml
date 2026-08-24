@@ -1,0 +1,114 @@
+# Topics are declared here, not created on first write. A broker asked to make
+# one on demand makes it with num.partitions and the cluster's default
+# retention, and a partition count cannot be raised afterwards without changing
+# which partition a key lands on — which is the per-aggregate ordering the whole
+# system rests on. Declaring them means a new topic is a line in this file and
+# a mistyped one is a publish that fails.
+#
+# The annotations say to Argo what the migration Jobs' do: delete the previous
+# Job, run this, wait for it, then carry on. Wave 1 puts it after the broker's
+# own wave and before anything that publishes. They are inert where Argo is not
+# watching, so `make up` behaves as it always did.
+#
+# --if-not-exists rather than a diff: this Job creates topics and never alters
+# one. Changing the partition count of a live topic is a decision about
+# ordering, and it belongs in a hand-run command with somebody watching, not in
+# a manifest that reconciles.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topics
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka
+        app.kubernetes.io/component: topics
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: topics
+          image: apache/kafka:3.9.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+
+              bootstrap="kafka:9092"
+
+              # Retry rather than probe. A NetworkPolicy reaches a pod slightly
+              # after the pod does, and on a first deploy the broker is still
+              # formatting its log directory — until its pod is ready the
+              # headless Service has no endpoint and the name does not resolve
+              # at all, so the failure is NXDOMAIN rather than a refused
+              # connection. Two minutes, then fail with the last error in the
+              # log.
+              attempt=1
+              until /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$bootstrap" --list >/dev/null 2>&1; do
+                if [ "$attempt" -ge 60 ]; then
+                  echo "broker unreachable after 120s, giving up"
+                  /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$bootstrap" --list
+                  exit 1
+                fi
+                attempt=$((attempt + 1))
+                sleep 2
+              done
+
+              # One line per topic: name, partitions. Six is the low end of the
+              # 6-12 the topic policy asks for, and it is a floor rather than a
+              # guess — a partition is the unit of consumer parallelism, so a
+              # topic can never be consumed by more instances than it has.
+              #
+              # No .dlq topics yet. Nothing consumes anything, so a dead-letter
+              # topic would be a queue with no producer, no consumer, and an
+              # alert that reads as coverage while watching an empty topic.
+              for spec in \
+                "ecommerce.identity.events.v1 6"
+              do
+                set -- $spec
+                echo "declaring $1 with $2 partition(s)"
+                /opt/kafka/bin/kafka-topics.sh \
+                  --bootstrap-server "$bootstrap" \
+                  --create --if-not-exists \
+                  --topic "$1" \
+                  --partitions "$2" \
+                  --replication-factor 1
+              done
+
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$bootstrap" --list
+          volumeMounts:
+            # The tools run under the same read-only root as the broker, and
+            # log4j opens its files before it discovers it has nothing to say.
+            - name: logs
+              mountPath: /opt/kafka/logs
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
