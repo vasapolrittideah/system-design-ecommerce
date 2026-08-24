@@ -148,7 +148,8 @@ Outbox rows carry `aggregate_type`, `aggregate_id`, `event_type`, `payload`, `he
 Topics: `ecommerce.<domain>.<entity>.<version>`, e.g. `ecommerce.order.events.v1`, with `.dlq` suffix for dead letters.
 
 - Message key = aggregate ID, which gives per-aggregate ordering.
-- 6–12 partitions, `replication.factor=3`, `min.insync.replicas=2`, producer `acks=all`.
+- 6–12 partitions, producer `acks=all`, and topics **declared** by `deploy/k8s/infra/kafka`'s Job rather than created on first write — a broker asked to make one on demand makes it with `num.partitions`, and a partition count cannot be raised afterwards without changing which partition a key lands on.
+- `replication.factor=3` and `min.insync.replicas=2` are what a real multi-broker cluster is for, and the single broker this system runs is set to 1 for both. Writing 3 on one k3s host would be three copies of every partition on one disk, costing three times the memory to survive exactly the failure that takes all three. The durability the cluster actually has is the number in the manifest.
 - Payload schema is protobuf reused from `proto/ecommerce/events/v1`, wrapped in an `EventEnvelope` carrying `event_id`, `event_type`, `aggregate_id`, `version`, `occurred_at`, `correlation_id`, `traceparent`, and an `Any` payload.
 - Events are **facts that already happened** (`OrderPaid`), never commands (`SendEmail`). Consumers decide what to do.
 
@@ -325,7 +326,7 @@ make argocd             # install the controller that reconciles staging and pro
 make load OVERLAY=staging   # k6 through Kong, with its rate limits raised for the run
 ```
 
-The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies every service shares (Jaeger, Kong DB-less, Loki, Alloy, Prometheus, Grafana; Kafka in KRaft mode as the phase needing it arrives), plus two cluster singletons `make up` applies on their own into `kube-system` — the sealed-secrets controller and Reloader and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/<env>/<name>` for the services.
+The local stack is a **k3d cluster**, not docker compose: `deploy/k8s/infra` for the dependencies every service shares (Jaeger, Kong DB-less, Kafka in KRaft mode, Loki, Alloy, Prometheus, Grafana), plus two cluster singletons `make up` applies on their own into `kube-system` — the sealed-secrets controller and Reloader and `deploy/k8s/base/<name>` + `deploy/k8s/overlays/<env>/<name>` for the services.
 
 **There are three overlays, one per place this system actually runs.** `local` is the laptop stack, and every line in it is a relaxation that has to earn its place — console logs, gRPC reflection, a 10m CPU request, a two-minute reservation TTL.
 
