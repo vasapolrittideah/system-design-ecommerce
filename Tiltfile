@@ -91,6 +91,24 @@ k8s_resource(
     labels=['infra'],
 )
 
+# No port forward. A client on the host could reach 9092 through one, then be
+# told by the broker's own metadata to come back to kafka-0.kafka:9092 — a name
+# that resolves in the cluster and nowhere else. Reading a topic from a laptop
+# is a `kubectl run` inside the namespace, the way the smoke path does it.
+k8s_resource(
+    'kafka',
+    labels=['infra'],
+)
+
+# Topics are declared rather than created on first write, so this Job has to
+# have run before anything publishes. Nothing else depends on it — a relay that
+# starts first simply fails its cycles until the topic exists.
+k8s_resource(
+    'kafka-topics',
+    resource_deps=['kafka'],
+    labels=['infra'],
+)
+
 # In kube-system rather than in the namespace it serves, which is why it is not
 # under the `infra` label's overlay above.
 k8s_resource(
@@ -217,6 +235,17 @@ k8s_resource(
         '50051:50051',
         '9090:9090',
     ],
+    labels=['identity'],
+)
+
+k8s_resource(
+    'identity-outboxrelay',
+    # Nothing routes to it, so there is no gRPC port to forward. The admin one
+    # is here because a stalled relay is invisible everywhere else: the API
+    # answers, the database is healthy, and /metrics is where
+    # outbox_backlog_rows climbing shows up.
+    resource_deps=['identity-migrate', 'kafka-topics', 'reloader'],
+    port_forwards=['9096:9090'],
     labels=['identity'],
 )
 
