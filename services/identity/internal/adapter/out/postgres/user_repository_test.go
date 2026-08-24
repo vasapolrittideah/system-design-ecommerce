@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/protobuf/proto"
 
+	eventsv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/events/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/postgres/postgrestest"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/txmanager"
@@ -237,5 +239,138 @@ func TestCreateJoinsTheAmbientTransaction(t *testing.T) {
 
 	if _, err := users.FindByID(ctx, user.ID()); !errors.Is(err, errorx.ErrNotFound) {
 		t.Errorf("FindByID() after rollback = %v, want not found", err)
+	}
+}
+
+// outboxRow is what the relay will later publish.
+type outboxRow struct {
+	AggregateType string
+	AggregateID   string
+	EventType     string
+	Topic         string
+	Payload       []byte
+	Headers       map[string]string
+}
+
+func readOutbox(t *testing.T, ctx context.Context, pool *pgxpool.Pool) []outboxRow {
+	t.Helper()
+
+	sql := `SELECT aggregate_type, aggregate_id, event_type, topic, payload, headers
+	        FROM outbox ORDER BY id`
+
+	rows, err := pool.Query(ctx, sql)
+	if err != nil {
+		t.Fatalf("query outbox: %v", err)
+	}
+	defer rows.Close()
+
+	var out []outboxRow
+	for rows.Next() {
+		var r outboxRow
+		if err := rows.Scan(&r.AggregateType, &r.AggregateID, &r.EventType, &r.Topic, &r.Payload, &r.Headers); err != nil {
+			t.Fatalf("scan outbox row: %v", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read outbox rows: %v", err)
+	}
+
+	return out
+}
+
+func TestCreateWritesTheRegistrationToTheOutbox(t *testing.T) {
+	ctx := context.Background()
+	pool, users := setup(t)
+
+	created, err := users.Create(ctx, newUser(t, "ada@example.com"))
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+
+	rows := readOutbox(t, ctx, pool)
+	if len(rows) != 1 {
+		t.Fatalf("outbox has %d rows, want 1", len(rows))
+	}
+
+	row := rows[0]
+	if row.EventType != "UserRegistered" {
+		t.Errorf("event_type = %q, want %q", row.EventType, "UserRegistered")
+	}
+	if row.Topic != "ecommerce.identity.events.v1" {
+		t.Errorf("topic = %q, want %q", row.Topic, "ecommerce.identity.events.v1")
+	}
+	// The key the relay publishes under, which is what keeps one user's events
+	// in order.
+	if row.AggregateID != created.ID().String() {
+		t.Errorf("aggregate_id = %q, want %q", row.AggregateID, created.ID())
+	}
+
+	var envelope eventsv1.EventEnvelope
+	if err := proto.Unmarshal(row.Payload, &envelope); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if envelope.GetEventId() == "" {
+		t.Error("envelope event_id is empty, want the id a consumer claims")
+	}
+	if envelope.GetVersion() != int64(created.Version()) {
+		t.Errorf("envelope version = %d, want the row's %d", envelope.GetVersion(), created.Version())
+	}
+	// The database's clock, not this process's: the aggregate had no timestamp
+	// until the insert returned one.
+	if got := envelope.GetOccurredAt().AsTime(); !got.Equal(created.CreatedAt().UTC()) {
+		t.Errorf("envelope occurred_at = %v, want the row's created_at %v", got, created.CreatedAt().UTC())
+	}
+
+	var payload eventsv1.UserRegistered
+	if err := envelope.GetPayload().UnmarshalTo(&payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.GetEmail() != "ada@example.com" {
+		t.Errorf("payload email = %q, want %q", payload.GetEmail(), "ada@example.com")
+	}
+	if len(payload.GetRoles()) != 1 || payload.GetRoles()[0] != string(domain.RoleCustomer) {
+		t.Errorf("payload roles = %v, want [%v]", payload.GetRoles(), domain.RoleCustomer)
+	}
+}
+
+func TestCreateAnnouncesNothingWhenTheInsertFails(t *testing.T) {
+	ctx := context.Background()
+	pool, users := setup(t)
+
+	if _, err := users.Create(ctx, newUser(t, "ada@example.com")); err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+	if _, err := users.Create(ctx, newUser(t, "ada@example.com")); err == nil {
+		t.Fatal("Create() error = nil, want a conflict")
+	}
+
+	// The second registration never happened, so nothing may tell the rest of
+	// the system that it did.
+	if rows := readOutbox(t, ctx, pool); len(rows) != 1 {
+		t.Errorf("outbox has %d rows, want 1", len(rows))
+	}
+}
+
+func TestCreateRollsTheEventBackWithTheUser(t *testing.T) {
+	ctx := context.Background()
+	pool, users := setup(t)
+	wantErr := errors.New("the use case changed its mind")
+
+	err := txmanager.New(pool).Do(ctx, func(ctx context.Context) error {
+		if _, err := users.Create(ctx, newUser(t, "ada@example.com")); err != nil {
+			return err
+		}
+
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Do() error = %v, want %v", err, wantErr)
+	}
+
+	// The whole point of the outbox: no event survives an aggregate that did
+	// not.
+	if rows := readOutbox(t, ctx, pool); len(rows) != 0 {
+		t.Errorf("outbox has %d rows, want 0 after the transaction rolled back", len(rows))
 	}
 }

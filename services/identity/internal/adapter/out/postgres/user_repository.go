@@ -13,13 +13,27 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	eventsv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/events/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/events"
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/outbox"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/txmanager"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/identity/internal/adapter/out/postgres/sqlc"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/identity/internal/domain"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/identity/internal/port/out"
 )
+
+// topic is where this service's events belong. The service that owns an event
+// decides its destination, so adding one never means editing a table somebody
+// else also reads.
+const topic = "ecommerce.identity.events.v1"
+
+// aggregateType names what these events happened to, in the outbox row and in
+// nothing else — it is there for whoever reads the table.
+const aggregateType = "user"
 
 // uniqueViolation is PostgreSQL's SQLSTATE for a duplicate key.
 const uniqueViolation = "23505"
@@ -84,7 +98,74 @@ func (r *UserRepository) Create(ctx context.Context, user *domain.User) (*domain
 		return nil, errorx.Wrap(err, errorx.KindInternal, "create user")
 	}
 
+	// Drained here rather than by the use case, and written through the same
+	// handle as the row above: the aggregate and the announcement of it commit
+	// together or neither does.
+	if err := r.writeEvents(ctx, user, &row); err != nil {
+		return nil, err
+	}
+
 	return toDomain(&row), nil
+}
+
+// writeEvents drains what the aggregate raised into the outbox.
+//
+// The row is what stamps the events: created_at is the database's clock rather
+// than this replica's, and version is the value the row actually landed with,
+// so a consumer keeping its own copy can tell what it has already seen.
+func (r *UserRepository) writeEvents(ctx context.Context, user *domain.User, row *sqlc.User) error {
+	pulled := user.PullEvents()
+	if len(pulled) == 0 {
+		return nil
+	}
+
+	records := make([]outbox.Record, 0, len(pulled))
+	for _, event := range pulled {
+		payload, err := toPayload(event, row)
+		if err != nil {
+			return err
+		}
+
+		record, err := events.Record(ctx, events.Fact{
+			AggregateType: aggregateType,
+			AggregateID:   row.ID.String(),
+			EventType:     event.EventName(),
+			Topic:         topic,
+			Version:       int64(row.Version),
+			OccurredAt:    row.CreatedAt,
+			Payload:       payload,
+		})
+		if err != nil {
+			return errorx.Wrap(err, errorx.KindInternal, "build %s event", event.EventName())
+		}
+
+		records = append(records, record)
+	}
+
+	if err := outbox.Write(ctx, txmanager.From(ctx, r.pool), records...); err != nil {
+		return errorx.Wrap(err, errorx.KindInternal, "write events to the outbox")
+	}
+
+	return nil
+}
+
+// toPayload maps a domain event to the message consumers receive. It is the
+// whole of what this adapter does with an event: the domain names the fact, the
+// contract in proto/ecommerce/events/v1 shapes it.
+func toPayload(event domain.Event, row *sqlc.User) (proto.Message, error) {
+	switch e := event.(type) {
+	case domain.UserRegistered:
+		return &eventsv1.UserRegistered{
+			UserId:       e.UserID.String(),
+			Email:        e.Email.String(),
+			Roles:        rolesToStrings(e.Roles),
+			RegisteredAt: timestamppb.New(row.CreatedAt),
+		}, nil
+	default:
+		// Unreachable unless a domain event was added without a mapping, which
+		// would otherwise be an event nobody outside this service ever hears.
+		return nil, errorx.New(errorx.KindInternal, "no payload mapping for %s", event.EventName())
+	}
 }
 
 // FindByID returns one user.

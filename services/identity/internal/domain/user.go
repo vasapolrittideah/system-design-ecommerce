@@ -55,6 +55,12 @@ type User struct {
 	// version is the optimistic lock: the value an UPDATE must carry and bump,
 	// so a concurrent writer affects zero rows and finds out.
 	version int
+
+	// events raised by this instance and not yet taken. They leave through
+	// PullEvents, and the repository writes them to the outbox in the
+	// transaction that persists the row — which is what makes announcing the
+	// change and making it the same act.
+	events []Event
 }
 
 // NewUser builds a user that has never been persisted.
@@ -67,13 +73,32 @@ func NewUser(email Email, passwordHash PasswordHash) (*User, error) {
 		return nil, ValidationError{Field: "password", Message: "hash is empty"}
 	}
 
-	return &User{
+	user := &User{
 		id:           NewUserID(),
 		email:        email,
 		passwordHash: passwordHash,
 		roles:        []Role{RoleCustomer},
 		version:      1,
-	}, nil
+	}
+	user.events = append(user.events, UserRegistered{
+		UserID: user.id,
+		Email:  user.email,
+		Roles:  cloneRoles(user.roles),
+	})
+
+	return user, nil
+}
+
+// PullEvents returns the events this instance has raised and forgets them, so
+// a repository that persists the aggregate twice does not publish them twice.
+//
+// A user rebuilt by ReconstituteUser has none: the events belong to the change
+// that was just made, not to the state that was read.
+func (u *User) PullEvents() []Event {
+	pulled := u.events
+	u.events = nil
+
+	return pulled
 }
 
 // UserSnapshot is the whole state of a user as it is stored, so a repository can
