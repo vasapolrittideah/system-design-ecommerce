@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package ecommerce.order.v1;
+
+import "buf/validate/validate.proto";
+import "ecommerce/order/v1/order.proto";
+
+// OrderService owns orders: what was bought, at what price, and how far the
+// purchase has got. It is reached over east-west gRPC only.
+//
+// It is also the orchestrator of the checkout saga. That is not a second
+// responsibility bolted on: the saga advances an order through its states, and
+// whoever owns the aggregate owns the rules that protect it. Every step it
+// drives — reserving stock, capturing payment, committing the hold — belongs to
+// another service and is asked for rather than reached into.
+//
+// It owns no stock and no prices. What is on the shelf is inventory's, what a
+// thing costs now is catalog's, and this service copies the price it was quoted
+// into the order so that the agreement survives the next price change.
+service OrderService {
+  // Checkout places an order: it reserves the stock, persists the order in a
+  // pending state, and returns.
+  //
+  // It returns as soon as the order exists rather than when the purchase
+  // completes, because the rest of the flow waits on a payment provider and no
+  // caller should be held open for that. What the caller gets back is an order
+  // to poll or to be told about, not a finished sale.
+  //
+  // Reserving happens first and synchronously, so a shopper learns that
+  // something is sold out now rather than in an email later. Out of stock comes
+  // back as FailedPrecondition with reason OUT_OF_STOCK and the SKU in the
+  // metadata, exactly as inventory reported it.
+  //
+  // Deliberately not named Get* or Batch*: the client retry policy reads method
+  // names to decide what is safe to retry, and a retried checkout that was not
+  // deduplicated is a second order.
+  rpc Checkout(CheckoutRequest) returns (CheckoutResponse);
+
+  // GetOrder reads one order. A caller may only read their own.
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+
+  // ListOrders pages through the caller's own orders, newest first.
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse);
+}
+
+message CheckoutRequest {
+  // The client's own key for this attempt, echoed on every retry of it.
+  //
+  // A field rather than metadata, and this is the one place in the system that
+  // is true. pkg/grpcx/client propagates a fixed set of headers because each is
+  // a fact about the whole request chain; an idempotency key is a fact about
+  // one call, and forwarding it would attach a single key to every hop a
+  // fan-out touches. As a field it is validated here and visible in the
+  // contract, which is where a client looks to find out that a method honours
+  // it at all.
+  //
+  // Same key and same body: the first response is replayed. Same key and a
+  // different body: refused, because that is a client bug rather than a retry.
+  string idempotency_key = 1 [(buf.validate.field).string = {
+    min_len: 8
+    max_len: 128
+    pattern: "^[A-Za-z0-9._:-]+$"
+  }];
+
+  // What is being bought. Two lines naming one SKU are refused rather than
+  // summed: a cart that did that is describing one quantity twice, and which of
+  // the two prices was agreed is not something this service can guess.
+  repeated CheckoutLine lines = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 100
+  }];
+}
+
+// CheckoutLine is one SKU and how many of it. It carries no price: what a thing
+// costs is the catalog's answer, and a client that could name its own price
+// would be naming what it pays.
+message CheckoutLine {
+  string sku = 1 [(buf.validate.field).string.pattern = "^[A-Z0-9][A-Z0-9-]{2,63}$"];
+
+  int32 quantity = 2 [(buf.validate.field).int32 = {
+    gt: 0
+    lte: 10000
+  }];
+}
+
+message CheckoutResponse {
+  Order order = 1;
+}
+
+message GetOrderRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message GetOrderResponse {
+  Order order = 1;
+}
+
+message ListOrdersRequest {
+  // 0 means 20.
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+
+  // next_page_token from the previous response, opaque to the caller. A cursor
+  // and not an offset: orders are inserted while a customer pages, and an
+  // offset would skip or repeat whatever moved across the boundary.
+  string page_token = 2 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string.max_len = 512
+  ];
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+
+  // Empty on the last page.
+  string next_page_token = 2;
+}

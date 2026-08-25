@@ -35,6 +35,16 @@ service CatalogService {
   // ListProducts pages through the catalog, newest first.
   rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
 
+  // GetVariantsBySKUs reads the sellable units named by their SKUs, which is
+  // what a caller holding a cart has: an order names SKUs and never product
+  // ids, because a shopper picked a size rather than a product.
+  //
+  // Only variants of an active product come back. A SKU belonging to a draft or
+  // an archived product is absent, exactly as an unknown one is — to whoever is
+  // trying to buy it the two are the same, and the difference is a fact about
+  // the shop's own back office.
+  rpc GetVariantsBySKUs(GetVariantsBySKUsRequest) returns (GetVariantsBySKUsResponse);
+
   // CreateProduct creates a product, in draft, optionally with variants.
   //
   // Deliberately not named Get* or Batch*: the client retry policy reads
@@ -83,6 +93,25 @@ message GetProductRequest {
 
 message GetProductResponse {
   Product product = 1;
+}
+
+message GetVariantsBySKUsRequest {
+  // Bounded because the response is: an unbounded list is how a batch read
+  // drives its own callee out of memory.
+  repeated string skus = 1 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 100
+      unique: true
+    },
+    (buf.validate.field).repeated.items.string.pattern = "^[A-Z0-9][A-Z0-9-]{2,63}$"
+  ];
+}
+
+message GetVariantsBySKUsResponse {
+  // In no guaranteed order, and possibly fewer than were asked for. A SKU that
+  // is not here is one nobody can buy right now.
+  repeated Variant variants = 1;
 }
 
 message GetProductsByIDsRequest {

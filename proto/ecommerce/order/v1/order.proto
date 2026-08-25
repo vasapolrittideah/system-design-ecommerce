@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package ecommerce.order.v1;
+
+import "ecommerce/common/v1/money.proto";
+import "google/protobuf/timestamp.proto";
+
+// Order is what the order service tells everyone else about a purchase.
+//
+// It is the outward shape, not the aggregate: the idempotency record, the saga
+// bookkeeping, and the optimistic-locking version stay inside the service.
+message Order {
+  string id = 1;
+
+  // Who placed it. Taken from the verified identity on the call that created
+  // it, never from a field a client could set.
+  string user_id = 2;
+
+  OrderStatus status = 3;
+
+  repeated OrderLine lines = 4;
+
+  // The sum of the lines, in one currency. Stored rather than recomputed on
+  // read: it is what the customer agreed to pay, and a total that follows the
+  // catalog's current prices would rewrite that agreement every time one moved.
+  ecommerce.common.v1.Money total = 5;
+
+  // The hold this order has on stock, taken before the order was persisted.
+  // Inventory refuses to commit one whose expires_at has passed, so it is also
+  // a deadline on how long the rest of the flow has.
+  string reservation_id = 6;
+
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// OrderLine is one SKU and what was agreed for it.
+message OrderLine {
+  string sku = 1;
+
+  int32 quantity = 2;
+
+  // The price at the moment of checkout, copied from the catalog and frozen
+  // here. Catalog owns what a thing costs now; an order owns what it cost then,
+  // and the two stop agreeing the first time anyone runs a sale.
+  ecommerce.common.v1.Money unit_price = 3;
+}
+
+// OrderStatus is where an order sits in its flow.
+//
+// The names describe the order rather than the step that moved it, so a state
+// survives a change in how it is reached: PAID says the money is in, not that a
+// particular provider called back.
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+
+  // Persisted, stock held, waiting for money. This is what Checkout returns —
+  // the entry call does not hold the caller open for the whole workflow.
+  ORDER_STATUS_PENDING_PAYMENT = 1;
+
+  // The money is in. The hold on stock is still a hold at this point; turning
+  // it into a sale is the next step of the saga.
+  ORDER_STATUS_PAID = 2;
+
+  // The order will not proceed, and whatever was reserved for it has been given
+  // back. A cancelled order is terminal: a customer who wants it after all
+  // places a new one, because the stock it held is somebody else's by now.
+  ORDER_STATUS_CANCELLED = 3;
+}

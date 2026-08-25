@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package ecommerce.events.v1;
+
+import "ecommerce/common/v1/money.proto";
+import "google/protobuf/timestamp.proto";
+
+// OrderPlaced says that an order exists and is waiting for payment, with stock
+// already held for it. Published to ecommerce.order.events.v1.
+//
+// It carries the reservation because the order service consumes this event back
+// itself: the step that turns the hold into a sale is a gRPC call to inventory,
+// and a call made straight after the transaction commits is a write nothing
+// would retry if the process died between the two. Reading the fact back off
+// the topic makes the trigger as durable as the order.
+message OrderPlaced {
+  string order_id = 1;
+
+  string user_id = 2;
+
+  // The hold taken before the order was persisted. Inventory refuses to commit
+  // one whose expires_at has passed, so this is also a deadline on how long the
+  // rest of the flow has.
+  string reservation_id = 3;
+
+  repeated OrderLine lines = 4;
+
+  ecommerce.common.v1.Money total = 5;
+
+  google.protobuf.Timestamp placed_at = 6;
+}
+
+// OrderLine is one SKU as it was bought — the price frozen at checkout, not
+// whatever the catalog says now.
+//
+// Declared here rather than reusing ecommerce.order.v1.OrderLine, though the
+// two are the same shape today. That one answers GetOrder and may be changed to
+// suit its callers; this one is a fact already on a topic that consumers older
+// than the producer are still reading.
+message OrderLine {
+  string sku = 1;
+
+  int32 quantity = 2;
+
+  ecommerce.common.v1.Money unit_price = 3;
+}

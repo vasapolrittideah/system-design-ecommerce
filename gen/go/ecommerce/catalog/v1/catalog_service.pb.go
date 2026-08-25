@@ -126,6 +126,98 @@ func (x *GetProductResponse) GetProduct() *Product {
 	return nil
 }
 
+type GetVariantsBySKUsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Bounded because the response is: an unbounded list is how a batch read
+	// drives its own callee out of memory.
+	Skus          []string `protobuf:"bytes,1,rep,name=skus,proto3" json:"skus,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetVariantsBySKUsRequest) Reset() {
+	*x = GetVariantsBySKUsRequest{}
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetVariantsBySKUsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetVariantsBySKUsRequest) ProtoMessage() {}
+
+func (x *GetVariantsBySKUsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetVariantsBySKUsRequest.ProtoReflect.Descriptor instead.
+func (*GetVariantsBySKUsRequest) Descriptor() ([]byte, []int) {
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *GetVariantsBySKUsRequest) GetSkus() []string {
+	if x != nil {
+		return x.Skus
+	}
+	return nil
+}
+
+type GetVariantsBySKUsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// In no guaranteed order, and possibly fewer than were asked for. A SKU that
+	// is not here is one nobody can buy right now.
+	Variants      []*Variant `protobuf:"bytes,1,rep,name=variants,proto3" json:"variants,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetVariantsBySKUsResponse) Reset() {
+	*x = GetVariantsBySKUsResponse{}
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetVariantsBySKUsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetVariantsBySKUsResponse) ProtoMessage() {}
+
+func (x *GetVariantsBySKUsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetVariantsBySKUsResponse.ProtoReflect.Descriptor instead.
+func (*GetVariantsBySKUsResponse) Descriptor() ([]byte, []int) {
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *GetVariantsBySKUsResponse) GetVariants() []*Variant {
+	if x != nil {
+		return x.Variants
+	}
+	return nil
+}
+
 type GetProductsByIDsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Bounded because the response is: an unbounded id list is how a batch read
@@ -137,7 +229,7 @@ type GetProductsByIDsRequest struct {
 
 func (x *GetProductsByIDsRequest) Reset() {
 	*x = GetProductsByIDsRequest{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[2]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -149,7 +241,7 @@ func (x *GetProductsByIDsRequest) String() string {
 func (*GetProductsByIDsRequest) ProtoMessage() {}
 
 func (x *GetProductsByIDsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[2]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -162,7 +254,7 @@ func (x *GetProductsByIDsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProductsByIDsRequest.ProtoReflect.Descriptor instead.
 func (*GetProductsByIDsRequest) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{2}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *GetProductsByIDsRequest) GetIds() []string {
@@ -184,7 +276,7 @@ type GetProductsByIDsResponse struct {
 
 func (x *GetProductsByIDsResponse) Reset() {
 	*x = GetProductsByIDsResponse{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[3]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -196,7 +288,7 @@ func (x *GetProductsByIDsResponse) String() string {
 func (*GetProductsByIDsResponse) ProtoMessage() {}
 
 func (x *GetProductsByIDsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[3]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -209,7 +301,7 @@ func (x *GetProductsByIDsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProductsByIDsResponse.ProtoReflect.Descriptor instead.
 func (*GetProductsByIDsResponse) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{3}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetProductsByIDsResponse) GetProducts() []*Product {
@@ -241,7 +333,7 @@ type ListProductsRequest struct {
 
 func (x *ListProductsRequest) Reset() {
 	*x = ListProductsRequest{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[4]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -253,7 +345,7 @@ func (x *ListProductsRequest) String() string {
 func (*ListProductsRequest) ProtoMessage() {}
 
 func (x *ListProductsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[4]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -266,7 +358,7 @@ func (x *ListProductsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListProductsRequest.ProtoReflect.Descriptor instead.
 func (*ListProductsRequest) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{4}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListProductsRequest) GetCategory() string {
@@ -308,7 +400,7 @@ type ListProductsResponse struct {
 
 func (x *ListProductsResponse) Reset() {
 	*x = ListProductsResponse{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[5]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -320,7 +412,7 @@ func (x *ListProductsResponse) String() string {
 func (*ListProductsResponse) ProtoMessage() {}
 
 func (x *ListProductsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[5]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -333,7 +425,7 @@ func (x *ListProductsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListProductsResponse.ProtoReflect.Descriptor instead.
 func (*ListProductsResponse) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{5}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListProductsResponse) GetProducts() []*Product {
@@ -367,7 +459,7 @@ type NewVariant struct {
 
 func (x *NewVariant) Reset() {
 	*x = NewVariant{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[6]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -379,7 +471,7 @@ func (x *NewVariant) String() string {
 func (*NewVariant) ProtoMessage() {}
 
 func (x *NewVariant) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[6]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -392,7 +484,7 @@ func (x *NewVariant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NewVariant.ProtoReflect.Descriptor instead.
 func (*NewVariant) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{6}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *NewVariant) GetSku() string {
@@ -430,7 +522,7 @@ type CreateProductRequest struct {
 
 func (x *CreateProductRequest) Reset() {
 	*x = CreateProductRequest{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[7]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -442,7 +534,7 @@ func (x *CreateProductRequest) String() string {
 func (*CreateProductRequest) ProtoMessage() {}
 
 func (x *CreateProductRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[7]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -455,7 +547,7 @@ func (x *CreateProductRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateProductRequest.ProtoReflect.Descriptor instead.
 func (*CreateProductRequest) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{7}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CreateProductRequest) GetName() string {
@@ -495,7 +587,7 @@ type CreateProductResponse struct {
 
 func (x *CreateProductResponse) Reset() {
 	*x = CreateProductResponse{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[8]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -507,7 +599,7 @@ func (x *CreateProductResponse) String() string {
 func (*CreateProductResponse) ProtoMessage() {}
 
 func (x *CreateProductResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[8]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +612,7 @@ func (x *CreateProductResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateProductResponse.ProtoReflect.Descriptor instead.
 func (*CreateProductResponse) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{8}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CreateProductResponse) GetProduct() *Product {
@@ -542,7 +634,7 @@ type UpdateProductRequest struct {
 
 func (x *UpdateProductRequest) Reset() {
 	*x = UpdateProductRequest{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[9]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -554,7 +646,7 @@ func (x *UpdateProductRequest) String() string {
 func (*UpdateProductRequest) ProtoMessage() {}
 
 func (x *UpdateProductRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[9]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -567,7 +659,7 @@ func (x *UpdateProductRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateProductRequest.ProtoReflect.Descriptor instead.
 func (*UpdateProductRequest) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{9}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *UpdateProductRequest) GetId() string {
@@ -607,7 +699,7 @@ type UpdateProductResponse struct {
 
 func (x *UpdateProductResponse) Reset() {
 	*x = UpdateProductResponse{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[10]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -619,7 +711,7 @@ func (x *UpdateProductResponse) String() string {
 func (*UpdateProductResponse) ProtoMessage() {}
 
 func (x *UpdateProductResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[10]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -632,7 +724,7 @@ func (x *UpdateProductResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateProductResponse.ProtoReflect.Descriptor instead.
 func (*UpdateProductResponse) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{10}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *UpdateProductResponse) GetProduct() *Product {
@@ -652,7 +744,7 @@ type AddVariantRequest struct {
 
 func (x *AddVariantRequest) Reset() {
 	*x = AddVariantRequest{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[11]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -664,7 +756,7 @@ func (x *AddVariantRequest) String() string {
 func (*AddVariantRequest) ProtoMessage() {}
 
 func (x *AddVariantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[11]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -677,7 +769,7 @@ func (x *AddVariantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddVariantRequest.ProtoReflect.Descriptor instead.
 func (*AddVariantRequest) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{11}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AddVariantRequest) GetProductId() string {
@@ -706,7 +798,7 @@ type AddVariantResponse struct {
 
 func (x *AddVariantResponse) Reset() {
 	*x = AddVariantResponse{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[12]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -718,7 +810,7 @@ func (x *AddVariantResponse) String() string {
 func (*AddVariantResponse) ProtoMessage() {}
 
 func (x *AddVariantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[12]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -731,7 +823,7 @@ func (x *AddVariantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddVariantResponse.ProtoReflect.Descriptor instead.
 func (*AddVariantResponse) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{12}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *AddVariantResponse) GetProduct() *Product {
@@ -757,7 +849,7 @@ type UpdateVariantRequest struct {
 
 func (x *UpdateVariantRequest) Reset() {
 	*x = UpdateVariantRequest{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[13]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -769,7 +861,7 @@ func (x *UpdateVariantRequest) String() string {
 func (*UpdateVariantRequest) ProtoMessage() {}
 
 func (x *UpdateVariantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[13]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -782,7 +874,7 @@ func (x *UpdateVariantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateVariantRequest.ProtoReflect.Descriptor instead.
 func (*UpdateVariantRequest) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{13}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *UpdateVariantRequest) GetProductId() string {
@@ -822,7 +914,7 @@ type UpdateVariantResponse struct {
 
 func (x *UpdateVariantResponse) Reset() {
 	*x = UpdateVariantResponse{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[14]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -834,7 +926,7 @@ func (x *UpdateVariantResponse) String() string {
 func (*UpdateVariantResponse) ProtoMessage() {}
 
 func (x *UpdateVariantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[14]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -847,7 +939,7 @@ func (x *UpdateVariantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateVariantResponse.ProtoReflect.Descriptor instead.
 func (*UpdateVariantResponse) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{14}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *UpdateVariantResponse) GetProduct() *Product {
@@ -866,7 +958,7 @@ type PublishProductRequest struct {
 
 func (x *PublishProductRequest) Reset() {
 	*x = PublishProductRequest{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[15]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -878,7 +970,7 @@ func (x *PublishProductRequest) String() string {
 func (*PublishProductRequest) ProtoMessage() {}
 
 func (x *PublishProductRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[15]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -891,7 +983,7 @@ func (x *PublishProductRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishProductRequest.ProtoReflect.Descriptor instead.
 func (*PublishProductRequest) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{15}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *PublishProductRequest) GetId() string {
@@ -910,7 +1002,7 @@ type PublishProductResponse struct {
 
 func (x *PublishProductResponse) Reset() {
 	*x = PublishProductResponse{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[16]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -922,7 +1014,7 @@ func (x *PublishProductResponse) String() string {
 func (*PublishProductResponse) ProtoMessage() {}
 
 func (x *PublishProductResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[16]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -935,7 +1027,7 @@ func (x *PublishProductResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishProductResponse.ProtoReflect.Descriptor instead.
 func (*PublishProductResponse) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{16}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PublishProductResponse) GetProduct() *Product {
@@ -954,7 +1046,7 @@ type ArchiveProductRequest struct {
 
 func (x *ArchiveProductRequest) Reset() {
 	*x = ArchiveProductRequest{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[17]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -966,7 +1058,7 @@ func (x *ArchiveProductRequest) String() string {
 func (*ArchiveProductRequest) ProtoMessage() {}
 
 func (x *ArchiveProductRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[17]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -979,7 +1071,7 @@ func (x *ArchiveProductRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArchiveProductRequest.ProtoReflect.Descriptor instead.
 func (*ArchiveProductRequest) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{17}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ArchiveProductRequest) GetId() string {
@@ -998,7 +1090,7 @@ type ArchiveProductResponse struct {
 
 func (x *ArchiveProductResponse) Reset() {
 	*x = ArchiveProductResponse{}
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[18]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1010,7 +1102,7 @@ func (x *ArchiveProductResponse) String() string {
 func (*ArchiveProductResponse) ProtoMessage() {}
 
 func (x *ArchiveProductResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[18]
+	mi := &file_ecommerce_catalog_v1_catalog_service_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1023,7 +1115,7 @@ func (x *ArchiveProductResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArchiveProductResponse.ProtoReflect.Descriptor instead.
 func (*ArchiveProductResponse) Descriptor() ([]byte, []int) {
-	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{18}
+	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ArchiveProductResponse) GetProduct() *Product {
@@ -1042,7 +1134,11 @@ const file_ecommerce_catalog_v1_catalog_service_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12E\n" +
 	"\x06status\x18\x02 \x01(\x0e2#.ecommerce.catalog.v1.ProductStatusB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06status\"M\n" +
 	"\x12GetProductResponse\x127\n" +
-	"\aproduct\x18\x01 \x01(\v2\x1d.ecommerce.catalog.v1.ProductR\aproduct\"@\n" +
+	"\aproduct\x18\x01 \x01(\v2\x1d.ecommerce.catalog.v1.ProductR\aproduct\"[\n" +
+	"\x18GetVariantsBySKUsRequest\x12?\n" +
+	"\x04skus\x18\x01 \x03(\tB+\xbaH(\x92\x01%\b\x01\x10d\x18\x01\"\x1dr\x1b2\x19^[A-Z0-9][A-Z0-9-]{2,63}$R\x04skus\"V\n" +
+	"\x19GetVariantsBySKUsResponse\x129\n" +
+	"\bvariants\x18\x01 \x03(\v2\x1d.ecommerce.catalog.v1.VariantR\bvariants\"@\n" +
 	"\x17GetProductsByIDsRequest\x12%\n" +
 	"\x03ids\x18\x01 \x03(\tB\x13\xbaH\x10\x92\x01\r\b\x01\x10d\x18\x01\"\x05r\x03\xb0\x01\x01R\x03ids\"U\n" +
 	"\x18GetProductsByIDsResponse\x129\n" +
@@ -1109,12 +1205,13 @@ const file_ecommerce_catalog_v1_catalog_service_proto_rawDesc = "" +
 	"\x15ArchiveProductRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"Q\n" +
 	"\x16ArchiveProductResponse\x127\n" +
-	"\aproduct\x18\x01 \x01(\v2\x1d.ecommerce.catalog.v1.ProductR\aproduct2\xc4\a\n" +
+	"\aproduct\x18\x01 \x01(\v2\x1d.ecommerce.catalog.v1.ProductR\aproduct2\xba\b\n" +
 	"\x0eCatalogService\x12_\n" +
 	"\n" +
 	"GetProduct\x12'.ecommerce.catalog.v1.GetProductRequest\x1a(.ecommerce.catalog.v1.GetProductResponse\x12q\n" +
 	"\x10GetProductsByIDs\x12-.ecommerce.catalog.v1.GetProductsByIDsRequest\x1a..ecommerce.catalog.v1.GetProductsByIDsResponse\x12e\n" +
-	"\fListProducts\x12).ecommerce.catalog.v1.ListProductsRequest\x1a*.ecommerce.catalog.v1.ListProductsResponse\x12h\n" +
+	"\fListProducts\x12).ecommerce.catalog.v1.ListProductsRequest\x1a*.ecommerce.catalog.v1.ListProductsResponse\x12t\n" +
+	"\x11GetVariantsBySKUs\x12..ecommerce.catalog.v1.GetVariantsBySKUsRequest\x1a/.ecommerce.catalog.v1.GetVariantsBySKUsResponse\x12h\n" +
 	"\rCreateProduct\x12*.ecommerce.catalog.v1.CreateProductRequest\x1a+.ecommerce.catalog.v1.CreateProductResponse\x12h\n" +
 	"\rUpdateProduct\x12*.ecommerce.catalog.v1.UpdateProductRequest\x1a+.ecommerce.catalog.v1.UpdateProductResponse\x12_\n" +
 	"\n" +
@@ -1136,74 +1233,80 @@ func file_ecommerce_catalog_v1_catalog_service_proto_rawDescGZIP() []byte {
 	return file_ecommerce_catalog_v1_catalog_service_proto_rawDescData
 }
 
-var file_ecommerce_catalog_v1_catalog_service_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_ecommerce_catalog_v1_catalog_service_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_ecommerce_catalog_v1_catalog_service_proto_goTypes = []any{
-	(*GetProductRequest)(nil),        // 0: ecommerce.catalog.v1.GetProductRequest
-	(*GetProductResponse)(nil),       // 1: ecommerce.catalog.v1.GetProductResponse
-	(*GetProductsByIDsRequest)(nil),  // 2: ecommerce.catalog.v1.GetProductsByIDsRequest
-	(*GetProductsByIDsResponse)(nil), // 3: ecommerce.catalog.v1.GetProductsByIDsResponse
-	(*ListProductsRequest)(nil),      // 4: ecommerce.catalog.v1.ListProductsRequest
-	(*ListProductsResponse)(nil),     // 5: ecommerce.catalog.v1.ListProductsResponse
-	(*NewVariant)(nil),               // 6: ecommerce.catalog.v1.NewVariant
-	(*CreateProductRequest)(nil),     // 7: ecommerce.catalog.v1.CreateProductRequest
-	(*CreateProductResponse)(nil),    // 8: ecommerce.catalog.v1.CreateProductResponse
-	(*UpdateProductRequest)(nil),     // 9: ecommerce.catalog.v1.UpdateProductRequest
-	(*UpdateProductResponse)(nil),    // 10: ecommerce.catalog.v1.UpdateProductResponse
-	(*AddVariantRequest)(nil),        // 11: ecommerce.catalog.v1.AddVariantRequest
-	(*AddVariantResponse)(nil),       // 12: ecommerce.catalog.v1.AddVariantResponse
-	(*UpdateVariantRequest)(nil),     // 13: ecommerce.catalog.v1.UpdateVariantRequest
-	(*UpdateVariantResponse)(nil),    // 14: ecommerce.catalog.v1.UpdateVariantResponse
-	(*PublishProductRequest)(nil),    // 15: ecommerce.catalog.v1.PublishProductRequest
-	(*PublishProductResponse)(nil),   // 16: ecommerce.catalog.v1.PublishProductResponse
-	(*ArchiveProductRequest)(nil),    // 17: ecommerce.catalog.v1.ArchiveProductRequest
-	(*ArchiveProductResponse)(nil),   // 18: ecommerce.catalog.v1.ArchiveProductResponse
-	nil,                              // 19: ecommerce.catalog.v1.NewVariant.AttributesEntry
-	nil,                              // 20: ecommerce.catalog.v1.UpdateVariantRequest.AttributesEntry
-	(ProductStatus)(0),               // 21: ecommerce.catalog.v1.ProductStatus
-	(*Product)(nil),                  // 22: ecommerce.catalog.v1.Product
-	(*v1.Money)(nil),                 // 23: ecommerce.common.v1.Money
+	(*GetProductRequest)(nil),         // 0: ecommerce.catalog.v1.GetProductRequest
+	(*GetProductResponse)(nil),        // 1: ecommerce.catalog.v1.GetProductResponse
+	(*GetVariantsBySKUsRequest)(nil),  // 2: ecommerce.catalog.v1.GetVariantsBySKUsRequest
+	(*GetVariantsBySKUsResponse)(nil), // 3: ecommerce.catalog.v1.GetVariantsBySKUsResponse
+	(*GetProductsByIDsRequest)(nil),   // 4: ecommerce.catalog.v1.GetProductsByIDsRequest
+	(*GetProductsByIDsResponse)(nil),  // 5: ecommerce.catalog.v1.GetProductsByIDsResponse
+	(*ListProductsRequest)(nil),       // 6: ecommerce.catalog.v1.ListProductsRequest
+	(*ListProductsResponse)(nil),      // 7: ecommerce.catalog.v1.ListProductsResponse
+	(*NewVariant)(nil),                // 8: ecommerce.catalog.v1.NewVariant
+	(*CreateProductRequest)(nil),      // 9: ecommerce.catalog.v1.CreateProductRequest
+	(*CreateProductResponse)(nil),     // 10: ecommerce.catalog.v1.CreateProductResponse
+	(*UpdateProductRequest)(nil),      // 11: ecommerce.catalog.v1.UpdateProductRequest
+	(*UpdateProductResponse)(nil),     // 12: ecommerce.catalog.v1.UpdateProductResponse
+	(*AddVariantRequest)(nil),         // 13: ecommerce.catalog.v1.AddVariantRequest
+	(*AddVariantResponse)(nil),        // 14: ecommerce.catalog.v1.AddVariantResponse
+	(*UpdateVariantRequest)(nil),      // 15: ecommerce.catalog.v1.UpdateVariantRequest
+	(*UpdateVariantResponse)(nil),     // 16: ecommerce.catalog.v1.UpdateVariantResponse
+	(*PublishProductRequest)(nil),     // 17: ecommerce.catalog.v1.PublishProductRequest
+	(*PublishProductResponse)(nil),    // 18: ecommerce.catalog.v1.PublishProductResponse
+	(*ArchiveProductRequest)(nil),     // 19: ecommerce.catalog.v1.ArchiveProductRequest
+	(*ArchiveProductResponse)(nil),    // 20: ecommerce.catalog.v1.ArchiveProductResponse
+	nil,                               // 21: ecommerce.catalog.v1.NewVariant.AttributesEntry
+	nil,                               // 22: ecommerce.catalog.v1.UpdateVariantRequest.AttributesEntry
+	(ProductStatus)(0),                // 23: ecommerce.catalog.v1.ProductStatus
+	(*Product)(nil),                   // 24: ecommerce.catalog.v1.Product
+	(*Variant)(nil),                   // 25: ecommerce.catalog.v1.Variant
+	(*v1.Money)(nil),                  // 26: ecommerce.common.v1.Money
 }
 var file_ecommerce_catalog_v1_catalog_service_proto_depIdxs = []int32{
-	21, // 0: ecommerce.catalog.v1.GetProductRequest.status:type_name -> ecommerce.catalog.v1.ProductStatus
-	22, // 1: ecommerce.catalog.v1.GetProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	22, // 2: ecommerce.catalog.v1.GetProductsByIDsResponse.products:type_name -> ecommerce.catalog.v1.Product
-	21, // 3: ecommerce.catalog.v1.ListProductsRequest.status:type_name -> ecommerce.catalog.v1.ProductStatus
-	22, // 4: ecommerce.catalog.v1.ListProductsResponse.products:type_name -> ecommerce.catalog.v1.Product
-	23, // 5: ecommerce.catalog.v1.NewVariant.price:type_name -> ecommerce.common.v1.Money
-	19, // 6: ecommerce.catalog.v1.NewVariant.attributes:type_name -> ecommerce.catalog.v1.NewVariant.AttributesEntry
-	6,  // 7: ecommerce.catalog.v1.CreateProductRequest.variants:type_name -> ecommerce.catalog.v1.NewVariant
-	22, // 8: ecommerce.catalog.v1.CreateProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	22, // 9: ecommerce.catalog.v1.UpdateProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	6,  // 10: ecommerce.catalog.v1.AddVariantRequest.variant:type_name -> ecommerce.catalog.v1.NewVariant
-	22, // 11: ecommerce.catalog.v1.AddVariantResponse.product:type_name -> ecommerce.catalog.v1.Product
-	23, // 12: ecommerce.catalog.v1.UpdateVariantRequest.price:type_name -> ecommerce.common.v1.Money
-	20, // 13: ecommerce.catalog.v1.UpdateVariantRequest.attributes:type_name -> ecommerce.catalog.v1.UpdateVariantRequest.AttributesEntry
-	22, // 14: ecommerce.catalog.v1.UpdateVariantResponse.product:type_name -> ecommerce.catalog.v1.Product
-	22, // 15: ecommerce.catalog.v1.PublishProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	22, // 16: ecommerce.catalog.v1.ArchiveProductResponse.product:type_name -> ecommerce.catalog.v1.Product
-	0,  // 17: ecommerce.catalog.v1.CatalogService.GetProduct:input_type -> ecommerce.catalog.v1.GetProductRequest
-	2,  // 18: ecommerce.catalog.v1.CatalogService.GetProductsByIDs:input_type -> ecommerce.catalog.v1.GetProductsByIDsRequest
-	4,  // 19: ecommerce.catalog.v1.CatalogService.ListProducts:input_type -> ecommerce.catalog.v1.ListProductsRequest
-	7,  // 20: ecommerce.catalog.v1.CatalogService.CreateProduct:input_type -> ecommerce.catalog.v1.CreateProductRequest
-	9,  // 21: ecommerce.catalog.v1.CatalogService.UpdateProduct:input_type -> ecommerce.catalog.v1.UpdateProductRequest
-	11, // 22: ecommerce.catalog.v1.CatalogService.AddVariant:input_type -> ecommerce.catalog.v1.AddVariantRequest
-	13, // 23: ecommerce.catalog.v1.CatalogService.UpdateVariant:input_type -> ecommerce.catalog.v1.UpdateVariantRequest
-	15, // 24: ecommerce.catalog.v1.CatalogService.PublishProduct:input_type -> ecommerce.catalog.v1.PublishProductRequest
-	17, // 25: ecommerce.catalog.v1.CatalogService.ArchiveProduct:input_type -> ecommerce.catalog.v1.ArchiveProductRequest
-	1,  // 26: ecommerce.catalog.v1.CatalogService.GetProduct:output_type -> ecommerce.catalog.v1.GetProductResponse
-	3,  // 27: ecommerce.catalog.v1.CatalogService.GetProductsByIDs:output_type -> ecommerce.catalog.v1.GetProductsByIDsResponse
-	5,  // 28: ecommerce.catalog.v1.CatalogService.ListProducts:output_type -> ecommerce.catalog.v1.ListProductsResponse
-	8,  // 29: ecommerce.catalog.v1.CatalogService.CreateProduct:output_type -> ecommerce.catalog.v1.CreateProductResponse
-	10, // 30: ecommerce.catalog.v1.CatalogService.UpdateProduct:output_type -> ecommerce.catalog.v1.UpdateProductResponse
-	12, // 31: ecommerce.catalog.v1.CatalogService.AddVariant:output_type -> ecommerce.catalog.v1.AddVariantResponse
-	14, // 32: ecommerce.catalog.v1.CatalogService.UpdateVariant:output_type -> ecommerce.catalog.v1.UpdateVariantResponse
-	16, // 33: ecommerce.catalog.v1.CatalogService.PublishProduct:output_type -> ecommerce.catalog.v1.PublishProductResponse
-	18, // 34: ecommerce.catalog.v1.CatalogService.ArchiveProduct:output_type -> ecommerce.catalog.v1.ArchiveProductResponse
-	26, // [26:35] is the sub-list for method output_type
-	17, // [17:26] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	23, // 0: ecommerce.catalog.v1.GetProductRequest.status:type_name -> ecommerce.catalog.v1.ProductStatus
+	24, // 1: ecommerce.catalog.v1.GetProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	25, // 2: ecommerce.catalog.v1.GetVariantsBySKUsResponse.variants:type_name -> ecommerce.catalog.v1.Variant
+	24, // 3: ecommerce.catalog.v1.GetProductsByIDsResponse.products:type_name -> ecommerce.catalog.v1.Product
+	23, // 4: ecommerce.catalog.v1.ListProductsRequest.status:type_name -> ecommerce.catalog.v1.ProductStatus
+	24, // 5: ecommerce.catalog.v1.ListProductsResponse.products:type_name -> ecommerce.catalog.v1.Product
+	26, // 6: ecommerce.catalog.v1.NewVariant.price:type_name -> ecommerce.common.v1.Money
+	21, // 7: ecommerce.catalog.v1.NewVariant.attributes:type_name -> ecommerce.catalog.v1.NewVariant.AttributesEntry
+	8,  // 8: ecommerce.catalog.v1.CreateProductRequest.variants:type_name -> ecommerce.catalog.v1.NewVariant
+	24, // 9: ecommerce.catalog.v1.CreateProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	24, // 10: ecommerce.catalog.v1.UpdateProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	8,  // 11: ecommerce.catalog.v1.AddVariantRequest.variant:type_name -> ecommerce.catalog.v1.NewVariant
+	24, // 12: ecommerce.catalog.v1.AddVariantResponse.product:type_name -> ecommerce.catalog.v1.Product
+	26, // 13: ecommerce.catalog.v1.UpdateVariantRequest.price:type_name -> ecommerce.common.v1.Money
+	22, // 14: ecommerce.catalog.v1.UpdateVariantRequest.attributes:type_name -> ecommerce.catalog.v1.UpdateVariantRequest.AttributesEntry
+	24, // 15: ecommerce.catalog.v1.UpdateVariantResponse.product:type_name -> ecommerce.catalog.v1.Product
+	24, // 16: ecommerce.catalog.v1.PublishProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	24, // 17: ecommerce.catalog.v1.ArchiveProductResponse.product:type_name -> ecommerce.catalog.v1.Product
+	0,  // 18: ecommerce.catalog.v1.CatalogService.GetProduct:input_type -> ecommerce.catalog.v1.GetProductRequest
+	4,  // 19: ecommerce.catalog.v1.CatalogService.GetProductsByIDs:input_type -> ecommerce.catalog.v1.GetProductsByIDsRequest
+	6,  // 20: ecommerce.catalog.v1.CatalogService.ListProducts:input_type -> ecommerce.catalog.v1.ListProductsRequest
+	2,  // 21: ecommerce.catalog.v1.CatalogService.GetVariantsBySKUs:input_type -> ecommerce.catalog.v1.GetVariantsBySKUsRequest
+	9,  // 22: ecommerce.catalog.v1.CatalogService.CreateProduct:input_type -> ecommerce.catalog.v1.CreateProductRequest
+	11, // 23: ecommerce.catalog.v1.CatalogService.UpdateProduct:input_type -> ecommerce.catalog.v1.UpdateProductRequest
+	13, // 24: ecommerce.catalog.v1.CatalogService.AddVariant:input_type -> ecommerce.catalog.v1.AddVariantRequest
+	15, // 25: ecommerce.catalog.v1.CatalogService.UpdateVariant:input_type -> ecommerce.catalog.v1.UpdateVariantRequest
+	17, // 26: ecommerce.catalog.v1.CatalogService.PublishProduct:input_type -> ecommerce.catalog.v1.PublishProductRequest
+	19, // 27: ecommerce.catalog.v1.CatalogService.ArchiveProduct:input_type -> ecommerce.catalog.v1.ArchiveProductRequest
+	1,  // 28: ecommerce.catalog.v1.CatalogService.GetProduct:output_type -> ecommerce.catalog.v1.GetProductResponse
+	5,  // 29: ecommerce.catalog.v1.CatalogService.GetProductsByIDs:output_type -> ecommerce.catalog.v1.GetProductsByIDsResponse
+	7,  // 30: ecommerce.catalog.v1.CatalogService.ListProducts:output_type -> ecommerce.catalog.v1.ListProductsResponse
+	3,  // 31: ecommerce.catalog.v1.CatalogService.GetVariantsBySKUs:output_type -> ecommerce.catalog.v1.GetVariantsBySKUsResponse
+	10, // 32: ecommerce.catalog.v1.CatalogService.CreateProduct:output_type -> ecommerce.catalog.v1.CreateProductResponse
+	12, // 33: ecommerce.catalog.v1.CatalogService.UpdateProduct:output_type -> ecommerce.catalog.v1.UpdateProductResponse
+	14, // 34: ecommerce.catalog.v1.CatalogService.AddVariant:output_type -> ecommerce.catalog.v1.AddVariantResponse
+	16, // 35: ecommerce.catalog.v1.CatalogService.UpdateVariant:output_type -> ecommerce.catalog.v1.UpdateVariantResponse
+	18, // 36: ecommerce.catalog.v1.CatalogService.PublishProduct:output_type -> ecommerce.catalog.v1.PublishProductResponse
+	20, // 37: ecommerce.catalog.v1.CatalogService.ArchiveProduct:output_type -> ecommerce.catalog.v1.ArchiveProductResponse
+	28, // [28:38] is the sub-list for method output_type
+	18, // [18:28] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_ecommerce_catalog_v1_catalog_service_proto_init() }
@@ -1218,7 +1321,7 @@ func file_ecommerce_catalog_v1_catalog_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ecommerce_catalog_v1_catalog_service_proto_rawDesc), len(file_ecommerce_catalog_v1_catalog_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

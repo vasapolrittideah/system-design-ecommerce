@@ -19,15 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CatalogService_GetProduct_FullMethodName       = "/ecommerce.catalog.v1.CatalogService/GetProduct"
-	CatalogService_GetProductsByIDs_FullMethodName = "/ecommerce.catalog.v1.CatalogService/GetProductsByIDs"
-	CatalogService_ListProducts_FullMethodName     = "/ecommerce.catalog.v1.CatalogService/ListProducts"
-	CatalogService_CreateProduct_FullMethodName    = "/ecommerce.catalog.v1.CatalogService/CreateProduct"
-	CatalogService_UpdateProduct_FullMethodName    = "/ecommerce.catalog.v1.CatalogService/UpdateProduct"
-	CatalogService_AddVariant_FullMethodName       = "/ecommerce.catalog.v1.CatalogService/AddVariant"
-	CatalogService_UpdateVariant_FullMethodName    = "/ecommerce.catalog.v1.CatalogService/UpdateVariant"
-	CatalogService_PublishProduct_FullMethodName   = "/ecommerce.catalog.v1.CatalogService/PublishProduct"
-	CatalogService_ArchiveProduct_FullMethodName   = "/ecommerce.catalog.v1.CatalogService/ArchiveProduct"
+	CatalogService_GetProduct_FullMethodName        = "/ecommerce.catalog.v1.CatalogService/GetProduct"
+	CatalogService_GetProductsByIDs_FullMethodName  = "/ecommerce.catalog.v1.CatalogService/GetProductsByIDs"
+	CatalogService_ListProducts_FullMethodName      = "/ecommerce.catalog.v1.CatalogService/ListProducts"
+	CatalogService_GetVariantsBySKUs_FullMethodName = "/ecommerce.catalog.v1.CatalogService/GetVariantsBySKUs"
+	CatalogService_CreateProduct_FullMethodName     = "/ecommerce.catalog.v1.CatalogService/CreateProduct"
+	CatalogService_UpdateProduct_FullMethodName     = "/ecommerce.catalog.v1.CatalogService/UpdateProduct"
+	CatalogService_AddVariant_FullMethodName        = "/ecommerce.catalog.v1.CatalogService/AddVariant"
+	CatalogService_UpdateVariant_FullMethodName     = "/ecommerce.catalog.v1.CatalogService/UpdateVariant"
+	CatalogService_PublishProduct_FullMethodName    = "/ecommerce.catalog.v1.CatalogService/PublishProduct"
+	CatalogService_ArchiveProduct_FullMethodName    = "/ecommerce.catalog.v1.CatalogService/ArchiveProduct"
 )
 
 // CatalogServiceClient is the client API for CatalogService service.
@@ -60,6 +61,15 @@ type CatalogServiceClient interface {
 	GetProductsByIDs(ctx context.Context, in *GetProductsByIDsRequest, opts ...grpc.CallOption) (*GetProductsByIDsResponse, error)
 	// ListProducts pages through the catalog, newest first.
 	ListProducts(ctx context.Context, in *ListProductsRequest, opts ...grpc.CallOption) (*ListProductsResponse, error)
+	// GetVariantsBySKUs reads the sellable units named by their SKUs, which is
+	// what a caller holding a cart has: an order names SKUs and never product
+	// ids, because a shopper picked a size rather than a product.
+	//
+	// Only variants of an active product come back. A SKU belonging to a draft or
+	// an archived product is absent, exactly as an unknown one is — to whoever is
+	// trying to buy it the two are the same, and the difference is a fact about
+	// the shop's own back office.
+	GetVariantsBySKUs(ctx context.Context, in *GetVariantsBySKUsRequest, opts ...grpc.CallOption) (*GetVariantsBySKUsResponse, error)
 	// CreateProduct creates a product, in draft, optionally with variants.
 	//
 	// Deliberately not named Get* or Batch*: the client retry policy reads
@@ -120,6 +130,16 @@ func (c *catalogServiceClient) ListProducts(ctx context.Context, in *ListProduct
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListProductsResponse)
 	err := c.cc.Invoke(ctx, CatalogService_ListProducts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) GetVariantsBySKUs(ctx context.Context, in *GetVariantsBySKUsRequest, opts ...grpc.CallOption) (*GetVariantsBySKUsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetVariantsBySKUsResponse)
+	err := c.cc.Invoke(ctx, CatalogService_GetVariantsBySKUs_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +236,15 @@ type CatalogServiceServer interface {
 	GetProductsByIDs(context.Context, *GetProductsByIDsRequest) (*GetProductsByIDsResponse, error)
 	// ListProducts pages through the catalog, newest first.
 	ListProducts(context.Context, *ListProductsRequest) (*ListProductsResponse, error)
+	// GetVariantsBySKUs reads the sellable units named by their SKUs, which is
+	// what a caller holding a cart has: an order names SKUs and never product
+	// ids, because a shopper picked a size rather than a product.
+	//
+	// Only variants of an active product come back. A SKU belonging to a draft or
+	// an archived product is absent, exactly as an unknown one is — to whoever is
+	// trying to buy it the two are the same, and the difference is a fact about
+	// the shop's own back office.
+	GetVariantsBySKUs(context.Context, *GetVariantsBySKUsRequest) (*GetVariantsBySKUsResponse, error)
 	// CreateProduct creates a product, in draft, optionally with variants.
 	//
 	// Deliberately not named Get* or Batch*: the client retry policy reads
@@ -260,6 +289,9 @@ func (UnimplementedCatalogServiceServer) GetProductsByIDs(context.Context, *GetP
 }
 func (UnimplementedCatalogServiceServer) ListProducts(context.Context, *ListProductsRequest) (*ListProductsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListProducts not implemented")
+}
+func (UnimplementedCatalogServiceServer) GetVariantsBySKUs(context.Context, *GetVariantsBySKUsRequest) (*GetVariantsBySKUsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetVariantsBySKUs not implemented")
 }
 func (UnimplementedCatalogServiceServer) CreateProduct(context.Context, *CreateProductRequest) (*CreateProductResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateProduct not implemented")
@@ -350,6 +382,24 @@ func _CatalogService_ListProducts_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(CatalogServiceServer).ListProducts(ctx, req.(*ListProductsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_GetVariantsBySKUs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetVariantsBySKUsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).GetVariantsBySKUs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_GetVariantsBySKUs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).GetVariantsBySKUs(ctx, req.(*GetVariantsBySKUsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -480,6 +530,10 @@ var CatalogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListProducts",
 			Handler:    _CatalogService_ListProducts_Handler,
+		},
+		{
+			MethodName: "GetVariantsBySKUs",
+			Handler:    _CatalogService_GetVariantsBySKUs_Handler,
 		},
 		{
 			MethodName: "CreateProduct",

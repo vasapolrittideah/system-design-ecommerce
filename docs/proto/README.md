@@ -24,6 +24,8 @@
     - [GetProductResponse](#ecommerce-catalog-v1-GetProductResponse)
     - [GetProductsByIDsRequest](#ecommerce-catalog-v1-GetProductsByIDsRequest)
     - [GetProductsByIDsResponse](#ecommerce-catalog-v1-GetProductsByIDsResponse)
+    - [GetVariantsBySKUsRequest](#ecommerce-catalog-v1-GetVariantsBySKUsRequest)
+    - [GetVariantsBySKUsResponse](#ecommerce-catalog-v1-GetVariantsBySKUsResponse)
     - [ListProductsRequest](#ecommerce-catalog-v1-ListProductsRequest)
     - [ListProductsResponse](#ecommerce-catalog-v1-ListProductsResponse)
     - [NewVariant](#ecommerce-catalog-v1-NewVariant)
@@ -43,6 +45,10 @@
   
 - [ecommerce/events/v1/identity.proto](#ecommerce_events_v1_identity-proto)
     - [UserRegistered](#ecommerce-events-v1-UserRegistered)
+  
+- [ecommerce/events/v1/order.proto](#ecommerce_events_v1_order-proto)
+    - [OrderLine](#ecommerce-events-v1-OrderLine)
+    - [OrderPlaced](#ecommerce-events-v1-OrderPlaced)
   
 - [ecommerce/identity/v1/user.proto](#ecommerce_identity_v1_user-proto)
     - [User](#ecommerce-identity-v1-User)
@@ -89,6 +95,23 @@
     - [ReserveStockResponse](#ecommerce-inventory-v1-ReserveStockResponse)
   
     - [InventoryService](#ecommerce-inventory-v1-InventoryService)
+  
+- [ecommerce/order/v1/order.proto](#ecommerce_order_v1_order-proto)
+    - [Order](#ecommerce-order-v1-Order)
+    - [OrderLine](#ecommerce-order-v1-OrderLine)
+  
+    - [OrderStatus](#ecommerce-order-v1-OrderStatus)
+  
+- [ecommerce/order/v1/order_service.proto](#ecommerce_order_v1_order_service-proto)
+    - [CheckoutLine](#ecommerce-order-v1-CheckoutLine)
+    - [CheckoutRequest](#ecommerce-order-v1-CheckoutRequest)
+    - [CheckoutResponse](#ecommerce-order-v1-CheckoutResponse)
+    - [GetOrderRequest](#ecommerce-order-v1-GetOrderRequest)
+    - [GetOrderResponse](#ecommerce-order-v1-GetOrderResponse)
+    - [ListOrdersRequest](#ecommerce-order-v1-ListOrdersRequest)
+    - [ListOrdersResponse](#ecommerce-order-v1-ListOrdersResponse)
+  
+    - [OrderService](#ecommerce-order-v1-OrderService)
   
 - [Scalar Value Types](#scalar-value-types)
 
@@ -404,6 +427,36 @@ A read by id has to be told, where a listing could have been left to its own def
 
 
 
+<a name="ecommerce-catalog-v1-GetVariantsBySKUsRequest"></a>
+
+### GetVariantsBySKUsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| skus | [string](#string) | repeated | Bounded because the response is: an unbounded list is how a batch read drives its own callee out of memory. |
+
+
+
+
+
+
+<a name="ecommerce-catalog-v1-GetVariantsBySKUsResponse"></a>
+
+### GetVariantsBySKUsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| variants | [Variant](#ecommerce-catalog-v1-Variant) | repeated | In no guaranteed order, and possibly fewer than were asked for. A SKU that is not here is one nobody can buy right now. |
+
+
+
+
+
+
 <a name="ecommerce-catalog-v1-ListProductsRequest"></a>
 
 ### ListProductsRequest
@@ -618,6 +671,9 @@ domain, and a constraint here could only ever repeat the easy half of them.
 | GetProduct | [GetProductRequest](#ecommerce-catalog-v1-GetProductRequest) | [GetProductResponse](#ecommerce-catalog-v1-GetProductResponse) | GetProduct reads one product with its variants, in the state the caller asked for and not found in any other. A storefront that names no state is answered about published products alone. |
 | GetProductsByIDs | [GetProductsByIDsRequest](#ecommerce-catalog-v1-GetProductsByIDsRequest) | [GetProductsByIDsResponse](#ecommerce-catalog-v1-GetProductsByIDsResponse) | GetProductsByIDs reads many. Every service exposes one of these so a BFF can fill a screen without looping single-item calls. |
 | ListProducts | [ListProductsRequest](#ecommerce-catalog-v1-ListProductsRequest) | [ListProductsResponse](#ecommerce-catalog-v1-ListProductsResponse) | ListProducts pages through the catalog, newest first. |
+| GetVariantsBySKUs | [GetVariantsBySKUsRequest](#ecommerce-catalog-v1-GetVariantsBySKUsRequest) | [GetVariantsBySKUsResponse](#ecommerce-catalog-v1-GetVariantsBySKUsResponse) | GetVariantsBySKUs reads the sellable units named by their SKUs, which is what a caller holding a cart has: an order names SKUs and never product ids, because a shopper picked a size rather than a product.
+
+Only variants of an active product come back. A SKU belonging to a draft or an archived product is absent, exactly as an unknown one is — to whoever is trying to buy it the two are the same, and the difference is a fact about the shop&#39;s own back office. |
 | CreateProduct | [CreateProductRequest](#ecommerce-catalog-v1-CreateProductRequest) | [CreateProductResponse](#ecommerce-catalog-v1-CreateProductResponse) | CreateProduct creates a product, in draft, optionally with variants.
 
 Deliberately not named Get* or Batch*: the client retry policy reads method names to decide what is safe to retry, and a retried create is a second product. |
@@ -711,6 +767,72 @@ contract&#39;s break.
 | email | [string](#string) |  | Carried because a consumer that wants to welcome this user would otherwise call identity back for it — for every event, at consumer speed. |
 | roles | [string](#string) | repeated | What the account was created with, which is not what it holds now: a role granted later is its own event, and reading this one as current is how a consumer builds a stale copy of a user. |
 | registered_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="ecommerce_events_v1_order-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/events/v1/order.proto
+
+
+
+<a name="ecommerce-events-v1-OrderLine"></a>
+
+### OrderLine
+OrderLine is one SKU as it was bought — the price frozen at checkout, not
+whatever the catalog says now.
+
+Declared here rather than reusing ecommerce.order.v1.OrderLine, though the
+two are the same shape today. That one answers GetOrder and may be changed to
+suit its callers; this one is a fact already on a topic that consumers older
+than the producer are still reading.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sku | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| unit_price | [ecommerce.common.v1.Money](#ecommerce-common-v1-Money) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-events-v1-OrderPlaced"></a>
+
+### OrderPlaced
+OrderPlaced says that an order exists and is waiting for payment, with stock
+already held for it. Published to ecommerce.order.events.v1.
+
+It carries the reservation because the order service consumes this event back
+itself: the step that turns the hold into a sale is a gRPC call to inventory,
+and a call made straight after the transaction commits is a write nothing
+would retry if the process died between the two. Reading the fact back off
+the topic makes the trigger as durable as the order.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| order_id | [string](#string) |  |  |
+| user_id | [string](#string) |  |  |
+| reservation_id | [string](#string) |  | The hold taken before the order was persisted. Inventory refuses to commit one whose expires_at has passed, so this is also a deadline on how long the rest of the flow has. |
+| lines | [OrderLine](#ecommerce-events-v1-OrderLine) | repeated |  |
+| total | [ecommerce.common.v1.Money](#ecommerce-common-v1-Money) |  |  |
+| placed_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
 
@@ -1407,6 +1529,242 @@ It refuses a reservation whose expires_at has passed, even while the reaper has 
 
 Committing one that is already committed succeeds and changes nothing — every step of a saga is retried eventually. |
 | ReleaseReservation | [ReleaseReservationRequest](#ecommerce-inventory-v1-ReleaseReservationRequest) | [ReleaseReservationResponse](#ecommerce-inventory-v1-ReleaseReservationResponse) | ReleaseReservation gives the held stock back. This is the compensating step of a saga that failed after reserving, and it is idempotent for the same reason: compensation runs more than once. |
+
+ 
+
+
+
+<a name="ecommerce_order_v1_order-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/order/v1/order.proto
+
+
+
+<a name="ecommerce-order-v1-Order"></a>
+
+### Order
+Order is what the order service tells everyone else about a purchase.
+
+It is the outward shape, not the aggregate: the idempotency record, the saga
+bookkeeping, and the optimistic-locking version stay inside the service.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+| user_id | [string](#string) |  | Who placed it. Taken from the verified identity on the call that created it, never from a field a client could set. |
+| status | [OrderStatus](#ecommerce-order-v1-OrderStatus) |  |  |
+| lines | [OrderLine](#ecommerce-order-v1-OrderLine) | repeated |  |
+| total | [ecommerce.common.v1.Money](#ecommerce-common-v1-Money) |  | The sum of the lines, in one currency. Stored rather than recomputed on read: it is what the customer agreed to pay, and a total that follows the catalog&#39;s current prices would rewrite that agreement every time one moved. |
+| reservation_id | [string](#string) |  | The hold this order has on stock, taken before the order was persisted. Inventory refuses to commit one whose expires_at has passed, so it is also a deadline on how long the rest of the flow has. |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-order-v1-OrderLine"></a>
+
+### OrderLine
+OrderLine is one SKU and what was agreed for it.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sku | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| unit_price | [ecommerce.common.v1.Money](#ecommerce-common-v1-Money) |  | The price at the moment of checkout, copied from the catalog and frozen here. Catalog owns what a thing costs now; an order owns what it cost then, and the two stop agreeing the first time anyone runs a sale. |
+
+
+
+
+
+ 
+
+
+<a name="ecommerce-order-v1-OrderStatus"></a>
+
+### OrderStatus
+OrderStatus is where an order sits in its flow.
+
+The names describe the order rather than the step that moved it, so a state
+survives a change in how it is reached: PAID says the money is in, not that a
+particular provider called back.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ORDER_STATUS_UNSPECIFIED | 0 |  |
+| ORDER_STATUS_PENDING_PAYMENT | 1 | Persisted, stock held, waiting for money. This is what Checkout returns — the entry call does not hold the caller open for the whole workflow. |
+| ORDER_STATUS_PAID | 2 | The money is in. The hold on stock is still a hold at this point; turning it into a sale is the next step of the saga. |
+| ORDER_STATUS_CANCELLED | 3 | The order will not proceed, and whatever was reserved for it has been given back. A cancelled order is terminal: a customer who wants it after all places a new one, because the stock it held is somebody else&#39;s by now. |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="ecommerce_order_v1_order_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/order/v1/order_service.proto
+
+
+
+<a name="ecommerce-order-v1-CheckoutLine"></a>
+
+### CheckoutLine
+CheckoutLine is one SKU and how many of it. It carries no price: what a thing
+costs is the catalog&#39;s answer, and a client that could name its own price
+would be naming what it pays.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sku | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-order-v1-CheckoutRequest"></a>
+
+### CheckoutRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| idempotency_key | [string](#string) |  | The client&#39;s own key for this attempt, echoed on every retry of it.
+
+A field rather than metadata, and this is the one place in the system that is true. pkg/grpcx/client propagates a fixed set of headers because each is a fact about the whole request chain; an idempotency key is a fact about one call, and forwarding it would attach a single key to every hop a fan-out touches. As a field it is validated here and visible in the contract, which is where a client looks to find out that a method honours it at all.
+
+Same key and same body: the first response is replayed. Same key and a different body: refused, because that is a client bug rather than a retry. |
+| lines | [CheckoutLine](#ecommerce-order-v1-CheckoutLine) | repeated | What is being bought. Two lines naming one SKU are refused rather than summed: a cart that did that is describing one quantity twice, and which of the two prices was agreed is not something this service can guess. |
+
+
+
+
+
+
+<a name="ecommerce-order-v1-CheckoutResponse"></a>
+
+### CheckoutResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| order | [Order](#ecommerce-order-v1-Order) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-order-v1-GetOrderRequest"></a>
+
+### GetOrderRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-order-v1-GetOrderResponse"></a>
+
+### GetOrderResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| order | [Order](#ecommerce-order-v1-Order) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-order-v1-ListOrdersRequest"></a>
+
+### ListOrdersRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| page_size | [int32](#int32) |  | 0 means 20. |
+| page_token | [string](#string) |  | next_page_token from the previous response, opaque to the caller. A cursor and not an offset: orders are inserted while a customer pages, and an offset would skip or repeat whatever moved across the boundary. |
+
+
+
+
+
+
+<a name="ecommerce-order-v1-ListOrdersResponse"></a>
+
+### ListOrdersResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| orders | [Order](#ecommerce-order-v1-Order) | repeated |  |
+| next_page_token | [string](#string) |  | Empty on the last page. |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="ecommerce-order-v1-OrderService"></a>
+
+### OrderService
+OrderService owns orders: what was bought, at what price, and how far the
+purchase has got. It is reached over east-west gRPC only.
+
+It is also the orchestrator of the checkout saga. That is not a second
+responsibility bolted on: the saga advances an order through its states, and
+whoever owns the aggregate owns the rules that protect it. Every step it
+drives — reserving stock, capturing payment, committing the hold — belongs to
+another service and is asked for rather than reached into.
+
+It owns no stock and no prices. What is on the shelf is inventory&#39;s, what a
+thing costs now is catalog&#39;s, and this service copies the price it was quoted
+into the order so that the agreement survives the next price change.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Checkout | [CheckoutRequest](#ecommerce-order-v1-CheckoutRequest) | [CheckoutResponse](#ecommerce-order-v1-CheckoutResponse) | Checkout places an order: it reserves the stock, persists the order in a pending state, and returns.
+
+It returns as soon as the order exists rather than when the purchase completes, because the rest of the flow waits on a payment provider and no caller should be held open for that. What the caller gets back is an order to poll or to be told about, not a finished sale.
+
+Reserving happens first and synchronously, so a shopper learns that something is sold out now rather than in an email later. Out of stock comes back as FailedPrecondition with reason OUT_OF_STOCK and the SKU in the metadata, exactly as inventory reported it.
+
+Deliberately not named Get* or Batch*: the client retry policy reads method names to decide what is safe to retry, and a retried checkout that was not deduplicated is a second order. |
+| GetOrder | [GetOrderRequest](#ecommerce-order-v1-GetOrderRequest) | [GetOrderResponse](#ecommerce-order-v1-GetOrderResponse) | GetOrder reads one order. A caller may only read their own. |
+| ListOrders | [ListOrdersRequest](#ecommerce-order-v1-ListOrdersRequest) | [ListOrdersResponse](#ecommerce-order-v1-ListOrdersResponse) | ListOrders pages through the caller&#39;s own orders, newest first. |
 
  
 
