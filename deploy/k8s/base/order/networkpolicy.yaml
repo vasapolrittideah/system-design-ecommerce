@@ -67,7 +67,9 @@ spec:
       ports:
         - protocol: TCP
           port: 4317
-    # The two services checkout fans out to. This is the whole of east-west
+    # The two services this service calls: catalog and inventory, reached both
+    # by the server's Checkout and by the worker's own commit of a reservation
+    # once OrderPlaced comes back to it. This is the whole of east-west
     # traffic for this service, and Kong is deliberately absent from it: a
     # gateway that could be reached from here would be a way to leave the
     # cluster and come back in past everything it does.
@@ -88,10 +90,11 @@ spec:
       ports:
         - protocol: TCP
           port: 50051
-    # The broker, for the outbox relay. It wears app.kubernetes.io/name:
-    # order like every other workload this service ships, so this rule
-    # reaches it without a policy of its own — and the server, which publishes
-    # nothing, gains a route it never dials.
+    # The broker, for the outbox relay's publishes and the worker's own reads
+    # and DLQ writes. It wears app.kubernetes.io/name: order like every other
+    # workload this service ships, so this rule reaches it without a policy of
+    # its own — and the server, which touches Kafka not at all, gains a route
+    # it never dials.
     - to:
         - podSelector:
             matchLabels:

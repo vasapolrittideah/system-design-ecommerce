@@ -8,8 +8,11 @@
 # an error rate that counts sold-out SKUs measures the catalogue, and the alert
 # on it is silenced within a week.
 #
-# Deliberately absent until the phase that emits them arrives: consumer lag,
-# DLQ depth, and saga duration. There is no Kafka in this stack yet.
+# Deliberately absent until the phase that emits them arrives: consumer lag
+# and saga duration. Neither is a metric anything in this repo publishes yet —
+# lag needs an exporter reading the broker's own offsets, which nothing here
+# runs, and no saga is orchestrated over more than one Kafka hop today. DLQ
+# depth arrived with order's own consumer, below.
 #
 # There is no rule on stock running out, and there will not be one. A SKU with
 # nothing left is the catalogue, not the warehouse process — the same reason
@@ -153,6 +156,21 @@ groups:
         annotations:
           summary: "{{ $labels.service }}'s outbox relay failed {{ $value }} publish cycles in 10m"
           description: "Cycles are rolled back, so no event is lost — but the broker is refusing writes and the backlog is growing."
+
+  - name: kafka
+    rules:
+      # A message on a DLQ breaks nothing visible at the topic it left: the
+      # partition keeps draining and the consumer group stays healthy, so this
+      # is the only place a message the consumer gave up on shows up before a
+      # human goes looking for it. Any value above zero, the same as a
+      # recovered panic — a second one is not more informative than the first.
+      - alert: KafkaDLQMessage
+        expr: increase(kafka_consumer_dlq_messages_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} routed a message to its dead letter topic"
+          description: "The message's own error_reason header names why — read it off the .dlq topic rather than from this alert."
 
   - name: inventory
     rules:

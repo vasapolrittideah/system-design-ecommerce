@@ -72,12 +72,15 @@ spec:
               # guess — a partition is the unit of consumer parallelism, so a
               # topic can never be consumed by more instances than it has.
               #
-              # No .dlq topics yet. Nothing consumes anything, so a dead-letter
-              # topic would be a queue with no producer, no consumer, and an
-              # alert that reads as coverage while watching an empty topic.
+              # order.events.v1.dlq is the one .dlq topic so far, because order
+              # is the one service with a consumer: its own worker reads back
+              # what it just published to commit a reservation, and a message
+              # that fails every retry lands here instead. identity has no
+              # consumer yet, so it has no dead letters to declare either.
               for spec in \
                 "ecommerce.identity.events.v1 6" \
-                "ecommerce.order.events.v1 6"
+                "ecommerce.order.events.v1 6" \
+                "ecommerce.order.events.v1.dlq 6"
               do
                 set -- $spec
                 echo "declaring $1 with $2 partition(s)"
