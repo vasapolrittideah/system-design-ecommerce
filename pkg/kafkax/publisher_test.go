@@ -65,6 +65,19 @@ func topic(t *testing.T) ([]string, string) {
 	name := fmt.Sprintf("ecommerce.test.%s.v%d",
 		strings.ToLower(strings.ReplaceAll(t.Name(), "/", ".")), topicSeq.Add(1))
 
+	createTopic(t, addrs, name)
+
+	return addrs, name
+}
+
+// createTopic declares name on the shared broker, the same way
+// deploy/k8s/infra/kafka's Job does — AllowAutoTopicCreation is off in
+// production, so a test publishing to a topic it never declared, DLQ suffix
+// included, would otherwise fail for a reason that has nothing to do with
+// what it is testing.
+func createTopic(t *testing.T, addrs []string, name string) {
+	t.Helper()
+
 	client := &kafka.Client{Addr: kafka.TCP(addrs...), Timeout: 30 * time.Second}
 	res, err := client.CreateTopics(context.Background(), &kafka.CreateTopicsRequest{
 		Topics: []kafka.TopicConfig{{
@@ -79,8 +92,6 @@ func topic(t *testing.T) ([]string, string) {
 	if err := res.Errors[name]; err != nil {
 		t.Fatalf("create topic %s: %v", name, err)
 	}
-
-	return addrs, name
 }
 
 func publisher(t *testing.T, addrs []string) *kafkax.Publisher {
