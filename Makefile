@@ -454,6 +454,23 @@ cluster-create: ## Create the k3d cluster (run once, survives reboots)
 	kubectl apply -k $(K8S_DIR)/overlays/local/namespace
 	kubectl config set-context --current --namespace=$(NAMESPACE)
 
+.PHONY: cluster-stop
+cluster-stop: ## Stop the k3d cluster, keeping its data (the reboot-friendly pause)
+	$(need_cluster)
+	@# The counterpart to `cluster-delete`: the nodes stop but their volumes
+	@# stay, so databases, the sealing key, and everything `make up` applied
+	@# come back on `cluster-start` rather than being rebuilt.
+	k3d cluster stop $(CLUSTER)
+
+.PHONY: cluster-start
+cluster-start: ## Start the stopped k3d cluster back up
+	$(need_cluster)
+	k3d cluster start $(CLUSTER)
+	@# k3d reports the nodes up before the control plane is serving, and the
+	@# next `make deploy` would fail on a connection refused that reads like a
+	@# broken cluster.
+	kubectl wait --for=condition=Ready nodes --all --timeout=120s
+
 .PHONY: cluster-delete
 cluster-delete: ## Delete the k3d cluster and everything inside it
 	$(call need_bin,k3d,brew install k3d)
