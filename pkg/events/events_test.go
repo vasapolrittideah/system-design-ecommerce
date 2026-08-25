@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -168,6 +169,81 @@ func TestRecordWithoutTraceOrCorrelationStillRecords(t *testing.T) {
 	}
 	if len(record.Payload) == 0 {
 		t.Error("payload is empty, want the envelope")
+	}
+}
+
+func TestDecodeReadsBackWhatRecordWrote(t *testing.T) {
+	record, err := events.Record(context.Background(), fact())
+	if err != nil {
+		t.Fatalf("Record() error = %v, want nil", err)
+	}
+
+	envelope, err := events.Decode(record.Payload)
+	if err != nil {
+		t.Fatalf("Decode() error = %v, want nil", err)
+	}
+
+	if envelope.GetEventType() != "UserRegistered" {
+		t.Errorf("event_type = %q, want %q", envelope.GetEventType(), "UserRegistered")
+	}
+
+	var payload eventsv1.UserRegistered
+	if err := envelope.GetPayload().UnmarshalTo(&payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.GetEmail() != "someone@example.com" {
+		t.Errorf("payload email = %q, want %q", payload.GetEmail(), "someone@example.com")
+	}
+}
+
+func TestDecodeRejectsBytesThatAreNotAnEnvelope(t *testing.T) {
+	if _, err := events.Decode([]byte{0xff, 0xff, 0xff}); err == nil {
+		t.Fatal("Decode() error = nil, want a rejection")
+	}
+}
+
+func TestContextCarriesTraceAndCorrelationBack(t *testing.T) {
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
+
+	tracer := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample())).Tracer("test")
+	ctx, span := tracer.Start(logger.WithCorrelationID(context.Background(), "corr-1"), "checkout")
+	defer span.End()
+
+	record, err := events.Record(ctx, fact())
+	if err != nil {
+		t.Fatalf("Record() error = %v, want nil", err)
+	}
+	envelope := envelopeOf(t, record.Payload)
+
+	// A consumer starts from a bare context, the way one arriving off a
+	// kafka.Reader does — nothing carried over from the producer's own ctx.
+	got := events.Context(context.Background(), envelope)
+
+	if logger.CorrelationID(got) != "corr-1" {
+		t.Errorf("correlation id = %q, want %q", logger.CorrelationID(got), "corr-1")
+	}
+
+	gotSpan := trace.SpanContextFromContext(got)
+	if !gotSpan.IsValid() {
+		t.Fatal("Context() produced no valid span context, want the trace to reattach")
+	}
+	if gotSpan.TraceID() != span.SpanContext().TraceID() {
+		t.Errorf("trace id = %s, want %s", gotSpan.TraceID(), span.SpanContext().TraceID())
+	}
+}
+
+func TestContextWithoutTraceOrCorrelationLeavesCtxUnchanged(t *testing.T) {
+	envelope := &eventsv1.EventEnvelope{EventType: "UserRegistered"}
+
+	got := events.Context(context.Background(), envelope)
+
+	if logger.CorrelationID(got) != "" {
+		t.Errorf("correlation id = %q, want empty", logger.CorrelationID(got))
+	}
+	if trace.SpanContextFromContext(got).IsValid() {
+		t.Error("Context() produced a valid span context from an envelope carrying no traceparent")
 	}
 }
 

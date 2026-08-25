@@ -124,6 +124,38 @@ func Record(ctx context.Context, f Fact) (outbox.Record, error) {
 	}, nil
 }
 
+// Decode reads the envelope a producer wrote. It is the one place a message's
+// bytes become an EventEnvelope, so every consumer in the system parses one
+// the same way regardless of which topic it came from.
+func Decode(payload []byte) (*eventsv1.EventEnvelope, error) {
+	var envelope eventsv1.EventEnvelope
+	if err := proto.Unmarshal(payload, &envelope); err != nil {
+		return nil, fmt.Errorf("events: unmarshal envelope: %w", err)
+	}
+
+	return &envelope, nil
+}
+
+// Context is carry's inverse: it puts what the envelope carried across the
+// hop through Kafka back onto ctx, so a consumer's own calls attach to the
+// trace that caused them and its logs carry the correlation id that ties them
+// to everything else the same operation did.
+//
+// An envelope with neither set — published by a process that never started
+// telemetry, or for a request that arrived without a correlation id — leaves
+// ctx unchanged, the same as carry leaves the headers unchanged.
+func Context(ctx context.Context, envelope *eventsv1.EventEnvelope) context.Context {
+	if tp := envelope.GetTraceparent(); tp != "" {
+		ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier{HeaderTraceparent: tp})
+	}
+
+	if id := envelope.GetCorrelationId(); id != "" {
+		ctx = logger.WithCorrelationID(ctx, id)
+	}
+
+	return ctx
+}
+
 func (f Fact) validate() error {
 	var missing []string
 	for _, field := range []struct {
