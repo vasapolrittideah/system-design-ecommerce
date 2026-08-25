@@ -1,4 +1,4 @@
--- The inbox is how this service's own consumer of OrderPlaced refuses to
+-- The inbox is how this service's own consumer of its order events refuses to
 -- call inventory a second time for the same delivery: it claims an event's id
 -- before doing the work, in the transaction that does the work, so a
 -- redelivery finds the claim already taken.

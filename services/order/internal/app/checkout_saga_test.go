@@ -33,8 +33,16 @@ func sagaSetup(t *testing.T) (
 	return inbox, inventory, tx, app.NewCheckoutSagaService(inbox, inventory, tx)
 }
 
-func placedEvent() in.OrderPlacedEvent {
-	return in.OrderPlacedEvent{
+func paidEvent() in.OrderPaidEvent {
+	return in.OrderPaidEvent{
+		EventID:       eventID,
+		OrderID:       orderID,
+		ReservationID: reservationID,
+	}
+}
+
+func cancelledEvent() in.OrderCancelledEvent {
+	return in.OrderCancelledEvent{
 		EventID:       eventID,
 		OrderID:       orderID,
 		ReservationID: reservationID,
@@ -52,7 +60,7 @@ func TestCommitReservationClaimsThenCommits(t *testing.T) {
 		Commit(mock.Anything, mock.Anything).
 		Return(nil)
 
-	if err := saga.CommitReservation(context.Background(), placedEvent()); err != nil {
+	if err := saga.CommitReservation(context.Background(), paidEvent()); err != nil {
 		t.Fatalf("CommitReservation() error = %v, want nil", err)
 	}
 }
@@ -68,7 +76,7 @@ func TestCommitReservationSkipsAnAlreadyClaimedEvent(t *testing.T) {
 		Claim(mock.Anything, "order.checkout-saga", eventID).
 		Return(false, nil)
 
-	if err := saga.CommitReservation(context.Background(), placedEvent()); err != nil {
+	if err := saga.CommitReservation(context.Background(), paidEvent()); err != nil {
 		t.Fatalf("CommitReservation() error = %v, want nil", err)
 	}
 	// No expectation was set on inventory, so mockery's own cleanup check is
@@ -84,7 +92,7 @@ func TestCommitReservationRollsBackOnAClaimFailure(t *testing.T) {
 		Claim(mock.Anything, "order.checkout-saga", eventID).
 		Return(false, wantErr)
 
-	err := saga.CommitReservation(context.Background(), placedEvent())
+	err := saga.CommitReservation(context.Background(), paidEvent())
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("CommitReservation() error = %v, want %v", err, wantErr)
 	}
@@ -93,7 +101,7 @@ func TestCommitReservationRollsBackOnAClaimFailure(t *testing.T) {
 func TestCommitReservationRejectsAMissingEventID(t *testing.T) {
 	_, _, _, saga := sagaSetup(t)
 
-	event := placedEvent()
+	event := paidEvent()
 	event.EventID = ""
 
 	err := saga.CommitReservation(context.Background(), event)
@@ -105,10 +113,86 @@ func TestCommitReservationRejectsAMissingEventID(t *testing.T) {
 func TestCommitReservationRejectsAMalformedReservationID(t *testing.T) {
 	_, _, _, saga := sagaSetup(t)
 
-	event := placedEvent()
+	event := paidEvent()
 	event.ReservationID = "not-a-uuid"
 
 	if err := saga.CommitReservation(context.Background(), event); err == nil {
 		t.Fatal("CommitReservation() error = nil, want a rejection")
+	}
+}
+
+func TestReleaseReservationClaimsThenReleases(t *testing.T) {
+	inbox, inventory, tx, saga := sagaSetup(t)
+	expectTx(tx)
+
+	inbox.EXPECT().
+		Claim(mock.Anything, "order.checkout-saga", eventID).
+		Return(true, nil)
+	inventory.EXPECT().
+		Release(mock.Anything, mock.Anything).
+		Return(nil)
+
+	if err := saga.ReleaseReservation(context.Background(), cancelledEvent()); err != nil {
+		t.Fatalf("ReleaseReservation() error = %v, want nil", err)
+	}
+}
+
+// The compensating step is redelivered like every other, and the claim is what
+// stops it reaching inventory twice.
+func TestReleaseReservationSkipsAnAlreadyClaimedEvent(t *testing.T) {
+	inbox, _, tx, saga := sagaSetup(t)
+	expectTx(tx)
+
+	inbox.EXPECT().
+		Claim(mock.Anything, "order.checkout-saga", eventID).
+		Return(false, nil)
+
+	if err := saga.ReleaseReservation(context.Background(), cancelledEvent()); err != nil {
+		t.Fatalf("ReleaseReservation() error = %v, want nil", err)
+	}
+}
+
+// A release that inventory refuses — the reservation is already committed —
+// comes back rather than being swallowed, so kafkax retries and then dead-letters
+// it. An order that was paid and then cancelled is a refund, which this service
+// does not have.
+func TestReleaseReservationPropagatesAnInventoryFailure(t *testing.T) {
+	inbox, inventory, tx, saga := sagaSetup(t)
+	expectTx(tx)
+
+	wantErr := errors.New("already committed")
+	inbox.EXPECT().
+		Claim(mock.Anything, "order.checkout-saga", eventID).
+		Return(true, nil)
+	inventory.EXPECT().
+		Release(mock.Anything, mock.Anything).
+		Return(wantErr)
+
+	err := saga.ReleaseReservation(context.Background(), cancelledEvent())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ReleaseReservation() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestReleaseReservationRejectsAMissingEventID(t *testing.T) {
+	_, _, _, saga := sagaSetup(t)
+
+	event := cancelledEvent()
+	event.EventID = ""
+
+	err := saga.ReleaseReservation(context.Background(), event)
+	if errorx.KindOf(err) != errorx.KindInvalidInput {
+		t.Fatalf("ReleaseReservation() error kind = %v, want %v", errorx.KindOf(err), errorx.KindInvalidInput)
+	}
+}
+
+func TestReleaseReservationRejectsAMalformedReservationID(t *testing.T) {
+	_, _, _, saga := sagaSetup(t)
+
+	event := cancelledEvent()
+	event.ReservationID = "not-a-uuid"
+
+	if err := saga.ReleaseReservation(context.Background(), event); err == nil {
+		t.Fatal("ReleaseReservation() error = nil, want a rejection")
 	}
 }

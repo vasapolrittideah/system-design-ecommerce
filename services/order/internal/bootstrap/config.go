@@ -52,10 +52,10 @@ type RelayConfig struct {
 	Kafka  kafkax.PublisherConfig `envPrefix:"KAFKA_"`
 }
 
-// WorkerConfig is everything order's own consumer of OrderPlaced reads from
-// the environment. It calls inventory — the same call Checkout itself makes
-// synchronously, but triggered by an event instead of a request — and needs
-// neither the gRPC server's port nor catalog, which only Checkout calls.
+// WorkerConfig is everything order's own consumer of its order events reads
+// from the environment. It calls inventory — the same service Checkout itself
+// calls synchronously, but triggered by an event instead of a request — and
+// needs neither the gRPC server's port nor catalog, which only Checkout calls.
 type WorkerConfig struct {
 	Log logger.Config        `envPrefix:"LOG_"`
 	Obs observability.Config `envPrefix:"OBS_"`

@@ -33,7 +33,7 @@ type InventoryGateway interface {
 
 	// Commit turns a reservation into a sale. It is idempotent at the far
 	// end — committing one already committed succeeds and changes nothing —
-	// which is what lets this service's own consumer of OrderPlaced call it
+	// which is what lets this service's own consumer of OrderPaid call it
 	// from inside the transaction that claims the event.
 	Commit(ctx context.Context, reservationID domain.ReservationID) error
 }

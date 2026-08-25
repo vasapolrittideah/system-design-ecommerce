@@ -16,16 +16,23 @@ import (
 	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/port/in"
 )
 
-// eventTypeOrderPlaced is the name domain.OrderPlaced.EventName() returns —
-// the vocabulary this consumer dispatches on, repeated here rather than
-// imported because this package maps proto to a use case and must not depend
-// on the domain package to do it.
-const eventTypeOrderPlaced = "OrderPlaced"
+// The names the domain's own events return from EventName() — the vocabulary
+// this consumer dispatches on, repeated here rather than imported because this
+// package maps proto to a use case and must not depend on the domain package
+// to do it.
+//
+// OrderPlaced is deliberately absent: an order that exists has not been sold
+// and has not been given back, so there is nothing for this service to do
+// about it until one of these two says what it became.
+const (
+	eventTypeOrderPaid      = "OrderPaid"
+	eventTypeOrderCancelled = "OrderCancelled"
+)
 
 // OrderEventsConsumer dispatches ecommerce.order.events.v1 back to this
 // service's own use cases — the one topic order both publishes to and reads
-// from, because committing a reservation has to survive the process dying
-// between the checkout transaction committing and the call to inventory that
+// from, because the calls to inventory that finish a checkout have to survive
+// the process dying between the transaction committing and the call that
 // follows it.
 type OrderEventsConsumer struct {
 	saga in.CheckoutSaga
@@ -53,8 +60,10 @@ func (c *OrderEventsConsumer) Handle(ctx context.Context, msg kafkax.Message) er
 	ctx = events.Context(ctx, envelope)
 
 	switch envelope.GetEventType() {
-	case eventTypeOrderPlaced:
-		return c.handleOrderPlaced(ctx, envelope)
+	case eventTypeOrderPaid:
+		return c.handleOrderPaid(ctx, envelope)
+	case eventTypeOrderCancelled:
+		return c.handleOrderCancelled(ctx, envelope)
 	default:
 		logger.From(ctx).Debug("order: no handler for event type, skipping",
 			zap.String("event_type", envelope.GetEventType()),
@@ -64,18 +73,35 @@ func (c *OrderEventsConsumer) Handle(ctx context.Context, msg kafkax.Message) er
 	}
 }
 
-func (c *OrderEventsConsumer) handleOrderPlaced(ctx context.Context, envelope *eventsv1.EventEnvelope) error {
-	var payload eventsv1.OrderPlaced
+func (c *OrderEventsConsumer) handleOrderPaid(ctx context.Context, envelope *eventsv1.EventEnvelope) error {
+	var payload eventsv1.OrderPaid
 	if err := envelope.GetPayload().UnmarshalTo(&payload); err != nil {
-		return fmt.Errorf("order: unmarshal %s payload: %w", eventTypeOrderPlaced, err)
+		return fmt.Errorf("order: unmarshal %s payload: %w", eventTypeOrderPaid, err)
 	}
 
-	if err := c.saga.CommitReservation(ctx, in.OrderPlacedEvent{
+	if err := c.saga.CommitReservation(ctx, in.OrderPaidEvent{
 		EventID:       envelope.GetEventId(),
 		OrderID:       payload.GetOrderId(),
 		ReservationID: payload.GetReservationId(),
 	}); err != nil {
 		return fmt.Errorf("order: commit reservation for order %s: %w", payload.GetOrderId(), err)
+	}
+
+	return nil
+}
+
+func (c *OrderEventsConsumer) handleOrderCancelled(ctx context.Context, envelope *eventsv1.EventEnvelope) error {
+	var payload eventsv1.OrderCancelled
+	if err := envelope.GetPayload().UnmarshalTo(&payload); err != nil {
+		return fmt.Errorf("order: unmarshal %s payload: %w", eventTypeOrderCancelled, err)
+	}
+
+	if err := c.saga.ReleaseReservation(ctx, in.OrderCancelledEvent{
+		EventID:       envelope.GetEventId(),
+		OrderID:       payload.GetOrderId(),
+		ReservationID: payload.GetReservationId(),
+	}); err != nil {
+		return fmt.Errorf("order: release reservation for order %s: %w", payload.GetOrderId(), err)
 	}
 
 	return nil

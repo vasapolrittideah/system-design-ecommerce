@@ -1,6 +1,6 @@
-// Command worker runs order's own consumer of OrderPlaced: the half of
-// checkout that turns a reservation into a sale once the order it belongs to
-// is durably persisted.
+// Command worker runs order's own consumer of its order events: the half of
+// checkout that turns a reservation into a sale once the money is in, and
+// gives it back once the order is cancelled.
 package main
 
 import (

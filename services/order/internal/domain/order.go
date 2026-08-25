@@ -209,12 +209,14 @@ func (o *Order) Snapshot() OrderSnapshot {
 	}
 }
 
-// MarkPaid records that the money is in.
+// MarkPaid records that the money is in and raises OrderPaid.
 //
 // It reports whether this call is what moved the order. A second delivery of
 // the same payment succeeds and reports false, because every step of a saga is
 // retried eventually and a caller that acted on the strength of a bare error
-// would either charge twice or abandon a paid order.
+// would either charge twice or abandon a paid order. That path raises nothing:
+// the fact is already on the topic, and raising it again would commit the
+// reservation twice.
 //
 // A cancelled order refuses: its stock has been given back, and taking money on
 // the strength of a hold that no longer exists is the one outcome nobody can
@@ -228,14 +230,22 @@ func (o *Order) MarkPaid() (bool, error) {
 	}
 
 	o.status = StatusPaid
+	o.events = append(o.events, OrderPaid{
+		OrderID:       o.id,
+		UserID:        o.userID,
+		ReservationID: o.reservationID,
+		Total:         o.total,
+	})
 
 	return true, nil
 }
 
-// Cancel ends the order.
+// Cancel ends the order and raises OrderCancelled, which is what eventually
+// gives the held stock back.
 //
 // It reports whether this call is what moved it, for the reason MarkPaid does:
-// compensation runs more than once.
+// compensation runs more than once. A repeat raises nothing, for the reason
+// MarkPaid's does not.
 //
 // A paid order refuses. Undoing a payment is a refund — a decision about money,
 // with a provider on the other end of it — and not a transition this aggregate
@@ -249,6 +259,11 @@ func (o *Order) Cancel() (bool, error) {
 	}
 
 	o.status = StatusCancelled
+	o.events = append(o.events, OrderCancelled{
+		OrderID:       o.id,
+		UserID:        o.userID,
+		ReservationID: o.reservationID,
+	})
 
 	return true, nil
 }

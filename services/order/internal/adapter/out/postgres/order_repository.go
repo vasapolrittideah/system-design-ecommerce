@@ -176,8 +176,10 @@ func (r *OrderRepository) List(ctx context.Context, filter out.OrderFilter) ([]*
 
 // writeEvents drains what the aggregate raised into the outbox.
 //
-// The row is what stamps the events: created_at is the database's clock rather
+// The row is what stamps the events: updated_at is the database's clock rather
 // than this replica's, and version is the value the row actually landed with.
+// updated_at rather than created_at because these events are facts about the
+// change that was just made, and on an insert the two are the same value.
 func (r *OrderRepository) writeEvents(ctx context.Context, order *domain.Order, row *sqlc.Order) error {
 	pulled := order.PullEvents()
 	if len(pulled) == 0 {
@@ -197,7 +199,7 @@ func (r *OrderRepository) writeEvents(ctx context.Context, order *domain.Order, 
 			EventType:     event.EventName(),
 			Topic:         topic,
 			Version:       int64(row.Version),
-			OccurredAt:    row.CreatedAt,
+			OccurredAt:    row.UpdatedAt,
 			Payload:       payload,
 		})
 		if err != nil {
@@ -242,6 +244,24 @@ func toPayload(event domain.Event, row *sqlc.Order) (proto.Message, error) {
 				CurrencyCode: e.Total.Currency().String(),
 			},
 			PlacedAt: timestamppb.New(row.CreatedAt),
+		}, nil
+	case domain.OrderPaid:
+		return &eventsv1.OrderPaid{
+			OrderId:       e.OrderID.String(),
+			UserId:        e.UserID.String(),
+			ReservationId: e.ReservationID.String(),
+			Total: &commonv1.Money{
+				AmountMinor:  e.Total.AmountMinor(),
+				CurrencyCode: e.Total.Currency().String(),
+			},
+			PaidAt: timestamppb.New(row.UpdatedAt),
+		}, nil
+	case domain.OrderCancelled:
+		return &eventsv1.OrderCancelled{
+			OrderId:       e.OrderID.String(),
+			UserId:        e.UserID.String(),
+			ReservationId: e.ReservationID.String(),
+			CancelledAt:   timestamppb.New(row.UpdatedAt),
 		}, nil
 	default:
 		// Unreachable unless a domain event was added without a mapping, which

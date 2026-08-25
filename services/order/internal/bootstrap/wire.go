@@ -45,8 +45,8 @@ func NewOrderHandler(pool *pgxpool.Pool, conns Conns) orderv1.OrderServiceServer
 	return grpcadapter.NewOrderHandler(app.NewOrderService(orders, idem, inventory, catalog, tx))
 }
 
-// NewCheckoutSagaConsumer assembles this service's own consumer of
-// OrderPlaced and returns the handler cmd/worker hands to a kafkax.Consumer.
+// NewCheckoutSagaConsumer assembles this service's own consumer of its order
+// events and returns the handler cmd/worker hands to a kafkax.Consumer.
 //
 // It dials no catalog connection: unlike NewOrderHandler, nothing behind this
 // path prices a cart.

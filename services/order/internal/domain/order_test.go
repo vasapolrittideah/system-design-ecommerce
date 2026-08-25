@@ -112,8 +112,8 @@ func TestNewOrderRaisesOrderPlaced(t *testing.T) {
 	if event.OrderID != o.ID() {
 		t.Errorf("event order id = %q, want %q", event.OrderID, o.ID())
 	}
-	// The service consumes this event back to trigger the commit, so the hold
-	// it names has to travel with it.
+	// The hold travels with the event so that a consumer of it needs no read of
+	// the order.
 	if event.ReservationID != reservationID {
 		t.Errorf("event reservation id = %q, want %q", event.ReservationID, reservationID)
 	}
@@ -355,6 +355,105 @@ func TestConflictsAreConflicts(t *testing.T) {
 		if got := kinded.ErrorKind(); got != "conflict" {
 			t.Errorf("%v ErrorKind() = %q, want %q", err, got, "conflict")
 		}
+	}
+}
+
+func TestMarkPaidRaisesOrderPaid(t *testing.T) {
+	o := order(t, line(t, "SHIRT-BLUE-M", 2, thb(t, 49900)))
+	o.PullEvents() // drop the placement
+
+	mustMarkPaid(t, o)
+
+	pulled := o.PullEvents()
+	if len(pulled) != 1 {
+		t.Fatalf("PullEvents() returned %d events, want 1", len(pulled))
+	}
+
+	event, ok := pulled[0].(domain.OrderPaid)
+	if !ok {
+		t.Fatalf("PullEvents() returned %T, want domain.OrderPaid", pulled[0])
+	}
+	if event.EventName() != "OrderPaid" {
+		t.Errorf("EventName() = %q, want %q", event.EventName(), "OrderPaid")
+	}
+	if event.OrderID != o.ID() {
+		t.Errorf("event order id = %q, want %q", event.OrderID, o.ID())
+	}
+	// The service consumes this event back to commit the hold, so the hold it
+	// names has to travel with it.
+	if event.ReservationID != reservationID {
+		t.Errorf("event reservation id = %q, want %q", event.ReservationID, reservationID)
+	}
+	if event.Total.AmountMinor() != o.Total().AmountMinor() {
+		t.Errorf("event total = %d, want %d", event.Total.AmountMinor(), o.Total().AmountMinor())
+	}
+}
+
+// A second delivery of the same payment must not raise the fact again: the
+// consumer would commit the reservation twice, and each commit is a sale.
+func TestMarkPaidRaisesNothingTheSecondTime(t *testing.T) {
+	o := order(t)
+	mustMarkPaid(t, o)
+	o.PullEvents()
+
+	mustMarkPaid(t, o)
+
+	if pulled := o.PullEvents(); len(pulled) != 0 {
+		t.Errorf("PullEvents() returned %d events, want 0", len(pulled))
+	}
+}
+
+func TestCancelRaisesOrderCancelled(t *testing.T) {
+	o := order(t)
+	o.PullEvents() // drop the placement
+
+	mustCancel(t, o)
+
+	pulled := o.PullEvents()
+	if len(pulled) != 1 {
+		t.Fatalf("PullEvents() returned %d events, want 1", len(pulled))
+	}
+
+	event, ok := pulled[0].(domain.OrderCancelled)
+	if !ok {
+		t.Fatalf("PullEvents() returned %T, want domain.OrderCancelled", pulled[0])
+	}
+	if event.EventName() != "OrderCancelled" {
+		t.Errorf("EventName() = %q, want %q", event.EventName(), "OrderCancelled")
+	}
+	if event.OrderID != o.ID() {
+		t.Errorf("event order id = %q, want %q", event.OrderID, o.ID())
+	}
+	// The hold this names is what the compensating step gives back.
+	if event.ReservationID != reservationID {
+		t.Errorf("event reservation id = %q, want %q", event.ReservationID, reservationID)
+	}
+}
+
+func TestCancelRaisesNothingTheSecondTime(t *testing.T) {
+	o := order(t)
+	mustCancel(t, o)
+	o.PullEvents()
+
+	mustCancel(t, o)
+
+	if pulled := o.PullEvents(); len(pulled) != 0 {
+		t.Errorf("PullEvents() returned %d events, want 0", len(pulled))
+	}
+}
+
+// A refused transition raises nothing either: the order did not move, and an
+// event says something happened.
+func TestARefusedTransitionRaisesNothing(t *testing.T) {
+	o := order(t)
+	mustMarkPaid(t, o)
+	o.PullEvents()
+
+	if _, err := o.Cancel(); err == nil {
+		t.Fatal("Cancel() error = nil, want a refusal on a paid order")
+	}
+	if pulled := o.PullEvents(); len(pulled) != 0 {
+		t.Errorf("PullEvents() returned %d events, want 0", len(pulled))
 	}
 }
 
