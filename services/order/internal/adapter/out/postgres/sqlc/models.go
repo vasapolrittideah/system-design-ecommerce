@@ -52,3 +52,9 @@ type Outbox struct {
 	CreatedAt     time.Time
 	PublishedAt   pgtype.Timestamptz
 }
+
+type ProcessedEvent struct {
+	ConsumerGroup string
+	EventID       string
+	ProcessedAt   time.Time
+}

@@ -8,7 +8,8 @@ import (
 	inventoryv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/inventory/v1"
 	orderv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/order/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/txmanager"
-	adapter "github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/in/grpc"
+	grpcadapter "github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/in/grpc"
+	kafkaadapter "github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/in/kafka"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/out/grpcclient"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/out/postgres"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/app"
@@ -41,5 +42,21 @@ func NewOrderHandler(pool *pgxpool.Pool, conns Conns) orderv1.OrderServiceServer
 	inventory := grpcclient.NewInventoryGateway(inventoryv1.NewInventoryServiceClient(conns.Inventory))
 	catalog := grpcclient.NewCatalogGateway(catalogv1.NewCatalogServiceClient(conns.Catalog))
 
-	return adapter.NewOrderHandler(app.NewOrderService(orders, idem, inventory, catalog, tx))
+	return grpcadapter.NewOrderHandler(app.NewOrderService(orders, idem, inventory, catalog, tx))
+}
+
+// NewCheckoutSagaConsumer assembles this service's own consumer of
+// OrderPlaced and returns the handler cmd/worker hands to a kafkax.Consumer.
+//
+// It dials no catalog connection: unlike NewOrderHandler, nothing behind this
+// path prices a cart.
+func NewCheckoutSagaConsumer(pool *pgxpool.Pool, inventoryConn *grpc.ClientConn) *kafkaadapter.OrderEventsConsumer {
+	inboxStore := postgres.NewInboxStore(pool)
+	tx := txmanager.New(pool)
+
+	inventory := grpcclient.NewInventoryGateway(inventoryv1.NewInventoryServiceClient(inventoryConn))
+
+	saga := app.NewCheckoutSagaService(inboxStore, inventory, tx)
+
+	return kafkaadapter.NewOrderEventsConsumer(saga)
 }

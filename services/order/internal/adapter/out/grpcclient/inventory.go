@@ -65,3 +65,13 @@ func (g *InventoryGateway) Release(ctx context.Context, reservationID domain.Res
 
 	return err
 }
+
+// Commit turns the hold into a sale. Idempotent at the far end, so a
+// redelivered OrderPlaced calling this a second time changes nothing.
+func (g *InventoryGateway) Commit(ctx context.Context, reservationID domain.ReservationID) error {
+	_, err := g.client.CommitReservation(ctx, &inventoryv1.CommitReservationRequest{
+		Id: reservationID.String(),
+	})
+
+	return err
+}

@@ -51,3 +51,21 @@ type RelayConfig struct {
 	Outbox outbox.RelayConfig     `envPrefix:"OUTBOX_"`
 	Kafka  kafkax.PublisherConfig `envPrefix:"KAFKA_"`
 }
+
+// WorkerConfig is everything order's own consumer of OrderPlaced reads from
+// the environment. It calls inventory — the same call Checkout itself makes
+// synchronously, but triggered by an event instead of a request — and needs
+// neither the gRPC server's port nor catalog, which only Checkout calls.
+type WorkerConfig struct {
+	Log logger.Config        `envPrefix:"LOG_"`
+	Obs observability.Config `envPrefix:"OBS_"`
+	DB  postgres.Config      `envPrefix:"ORDER_DB_"`
+
+	Inventory client.Config `envPrefix:"ORDER_INVENTORY_"`
+
+	// Kafka is also the producer settings for this process's own DLQ writes:
+	// a dead letter is a message like any other, published with the same
+	// guarantee the outbox relay publishes with.
+	Kafka    kafkax.PublisherConfig `envPrefix:"KAFKA_"`
+	Consumer kafkax.ConsumerConfig  `envPrefix:"KAFKA_CONSUMER_"`
+}
