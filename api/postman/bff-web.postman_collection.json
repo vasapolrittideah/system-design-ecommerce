@@ -1,0 +1,448 @@
+{
+  "info": {
+    "_postman_id": "b3f1a3a0-6e1f-4b9c-9a1a-bff-web-collection",
+    "name": "bff-web",
+    "description": "Manual test collection for the storefront's HTTP API, generated from api/openapi/bff-web.yaml. Every request targets the gateway (Kong) on {{baseUrl}}, never a service directly.\n\nRun order for a full happy path: Register -> Login -> Get Current User -> List Products -> Get Product -> Checkout -> List Orders -> Get Order -> Refresh Session -> Logout. Each request's Tests script captures the ids/tokens the next one needs, so running the folders top to bottom in order is enough.\n\nBranch on `error.code` in a failure body, never on the HTTP status - see the spec's description for why.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000", "type": "string" },
+    { "key": "email", "value": "shopper@example.com", "type": "string" },
+    { "key": "password", "value": "correct-horse-battery-staple", "type": "string" },
+    { "key": "sku", "value": "SHIRT-BLUE-M", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "refreshToken", "value": "", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "productId", "value": "", "type": "string" },
+    { "key": "orderId", "value": "", "type": "string" },
+    { "key": "pageToken", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A fresh email every run avoids EMAIL_ALREADY_REGISTERED on repeat manual tests.",
+                  "pm.collectionVariables.set(\"email\", `shopper.${Date.now()}@example.com`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set(\"userId\", body.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "Creates an account. Returns the person and no tokens - sign in separately with Login."
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set(\"accessToken\", body.tokens.accessToken);",
+                  "    pm.collectionVariables.set(\"refreshToken\", body.tokens.refreshToken);",
+                  "    pm.collectionVariables.set(\"userId\", body.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "Exchanges credentials for an access/refresh token pair and the person behind it. Sets accessToken and refreshToken collection variables on success."
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set(\"accessToken\", body.tokens.accessToken);",
+                  "    pm.collectionVariables.set(\"refreshToken\", body.tokens.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            },
+            "description": "Spends the presented refresh token and issues a new pair. Do not replay this call with the same token - that reads as theft and revokes the whole chain instead."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 204\", function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 204) {",
+                  "    pm.collectionVariables.set(\"accessToken\", \"\");",
+                  "    pm.collectionVariables.set(\"refreshToken\", \"\");",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "logout"]
+            },
+            "description": "Revokes the whole rotation chain behind this refresh token. Succeeds even if the token was already revoked, expired, or never issued. The access token already issued keeps working until it expires."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "account",
+      "item": [
+        {
+          "name": "Get Current User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set(\"userId\", body.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "me"]
+            },
+            "description": "The account named by the presented access token. No parameter can ask for anyone else's."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "storefront",
+      "item": [
+        {
+          "name": "List Products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.products && body.products.length > 0) {",
+                  "        pm.collectionVariables.set(\"productId\", body.products[0].id);",
+                  "    }",
+                  "    if (body.nextPageToken) {",
+                  "        pm.collectionVariables.set(\"pageToken\", body.nextPageToken);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?category={{category}}&pageSize=20&pageToken={{pageToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "products"],
+              "query": [
+                { "key": "category", "value": "{{category}}", "disabled": true },
+                { "key": "pageSize", "value": "20", "disabled": true },
+                { "key": "pageToken", "value": "{{pageToken}}", "disabled": true }
+              ]
+            },
+            "description": "One page of the catalog grid. Anonymous - no bearer token needed. Only products on sale are returned. Captures the first card's id into productId and any nextPageToken."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "products", "{{productId}}"]
+            },
+            "description": "One product as its own page, with every way it can be bought. Run List Products first to populate productId. Anonymous."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "orders",
+      "item": [
+        {
+          "name": "Checkout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set(\"orderId\", body.order.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotencyKey\": \"{{$guid}}\",\n  \"lines\": [\n    {\n      \"sku\": \"{{sku}}\",\n      \"quantity\": 1\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/checkout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "checkout"]
+            },
+            "description": "Places an order: reserves stock, records the order pendingPayment, returns without waiting for payment. idempotencyKey defaults to a fresh {{$guid}} per send - reuse the same value manually to test the replay/IDEMPOTENCY_KEY_REUSED behaviour. sku defaults to the sku collection variable."
+          },
+          "response": []
+        },
+        {
+          "name": "List Orders",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.orders && body.orders.length > 0) {",
+                  "        pm.collectionVariables.set(\"orderId\", body.orders[0].id);",
+                  "    }",
+                  "    if (body.nextPageToken) {",
+                  "        pm.collectionVariables.set(\"pageToken\", body.nextPageToken);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders?pageSize=20&pageToken={{pageToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders"],
+              "query": [
+                { "key": "pageSize", "value": "20", "disabled": true },
+                { "key": "pageToken", "value": "{{pageToken}}", "disabled": true }
+              ]
+            },
+            "description": "The caller's own order history, newest first. Never another account's."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Correlation-ID", "value": "{{$guid}}", "disabled": true }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders", "{{orderId}}"]
+            },
+            "description": "One order as its own page. An order belonging to somebody else answers 404 ORDER_NOT_FOUND, same as an unminted id."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
