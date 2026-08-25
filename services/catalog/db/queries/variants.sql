@@ -30,3 +30,16 @@ RETURNING *;
 SELECT * FROM variants
 WHERE product_id = ANY(@product_ids::uuid[])
 ORDER BY created_at, id;
+
+-- name: GetVariantsBySKUs :many
+-- The sellable units a cart names, joined to their product so that only the
+-- ones on sale come back.
+--
+-- The status filter is in the query rather than applied afterwards: a variant
+-- of a draft product must not be priced for anybody, and a filter the caller
+-- has to remember is one that eventually gets forgotten.
+SELECT v.* FROM variants v
+JOIN products p ON p.id = v.product_id
+WHERE v.sku = ANY(sqlc.arg(skus)::text[])
+  AND p.status = sqlc.arg(status)
+ORDER BY v.sku;

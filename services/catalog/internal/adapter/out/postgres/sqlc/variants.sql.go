@@ -96,6 +96,55 @@ func (q *Queries) GetVariantsByProductIDs(ctx context.Context, productIds []uuid
 	return items, nil
 }
 
+const getVariantsBySKUs = `-- name: GetVariantsBySKUs :many
+SELECT v.id, v.product_id, v.sku, v.price_amount_minor, v.price_currency, v.attributes, v.created_at, v.updated_at, v.version FROM variants v
+JOIN products p ON p.id = v.product_id
+WHERE v.sku = ANY($1::text[])
+  AND p.status = $2
+ORDER BY v.sku
+`
+
+type GetVariantsBySKUsParams struct {
+	Skus   []string
+	Status string
+}
+
+// The sellable units a cart names, joined to their product so that only the
+// ones on sale come back.
+//
+// The status filter is in the query rather than applied afterwards: a variant
+// of a draft product must not be priced for anybody, and a filter the caller
+// has to remember is one that eventually gets forgotten.
+func (q *Queries) GetVariantsBySKUs(ctx context.Context, arg GetVariantsBySKUsParams) ([]Variant, error) {
+	rows, err := q.db.Query(ctx, getVariantsBySKUs, arg.Skus, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Variant{}
+	for rows.Next() {
+		var i Variant
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProductID,
+			&i.Sku,
+			&i.PriceAmountMinor,
+			&i.PriceCurrency,
+			&i.Attributes,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateVariant = `-- name: UpdateVariant :one
 UPDATE variants
 SET price_amount_minor = $2,

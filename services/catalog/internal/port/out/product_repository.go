@@ -78,4 +78,18 @@ type ProductRepository interface {
 	// List returns a page of products, newest first, ordered so that the cursor
 	// in ProductFilter means the same thing on the next call.
 	List(ctx context.Context, filter ProductFilter) ([]*domain.Product, error)
+
+	// FindVariantsBySKUs returns the variants of products in the given state,
+	// in no guaranteed order and possibly fewer than were asked for.
+	//
+	// Variants rather than whole products, and it is the one read here that
+	// does not return an aggregate. What the caller has is a cart, which names
+	// SKUs; loading each variant's product to answer would be a join nobody
+	// needs and a page of data nobody reads. Nothing is written through this
+	// path, so the aggregate's invariants are not at stake.
+	FindVariantsBySKUs(
+		ctx context.Context,
+		skus []domain.SKU,
+		status domain.ProductStatus,
+	) ([]*domain.Variant, error)
 }

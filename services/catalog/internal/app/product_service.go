@@ -92,6 +92,29 @@ func (s *ProductService) GetProductsByIDs(ctx context.Context, ids []string) ([]
 	return s.products.FindByIDs(ctx, productIDs)
 }
 
+// GetVariantsBySKUs reads the sellable units a cart names.
+//
+// Active only, and that filter is not the caller's to pass: a variant of a
+// draft product priced for a buyer is a sale of something the shop has not
+// finished describing, and an argument for it would eventually be sent wrong.
+func (s *ProductService) GetVariantsBySKUs(ctx context.Context, skus []string) ([]*domain.Variant, error) {
+	if len(skus) == 0 {
+		return nil, nil
+	}
+
+	parsed := make([]domain.SKU, 0, len(skus))
+	for _, raw := range skus {
+		sku, err := domain.NewSKU(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		parsed = append(parsed, sku)
+	}
+
+	return s.products.FindVariantsBySKUs(ctx, parsed, domain.StatusActive)
+}
+
 // ListProducts returns one page of the catalog.
 //
 // The repository is asked for one row more than the page holds, which is how the

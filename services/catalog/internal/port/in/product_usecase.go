@@ -126,6 +126,12 @@ type ProductUseCase interface {
 	// ListProducts pages through the catalog, newest first.
 	ListProducts(ctx context.Context, query ListProductsQuery) (ProductPage, error)
 
+	// GetVariantsBySKUs reads the sellable units a cart names, returning only
+	// the ones on an active product. A SKU that is absent is one nobody can buy
+	// right now, whether because it does not exist or because its product is
+	// not on sale — a distinction the caller has no use for.
+	GetVariantsBySKUs(ctx context.Context, skus []string) ([]*domain.Variant, error)
+
 	// CreateProduct adds a draft, optionally with variants.
 	CreateProduct(ctx context.Context, cmd CreateProductCommand) (*domain.Product, error)
 

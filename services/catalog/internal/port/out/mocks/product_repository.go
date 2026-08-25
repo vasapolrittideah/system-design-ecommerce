@@ -243,6 +243,80 @@ func (_c *MockProductRepository_FindByIDs_Call) RunAndReturn(run func(ctx contex
 	return _c
 }
 
+// FindVariantsBySKUs provides a mock function for the type MockProductRepository
+func (_mock *MockProductRepository) FindVariantsBySKUs(ctx context.Context, skus []domain.SKU, status domain.ProductStatus) ([]*domain.Variant, error) {
+	ret := _mock.Called(ctx, skus, status)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindVariantsBySKUs")
+	}
+
+	var r0 []*domain.Variant
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []domain.SKU, domain.ProductStatus) ([]*domain.Variant, error)); ok {
+		return returnFunc(ctx, skus, status)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []domain.SKU, domain.ProductStatus) []*domain.Variant); ok {
+		r0 = returnFunc(ctx, skus, status)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*domain.Variant)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, []domain.SKU, domain.ProductStatus) error); ok {
+		r1 = returnFunc(ctx, skus, status)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockProductRepository_FindVariantsBySKUs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindVariantsBySKUs'
+type MockProductRepository_FindVariantsBySKUs_Call struct {
+	*mock.Call
+}
+
+// FindVariantsBySKUs is a helper method to define mock.On call
+//   - ctx context.Context
+//   - skus []domain.SKU
+//   - status domain.ProductStatus
+func (_e *MockProductRepository_Expecter) FindVariantsBySKUs(ctx any, skus any, status any) *MockProductRepository_FindVariantsBySKUs_Call {
+	return &MockProductRepository_FindVariantsBySKUs_Call{Call: _e.mock.On("FindVariantsBySKUs", ctx, skus, status)}
+}
+
+func (_c *MockProductRepository_FindVariantsBySKUs_Call) Run(run func(ctx context.Context, skus []domain.SKU, status domain.ProductStatus)) *MockProductRepository_FindVariantsBySKUs_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 []domain.SKU
+		if args[1] != nil {
+			arg1 = args[1].([]domain.SKU)
+		}
+		var arg2 domain.ProductStatus
+		if args[2] != nil {
+			arg2 = args[2].(domain.ProductStatus)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockProductRepository_FindVariantsBySKUs_Call) Return(variants []*domain.Variant, err error) *MockProductRepository_FindVariantsBySKUs_Call {
+	_c.Call.Return(variants, err)
+	return _c
+}
+
+func (_c *MockProductRepository_FindVariantsBySKUs_Call) RunAndReturn(run func(ctx context.Context, skus []domain.SKU, status domain.ProductStatus) ([]*domain.Variant, error)) *MockProductRepository_FindVariantsBySKUs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // List provides a mock function for the type MockProductRepository
 func (_mock *MockProductRepository) List(ctx context.Context, filter out.ProductFilter) ([]*domain.Product, error) {
 	ret := _mock.Called(ctx, filter)

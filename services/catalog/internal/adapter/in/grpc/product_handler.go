@@ -47,6 +47,19 @@ func (h *CatalogHandler) GetProductsByIDs(
 	return &catalogv1.GetProductsByIDsResponse{Products: toProtos(products)}, nil
 }
 
+// GetVariantsBySKUs reads the sellable units a cart names.
+func (h *CatalogHandler) GetVariantsBySKUs(
+	ctx context.Context,
+	req *catalogv1.GetVariantsBySKUsRequest,
+) (*catalogv1.GetVariantsBySKUsResponse, error) {
+	variants, err := h.products.GetVariantsBySKUs(ctx, req.GetSkus())
+	if err != nil {
+		return nil, errorx.ToGRPC(err)
+	}
+
+	return &catalogv1.GetVariantsBySKUsResponse{Variants: toProtoVariants(variants)}, nil
+}
+
 // ListProducts pages through the catalog.
 func (h *CatalogHandler) ListProducts(
 	ctx context.Context,
@@ -240,6 +253,28 @@ func toProtos(products []*domain.Product) []*catalogv1.Product {
 // The version is dropped here, deliberately: a field on
 // ecommerce.catalog.v1.Product is a promise to every caller, and the optimistic
 // lock is not a fact anyone outside should be able to depend on.
+// toProtoVariants maps variants read on their own, without the product they
+// belong to.
+func toProtoVariants(variants []*domain.Variant) []*catalogv1.Variant {
+	out := make([]*catalogv1.Variant, 0, len(variants))
+	for _, variant := range variants {
+		out = append(out, &catalogv1.Variant{
+			Id:        variant.ID().String(),
+			ProductId: variant.ProductID().String(),
+			Sku:       variant.SKU().String(),
+			Price: &commonv1.Money{
+				AmountMinor:  variant.Price().AmountMinor(),
+				CurrencyCode: variant.Price().Currency().String(),
+			},
+			Attributes: variant.Attributes(),
+			CreatedAt:  timestamppb.New(variant.CreatedAt()),
+			UpdatedAt:  timestamppb.New(variant.UpdatedAt()),
+		})
+	}
+
+	return out
+}
+
 func toProto(product *domain.Product) *catalogv1.Product {
 	variants := make([]*catalogv1.Variant, 0, len(product.Variants()))
 

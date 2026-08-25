@@ -205,6 +205,38 @@ func (r *ProductRepository) FindByIDs(ctx context.Context, ids []domain.ProductI
 	return r.withVariants(ctx, rows)
 }
 
+// FindVariantsBySKUs returns the variants a cart names, filtered to products in
+// one state so that a draft is never priced for a buyer.
+func (r *ProductRepository) FindVariantsBySKUs(
+	ctx context.Context,
+	skus []domain.SKU,
+	status domain.ProductStatus,
+) ([]*domain.Variant, error) {
+	if len(skus) == 0 {
+		return nil, nil
+	}
+
+	wanted := make([]string, 0, len(skus))
+	for _, sku := range skus {
+		wanted = append(wanted, sku.String())
+	}
+
+	rows, err := r.queries(ctx).GetVariantsBySKUs(ctx, sqlc.GetVariantsBySKUsParams{
+		Skus:   wanted,
+		Status: status.String(),
+	})
+	if err != nil {
+		return nil, errorx.Wrap(err, errorx.KindInternal, "get %d variant(s) by sku", len(skus))
+	}
+
+	variants := make([]*domain.Variant, 0, len(rows))
+	for i := range rows {
+		variants = append(variants, toDomainVariant(&rows[i]))
+	}
+
+	return variants, nil
+}
+
 // List returns one page of products, newest first.
 //
 // The two statements differ only in the category predicate, and picking between
@@ -359,6 +391,21 @@ func insertVariant(ctx context.Context, queries *sqlc.Queries, variant *domain.V
 // toDomain rebuilds the aggregate from its rows. It reconstitutes rather than
 // constructs: re-running today's validation over yesterday's data is how a
 // service loses the ability to read the products it created itself.
+// toDomainVariant rebuilds one variant on its own, for the read that answers
+// about SKUs rather than about products.
+func toDomainVariant(row *sqlc.Variant) *domain.Variant {
+	return domain.ReconstituteVariant(domain.VariantSnapshot{
+		ID:         domain.VariantID(row.ID.String()),
+		ProductID:  domain.ProductID(row.ProductID.String()),
+		SKU:        domain.SKU(row.Sku),
+		Price:      domain.ReconstituteMoney(row.PriceAmountMinor, domain.CurrencyCode(row.PriceCurrency)),
+		Attributes: unmarshalAttributes(row.Attributes),
+		CreatedAt:  row.CreatedAt,
+		UpdatedAt:  row.UpdatedAt,
+		Version:    int(row.Version),
+	})
+}
+
 func toDomain(row *sqlc.Product, variants []sqlc.Variant) *domain.Product {
 	snapshots := make([]domain.VariantSnapshot, 0, len(variants))
 

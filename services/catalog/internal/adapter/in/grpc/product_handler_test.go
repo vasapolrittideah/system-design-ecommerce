@@ -28,10 +28,12 @@ type stubUseCase struct {
 	get           in.GetProductQuery
 	id            string
 	ids           []string
+	skus          []string
 
-	product *domain.Product
-	page    in.ProductPage
-	err     error
+	variants []*domain.Variant
+	product  *domain.Product
+	page     in.ProductPage
+	err      error
 }
 
 func (s *stubUseCase) GetProduct(_ context.Context, query in.GetProductQuery) (*domain.Product, error) {
@@ -44,6 +46,12 @@ func (s *stubUseCase) GetProductsByIDs(_ context.Context, ids []string) ([]*doma
 	s.ids = ids
 
 	return s.page.Products, s.err
+}
+
+func (s *stubUseCase) GetVariantsBySKUs(_ context.Context, skus []string) ([]*domain.Variant, error) {
+	s.skus = skus
+
+	return s.variants, s.err
 }
 
 func (s *stubUseCase) ListProducts(_ context.Context, query in.ListProductsQuery) (in.ProductPage, error) {

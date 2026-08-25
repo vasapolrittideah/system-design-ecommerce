@@ -29,6 +29,13 @@ type Querier interface {
 	// every time: created_at alone repeats within a transaction, so the id settles
 	// it — a shopper must not see the sizes reshuffle between two page loads.
 	GetVariantsByProductIDs(ctx context.Context, productIds []uuid.UUID) ([]Variant, error)
+	// The sellable units a cart names, joined to their product so that only the
+	// ones on sale come back.
+	//
+	// The status filter is in the query rather than applied afterwards: a variant
+	// of a draft product must not be priced for anybody, and a filter the caller
+	// has to remember is one that eventually gets forgotten.
+	GetVariantsBySKUs(ctx context.Context, arg GetVariantsBySKUsParams) ([]Variant, error)
 	// Keyset pagination. The cursor is compared as a row so that (created_at, id)
 	// is one ordered key: products written in the same transaction share a
 	// timestamp, and paging on it alone would drop or repeat whichever of them
