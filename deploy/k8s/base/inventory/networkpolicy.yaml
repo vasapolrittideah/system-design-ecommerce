@@ -44,6 +44,11 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bff-web
+        # Checkout reserves stock and prices a cart before it persists
+        # anything, so order is a caller here as much as the BFF is.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: order
       ports:
         - protocol: TCP
           port: 50051

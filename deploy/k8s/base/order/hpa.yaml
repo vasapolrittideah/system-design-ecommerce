@@ -1,0 +1,37 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order
+  annotations:
+    # Last, because Argo waits for a wave to report healthy before starting the
+    # next and an HPA whose target does not exist yet reports ScalingActive
+    # false. Ordered after the Deployment it scales, it has something to find.
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order
+  # Two is the floor, not one: a single replica means every rolling restart is
+  # a gap in availability, and it also means client-side load balancing is
+  # never exercised until the day it matters.
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # Against the pod's CPU *request*, which is why the container sets no
+          # CPU limit — a throttled pod reports low utilisation and the
+          # autoscaler concludes it has spare capacity.
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      # Scale out fast, scale in slowly. Without the window a brief dip
+      # retires replicas that the next minute needs back, and each new pod
+      # costs a cold connection pool.
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 30

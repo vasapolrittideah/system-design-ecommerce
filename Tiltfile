@@ -378,6 +378,72 @@ k8s_resource(
 )
 
 # ------------------------------------------------------------------------------
+# order
+#
+# The same shape again. It is the first service that calls two others, so its
+# resource_deps name them: Tilt would otherwise bring it up against a catalog
+# that is not answering yet, and the first checkout of a session would fail for
+# a reason that has nothing to do with the code being edited.
+# ------------------------------------------------------------------------------
+
+k8s_yaml(kustomize('deploy/k8s/overlays/local/order'))
+
+k8s_resource(
+    'order-postgres',
+    # 5435 on the host: 5432, 5433, and 5434 are taken. Four databases on a
+    # laptop is what "database per service" costs, and the port collision is
+    # where that keeps showing up.
+    port_forwards=[port_forward(5435, 5432, name='postgres')],
+    labels=['order'],
+)
+
+docker_build(
+    'ecommerce/order',
+    context='.',
+    dockerfile='services/order/Dockerfile',
+    target='server',
+    build_args={'GOOSE_VERSION': 'v3.27.3'},
+    only=['go.mod', 'go.sum', 'pkg', 'gen', 'services/order'],
+)
+
+docker_build(
+    'ecommerce/order-migrate',
+    context='.',
+    dockerfile='services/order/Dockerfile',
+    target='migrate',
+    build_args={'GOOSE_VERSION': 'v3.27.3'},
+    only=['go.mod', 'go.sum', 'pkg', 'gen', 'services/order'],
+)
+
+k8s_resource(
+    'order-migrate',
+    resource_deps=['order-postgres'],
+    labels=['order'],
+)
+
+k8s_resource(
+    'order',
+    resource_deps=['order-migrate', 'reloader', 'catalog', 'inventory'],
+    port_forwards=[
+        '50054:50051',
+        '9097:9090',
+    ],
+    labels=['order'],
+)
+
+k8s_resource(
+    'order-outboxrelay',
+    # Nothing routes to it, so there is no gRPC port to forward. The admin one
+    # is here because a stalled relay is invisible everywhere else — and here
+    # it is more than a metric: the relay is what turns a placed order's hold
+    # into a sale, so a relay that has stopped is a checkout that never
+    # finishes.
+    resource_deps=['order-migrate', 'kafka-topics', 'reloader'],
+    port_forwards=['9098:9090'],
+    labels=['order'],
+)
+
+# ------------------------------------------------------------------------------
 # bff-web
 #
 # No Postgres and no migration Job: the BFF has no database. Everything it

@@ -1,0 +1,111 @@
+# Migrations run here, never on application startup. A process that migrates
+# as it boots runs the migration once per replica, races itself during a
+# rollout, and makes a schema change a restart away from any pod that happens
+# to come up first.
+#
+# The Job is immutable once created, so a redeploy has to delete it before
+# applying — `make deploy` does that, and it is also what orders the migration
+# ahead of the rollout, since kustomize has no notion of hooks.
+#
+# The annotations below say the same thing to Argo, which does have hooks:
+# delete the previous Job because of that same immutability, run this, wait for
+# it to succeed, then roll out. They are inert wherever Argo is not watching —
+# `make deploy` and `make stack` behave exactly as they did — so the two paths
+# describe one ordering rather than competing for it.
+#
+# The phase is Sync rather than PreSync, and a sync wave is what orders it. This
+# looks like a detail and is not. A PreSync hook runs before Argo applies any of
+# the manifests, so on a namespace that does not already hold them the Job finds
+# no ConfigMap, no Secret and no database, and waits for resources whose creation
+# it is itself blocking. staging deadlocked exactly there on its first sync;
+# prod survives only because everything it needs predates Argo, which also means
+# prod could not be rebuilt from an empty namespace.
+#
+# The subtler half applies to a cluster that is already running: a PreSync hook
+# reads the *previous* revision's ConfigMap and Secret, since the new ones land
+# in the sync it precedes. One commit that changed both a database host and an
+# image tag would migrate against the old host and then start pods on the new.
+#
+# The waves are 0 for config, secrets and the database, 1 here, 2 for the
+# Deployments, 3 for the HPA. Argo waits for each wave to report healthy before
+# starting the next, so the database is accepting connections before goose runs,
+# and the SealedSecret has been decrypted into a real Secret before anything
+# mounts it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: order-migrate
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  # goose runs each migration in a transaction and records nothing when it
+  # rolls back, so a lock timeout or a dropped connection clears itself on the
+  # next attempt rather than leaving a version to be forced by hand.
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: order
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: goose
+          image: ecommerce/order-migrate
+          imagePullPolicy: IfNotPresent
+          # The DSN is assembled here rather than stored in the Secret, so the
+          # host, user, and database name have exactly one definition and the
+          # Secret holds only the part that is actually secret.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+
+              dsn="postgres://${ORDER_DB_USER}:${ORDER_DB_PASSWORD}@${ORDER_DB_HOST}:${ORDER_DB_PORT}/${ORDER_DB_DATABASE}?sslmode=${ORDER_DB_SSLMODE}"
+
+              # Retry the migration itself rather than probe for the database
+              # first. On a first deploy the StatefulSet is still running initdb
+              # on an empty volume, and until its pod is ready the headless
+              # Service has no endpoint and its name does not resolve at all —
+              # so the failure is NXDOMAIN rather than a refused connection, and
+              # a readiness check written here would be a second definition of
+              # ready that can disagree with the probe.
+              #
+              # goose up is idempotent, which is what makes retrying it safe: an
+              # attempt that already applied everything is a no-op. Sixty
+              # seconds, then fail with the last error in the log — a wrong
+              # password must not retry until the Job's deadline.
+              attempt=1
+              until goose -dir /migrations postgres "$dsn" up; do
+                if [ "$attempt" -ge 30 ]; then
+                  echo "database unreachable after 60s, giving up"
+                  exit 1
+                fi
+                attempt=$((attempt + 1))
+                sleep 2
+              done
+          envFrom:
+            - configMapRef:
+                name: order-config
+            - secretRef:
+                name: order-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

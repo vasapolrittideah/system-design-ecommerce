@@ -1,11 +1,11 @@
-# Who may reach catalog, and what catalog may reach.
+# Who may reach order, and what order may reach.
 #
 # Ports are numeric rather than the names the Service and the scrape config use.
 # A NetworkPolicy may name a port, but the resolution is the CNI's to implement
 # and a rule the CNI silently ignores is a rule that is not there — the one
 # failure mode this whole file exists to remove.
 #
-# The migration Job's pods carry app.kubernetes.io/name: catalog too, so they
+# The migration Job's pods carry app.kubernetes.io/name: order too, so they
 # are selected by everything here. That is why the Job needs no policy of its
 # own, and why the egress rule it depends on — the one reaching Postgres — is
 # in the local overlay beside the database it reaches.
@@ -13,11 +13,11 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: catalog
+  name: order
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: catalog
+      app.kubernetes.io/name: order
   policyTypes:
     - Ingress
     - Egress
@@ -29,11 +29,6 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bff-web
-        # Checkout reserves stock and prices a cart before it persists
-        # anything, so order is a caller here as much as the BFF is.
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: order
       ports:
         - protocol: TCP
           port: 50051
@@ -72,3 +67,36 @@ spec:
       ports:
         - protocol: TCP
           port: 4317
+    # The two services checkout fans out to. This is the whole of east-west
+    # traffic for this service, and Kong is deliberately absent from it: a
+    # gateway that could be reached from here would be a way to leave the
+    # cluster and come back in past everything it does.
+    #
+    # The name alone, without a component. Which of a service's workloads
+    # answers on 50051 is that service's business — inventory happens to label
+    # its server pods because it runs a reaper beside them and catalog does not
+    # label anything — and an egress rule that named the component would be a
+    # rule that breaks when the callee grows a second deployment. The pods it
+    # additionally admits listen on nothing.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: catalog
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: inventory
+      ports:
+        - protocol: TCP
+          port: 50051
+    # The broker, for the outbox relay. It wears app.kubernetes.io/name:
+    # order like every other workload this service ships, so this rule
+    # reaches it without a policy of its own — and the server, which publishes
+    # nothing, gains a route it never dials.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka
+              app.kubernetes.io/component: broker
+      ports:
+        - protocol: TCP
+          port: 9092

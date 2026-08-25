@@ -29,6 +29,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: identity
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: order
         # The Job beside this file, which declares the topics.
         - podSelector:
             matchLabels:

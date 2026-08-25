@@ -76,7 +76,8 @@ spec:
               # topic would be a queue with no producer, no consumer, and an
               # alert that reads as coverage while watching an empty topic.
               for spec in \
-                "ecommerce.identity.events.v1 6"
+                "ecommerce.identity.events.v1 6" \
+                "ecommerce.order.events.v1 6"
               do
                 set -- $spec
                 echo "declaring $1 with $2 partition(s)"

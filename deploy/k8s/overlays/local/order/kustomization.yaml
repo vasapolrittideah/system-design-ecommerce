@@ -1,0 +1,43 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce
+
+resources:
+  - ../../../base/order
+
+# The Postgres instance this service talks to locally, plus the policies that
+# keep it reachable by order alone. Staging includes the same component; a
+# deploy whose database is managed elsewhere would include neither.
+components:
+  - ../../../components/order-postgres
+
+configMapGenerator:
+  - name: order-config
+    behavior: merge
+    envs:
+      - config.env
+
+# Fixed name, matching the ConfigMap in base and for the same reason: a hashed
+# name creates a new object on every change and orphans the last one, with
+# nothing to clean them up. The Reloader annotation on the Deployment is what
+# restarts the pods instead.
+generatorOptions:
+  disableNameSuffixHash: true
+
+secretGenerator:
+  - name: order-secret
+    literals:
+      # Read from here by both sides: the service connects with it, and
+      # postgres.yaml sets POSTGRES_PASSWORD from this same key, so the two
+      # cannot drift into a database nobody can log into. Local only — a real
+      # deployment takes it from External Secrets.
+      #
+      # Deliberately not the service name. Tilt redacts every Secret value from
+      # its logs, so a password of "order" would blank that word out of
+      # every line naming the service, its image, or its Deployment.
+      - ORDER_DB_PASSWORD=insecure-local-only
+
+patches:
+  - path: patch-hpa.yaml
+  - path: patch-deployment.yaml
