@@ -25,6 +25,7 @@ import (
 	commonv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/common/v1"
 	identityv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/identity/v1"
 	inventoryv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/inventory/v1"
+	orderv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/order/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/auth"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/config"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
@@ -181,6 +182,57 @@ func (s *stubInventoryClient) GetStockBySKUs(
 	}
 
 	return &inventoryv1.GetStockBySKUsResponse{Items: s.items}, nil
+}
+
+// stubOrderClient answers the checkout screens.
+//
+// The interface is embedded for the same reason the others embed theirs: an RPC
+// no test set up is a nil call that panics, so a route wired to a method this
+// stub does not implement stops a test rather than passing one.
+type stubOrderClient struct {
+	orderv1.OrderServiceClient
+
+	checkoutReq *orderv1.CheckoutRequest
+	getReq      *orderv1.GetOrderRequest
+	listReq     *orderv1.ListOrdersRequest
+
+	order         *orderv1.Order
+	orders        []*orderv1.Order
+	nextPageToken string
+	err           error
+}
+
+func (s *stubOrderClient) Checkout(
+	_ context.Context, in *orderv1.CheckoutRequest, _ ...grpc.CallOption,
+) (*orderv1.CheckoutResponse, error) {
+	s.checkoutReq = in
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return &orderv1.CheckoutResponse{Order: s.order}, nil
+}
+
+func (s *stubOrderClient) GetOrder(
+	_ context.Context, in *orderv1.GetOrderRequest, _ ...grpc.CallOption,
+) (*orderv1.GetOrderResponse, error) {
+	s.getReq = in
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return &orderv1.GetOrderResponse{Order: s.order}, nil
+}
+
+func (s *stubOrderClient) ListOrders(
+	_ context.Context, in *orderv1.ListOrdersRequest, _ ...grpc.CallOption,
+) (*orderv1.ListOrdersResponse, error) {
+	s.listReq = in
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return &orderv1.ListOrdersResponse{Orders: s.orders, NextPageToken: s.nextPageToken}, nil
 }
 
 func TestRegisterReturnsCreatedWithNoTokens(t *testing.T) {
@@ -593,6 +645,11 @@ func newServer(
 	identity identityv1.IdentityServiceClient,
 	catalog catalogv1.CatalogServiceClient,
 	inventory inventoryv1.InventoryServiceClient,
+	// Variadic so that the twenty tests written before orders existed keep
+	// reading as they did: a screen that never reaches the order service has
+	// nothing to say about it, and passing an empty stub at each of those call
+	// sites would be noise standing in for a dependency none of them uses.
+	orders ...orderv1.OrderServiceClient,
 ) (*chi.Mux, *auth.Signer) {
 	t.Helper()
 
@@ -621,7 +678,12 @@ func newServer(
 
 	validator := httpx.MustNewValidator()
 	router := httpx.MustNewRouter(validator)
-	rest.NewHandler(identity, catalog, inventory, validator).Mount(router, auth.Authenticate(verifier))
+	order := orderv1.OrderServiceClient(&stubOrderClient{})
+	if len(orders) > 0 {
+		order = orders[0]
+	}
+
+	rest.NewHandler(identity, catalog, inventory, order, validator).Mount(router, auth.Authenticate(verifier))
 
 	return router, signer
 }
@@ -876,4 +938,182 @@ func generateKeyPair(t *testing.T) (privatePEM, publicPEM string) {
 
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})),
 		string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public}))
+}
+
+// bearer signs a token for the test user, so an authenticated call reads as one
+// line rather than four.
+func bearer(t *testing.T, signer *auth.Signer) string {
+	t.Helper()
+
+	token, err := signer.Sign(testUserID, []string{"customer"})
+	if err != nil {
+		t.Fatalf("Sign() error = %v", err)
+	}
+
+	return "Bearer " + token.Value
+}
+
+// decode reads a response into a typed shape, for the assertions that are about
+// fields rather than about the whole body.
+func decode(t *testing.T, res *httptest.ResponseRecorder, dst any) {
+	t.Helper()
+
+	if err := json.Unmarshal(res.Body.Bytes(), dst); err != nil {
+		t.Fatalf("decode body %s: %v", res.Body, err)
+	}
+}
+
+func testOrder() *orderv1.Order {
+	return &orderv1.Order{
+		Id:     "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+		UserId: "9c4f3d7b-5e1a-4f4d-ac6b-80ae1d5f7b93",
+		Status: orderv1.OrderStatus_ORDER_STATUS_PENDING_PAYMENT,
+		Lines: []*orderv1.OrderLine{{
+			Sku:       "SHIRT-BLUE-M",
+			Quantity:  2,
+			UnitPrice: &commonv1.Money{AmountMinor: 49900, CurrencyCode: "THB"},
+		}},
+		Total:         &commonv1.Money{AmountMinor: 99800, CurrencyCode: "THB"},
+		ReservationId: "8b3e2c6a-4d0f-4e3c-9b5a-7f9d0c4e6a82",
+		CreatedAt:     timestamppb.New(time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)),
+		UpdatedAt:     timestamppb.New(time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)),
+	}
+}
+
+func TestCheckoutPassesTheCartAndTheKeyThrough(t *testing.T) {
+	orders := &stubOrderClient{order: testOrder()}
+	srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+
+	res := do(t, srv, http.MethodPost, "/api/v1/checkout", bearer(t, signer), `{
+		"idempotencyKey": "checkout-4f2b1c8a",
+		"lines": [{"sku": "SHIRT-BLUE-M", "quantity": 2}]
+	}`)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusCreated, res.Body)
+	}
+
+	// The key has to reach the service that owns the order: this tier has no
+	// database and cannot deduplicate anything itself.
+	if got := orders.checkoutReq.GetIdempotencyKey(); got != "checkout-4f2b1c8a" {
+		t.Errorf("idempotency key = %q, want the one the client sent", got)
+	}
+	if lines := orders.checkoutReq.GetLines(); len(lines) != 1 || lines[0].GetSku() != "SHIRT-BLUE-M" {
+		t.Errorf("lines = %+v, want the cart", lines)
+	}
+
+	var body struct {
+		Order struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Total  struct {
+				AmountMinor int64 `json:"amountMinor"`
+			} `json:"total"`
+			ReservationID string `json:"reservationId"`
+		} `json:"order"`
+	}
+	decode(t, res, &body)
+
+	if body.Order.Status != "pendingPayment" {
+		t.Errorf("status = %q, want %q", body.Order.Status, "pendingPayment")
+	}
+	if body.Order.Total.AmountMinor != 99800 {
+		t.Errorf("total = %d, want %d", body.Order.Total.AmountMinor, 99800)
+	}
+	// Machinery, not a fact about the purchase. A client that learned to read
+	// it would be a client the saga cannot be changed underneath.
+	if body.Order.ReservationID != "" {
+		t.Errorf("reservationId = %q, want it absent from the response", body.Order.ReservationID)
+	}
+}
+
+func TestCheckoutRefusesAnUnsignedRequest(t *testing.T) {
+	orders := &stubOrderClient{order: testOrder()}
+	srv, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+
+	res := do(t, srv, http.MethodPost, "/api/v1/checkout", "", `{
+		"idempotencyKey": "checkout-4f2b1c8a",
+		"lines": [{"sku": "SHIRT-BLUE-M", "quantity": 2}]
+	}`)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusUnauthorized, res.Body)
+	}
+	// Nothing may reach the order service on an anonymous call.
+	if orders.checkoutReq != nil {
+		t.Error("checkout was forwarded without a verified caller")
+	}
+}
+
+func TestCheckoutRejectsACartThisAPIWillNotAccept(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"no idempotency key", `{"lines": [{"sku": "SHIRT-BLUE-M", "quantity": 2}]}`},
+		{"key too short", `{"idempotencyKey": "short", "lines": [{"sku": "S-1", "quantity": 1}]}`},
+		{"no lines", `{"idempotencyKey": "checkout-4f2b1c8a", "lines": []}`},
+		{"zero quantity", `{"idempotencyKey": "checkout-4f2b1c8a", "lines": [{"sku": "S-1", "quantity": 0}]}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orders := &stubOrderClient{order: testOrder()}
+			srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+
+			res := do(t, srv, http.MethodPost, "/api/v1/checkout", bearer(t, signer), tt.body)
+
+			if res.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusBadRequest, res.Body)
+			}
+			if orders.checkoutReq != nil {
+				t.Error("a request this API refuses was forwarded anyway")
+			}
+		})
+	}
+}
+
+func TestListOrdersPassesThePageThrough(t *testing.T) {
+	orders := &stubOrderClient{orders: []*orderv1.Order{testOrder()}, nextPageToken: "next"}
+	srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+
+	res := do(t, srv, http.MethodGet, "/api/v1/orders?pageSize=10&pageToken=abc", bearer(t, signer), "")
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusOK, res.Body)
+	}
+	if got := orders.listReq.GetPageSize(); got != 10 {
+		t.Errorf("page size = %d, want %d", got, 10)
+	}
+	// The cursor is the order service's and is passed back unread.
+	if got := orders.listReq.GetPageToken(); got != "abc" {
+		t.Errorf("page token = %q, want %q", got, "abc")
+	}
+
+	var body struct {
+		Orders        []struct{} `json:"orders"`
+		NextPageToken string     `json:"nextPageToken"`
+	}
+	decode(t, res, &body)
+
+	if len(body.Orders) != 1 || body.NextPageToken != "next" {
+		t.Errorf("body = %+v, want one order and the next token", body)
+	}
+}
+
+func TestGetOrderRefusesAnIDThisAPIWillNotAccept(t *testing.T) {
+	orders := &stubOrderClient{order: testOrder()}
+	srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+
+	// Checked here rather than left to the order service, which would also
+	// refuse it: a rejection from downstream arrives as a bare 400 where every
+	// other bad request in this API carries error.fields naming what was wrong.
+	res := do(t, srv, http.MethodGet, "/api/v1/orders/not-a-uuid", bearer(t, signer), "")
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusBadRequest, res.Body)
+	}
+	if orders.getReq != nil {
+		t.Error("an id this API refuses was forwarded anyway")
+	}
 }

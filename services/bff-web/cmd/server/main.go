@@ -56,6 +56,7 @@ func run() error {
 		Identity:  client.MustDial(cfg.Identity, client.WithLogger(log)),
 		Catalog:   client.MustDial(cfg.Catalog, client.WithLogger(log)),
 		Inventory: client.MustDial(cfg.Inventory, client.WithLogger(log)),
+		Order:     client.MustDial(cfg.Order, client.WithLogger(log)),
 	}
 
 	// Deliberately no readiness check on any of them.

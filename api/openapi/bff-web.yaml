@@ -69,6 +69,8 @@ tags:
     description: The signed-in person's own account.
   - name: storefront
     description: What is on sale, shaped for the screen that shows it.
+  - name: orders
+    description: Buying, and the record of what was bought.
 
 paths:
   /api/v1/auth/register:
@@ -439,6 +441,195 @@ paths:
                         properties:
                           code:
                             enum: [PRODUCT_NOT_FOUND]
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+  /api/v1/checkout:
+    post:
+      operationId: checkout
+      tags: [orders]
+      summary: Place an order
+      description: |
+        Reserves the stock, records the order, and returns — it does not wait
+        for the purchase to complete. The order comes back `pendingPayment`
+        with the stock already held for it, and the rest of the flow happens
+        behind the API.
+
+        Prices are not in the request and cannot be. What each line costs is
+        read from the catalog at this moment and frozen onto the order, so the
+        total in the response is the agreement; a later price change does not
+        rewrite it.
+
+        `idempotencyKey` is required and is what makes a retry safe. The same
+        key with the same lines replays the first order rather than placing a
+        second; the same key with different lines is `409
+        IDEMPOTENCY_KEY_REUSED`, because that is a client bug and not a retry.
+        Generate one per attempt the shopper makes, not one per HTTP request.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '201':
+          description: The order, waiting for payment.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '409':
+          description: |
+            The cart cannot be turned into an order as it stands.
+
+            `OUT_OF_STOCK` names the SKU in `error.metadata.sku`: there is not
+            enough of it to hold. `SKU_NOT_SELLABLE` is a line the catalog will
+            not price — withdrawn, or never on sale. `IDEMPOTENCY_KEY_REUSED`
+            is the same key sent with different lines.
+
+            All three are worth showing the shopper differently, which is why
+            they are separate codes behind one status.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [OUT_OF_STOCK, SKU_NOT_SELLABLE, IDEMPOTENCY_KEY_REUSED]
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+  /api/v1/orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      summary: The signed-in person's order history, newest first
+      description: |
+        The caller's own orders and nobody else's. There is no parameter here
+        that could ask for another account's, in the same way `/api/v1/me` has
+        none.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: pageSize
+          in: query
+          required: false
+          description: How many orders to return. Omitted or 0 leaves it to the service.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            maximum: 100
+        - name: pageToken
+          in: query
+          required: false
+          description: |
+            `nextPageToken` from the previous response. Opaque — it is a cursor
+            and not an offset, so orders placed while a customer pages are
+            neither skipped nor repeated.
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: One page of orders.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrdersResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+  /api/v1/orders/{id}:
+    get:
+      operationId: getOrder
+      tags: [orders]
+      summary: One order, as its own page
+      description: |
+        An order that belongs to somebody else answers `404 ORDER_NOT_FOUND`,
+        exactly as an id nobody minted does. The two are deliberately
+        indistinguishable: confirming that an order exists but is not yours is
+        a fact about another customer.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The order's id, as `orders.id` from the history or from checkout.
+          schema:
+            type: string
+            format: uuid
+            pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          example: 3f2504e0-4f89-41d3-9a0c-0305e82c3301
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          description: |
+            No order of the caller's under this id — `ORDER_NOT_FOUND`.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [ORDER_NOT_FOUND]
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -886,6 +1077,111 @@ components:
               format: int32
               minimum: 0
             - type: 'null'
+
+    CheckoutRequest:
+      type: object
+      description: A cart being turned into an order.
+      required: [idempotencyKey, lines]
+      properties:
+        idempotencyKey:
+          type: string
+          description: |
+            The client's own key for this attempt, repeated on every retry of
+            it. One per attempt the shopper makes — a fresh key on each HTTP
+            retry would defeat the deduplication entirely.
+          minLength: 8
+          maxLength: 128
+          example: checkout-4f2b1c8a
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CheckoutLine'
+
+    CheckoutLine:
+      type: object
+      description: One SKU and how many of it. No price — that is the catalog's answer.
+      required: [sku, quantity]
+      properties:
+        sku:
+          type: string
+          maxLength: 64
+          example: SHIRT-BLUE-M
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 10000
+
+    OrderResponse:
+      type: object
+      required: [order]
+      properties:
+        order:
+          $ref: '#/components/schemas/Order'
+
+    OrdersResponse:
+      type: object
+      required: [orders]
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        nextPageToken:
+          type: string
+          description: Absent on the last page. Send it back as `pageToken`.
+
+    Order:
+      type: object
+      description: |
+        One purchase. How the stock is held while it is paid for is not
+        described here on purpose: that is machinery, and a client that read it
+        would be a client the flow cannot be changed underneath.
+      required: [id, status, lines, total, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: |
+            `pendingPayment` — recorded, stock held, waiting for money.
+            `paid` — the money is in.
+            `cancelled` — it will not proceed and the stock has gone back.
+
+            Branch on the values you know and render anything else as in
+            progress: a status a newer release added must not break a screen.
+          enum: [pendingPayment, paid, cancelled, unknown]
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderLine'
+        total:
+          $ref: '#/components/schemas/Money'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    OrderLine:
+      type: object
+      required: [sku, quantity, unitPrice]
+      properties:
+        sku:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+        unitPrice:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: |
+            What was agreed for one at the moment of checkout, not what the
+            catalog charges now.
 
     Money:
       type: object

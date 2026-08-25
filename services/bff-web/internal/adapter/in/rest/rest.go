@@ -15,6 +15,7 @@ import (
 	catalogv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/catalog/v1"
 	identityv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/identity/v1"
 	inventoryv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/inventory/v1"
+	orderv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/order/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/httpx"
 )
 
@@ -29,6 +30,7 @@ type Handler struct {
 	identity  identityv1.IdentityServiceClient
 	catalog   catalogv1.CatalogServiceClient
 	inventory inventoryv1.InventoryServiceClient
+	orders    orderv1.OrderServiceClient
 	validator *httpx.Validator
 }
 
@@ -37,12 +39,14 @@ func NewHandler(
 	identity identityv1.IdentityServiceClient,
 	catalog catalogv1.CatalogServiceClient,
 	inventory inventoryv1.InventoryServiceClient,
+	orders orderv1.OrderServiceClient,
 	validator *httpx.Validator,
 ) *Handler {
 	return &Handler{
 		identity:  identity,
 		catalog:   catalog,
 		inventory: inventory,
+		orders:    orders,
 		validator: validator,
 	}
 }
@@ -76,6 +80,14 @@ func (h *Handler) Mount(r chi.Router, authenticate func(http.Handler) http.Handl
 			r.Use(authenticate)
 
 			r.Get("/me", h.me)
+
+			// Buying is the one thing on this API that costs money, and every
+			// route here is about the caller's own orders — which is why they
+			// are inside the authenticated group and why none of them takes a
+			// user id.
+			r.Post("/checkout", h.checkout)
+			r.Get("/orders", h.listOrders)
+			r.Get("/orders/{id}", h.getOrder)
 		})
 	})
 }

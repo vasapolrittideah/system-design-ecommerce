@@ -41,6 +41,7 @@ type Config struct {
 	Identity  client.Config `envPrefix:"BFF_WEB_IDENTITY_"`
 	Catalog   client.Config `envPrefix:"BFF_WEB_CATALOG_"`
 	Inventory client.Config `envPrefix:"BFF_WEB_INVENTORY_"`
+	Order     client.Config `envPrefix:"BFF_WEB_ORDER_"`
 
 	// RequestTimeout is this tier's share of the cascading budget — Kong 5s,
 	// here, downstream 300ms — and it bounds every fan-out call a request makes,
