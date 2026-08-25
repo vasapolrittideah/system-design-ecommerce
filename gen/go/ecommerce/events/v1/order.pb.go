@@ -26,11 +26,10 @@ const (
 // OrderPlaced says that an order exists and is waiting for payment, with stock
 // already held for it. Published to ecommerce.order.events.v1.
 //
-// It carries the reservation because the order service consumes this event back
-// itself: the step that turns the hold into a sale is a gRPC call to inventory,
-// and a call made straight after the transaction commits is a write nothing
-// would retry if the process died between the two. Reading the fact back off
-// the topic makes the trigger as durable as the order.
+// Nothing has been sold yet and no money has moved: the customer is on their
+// way to a payment screen, and the reservation's expires_at is how long they
+// have to reach it. What the order becomes is said by OrderPaid or
+// OrderCancelled.
 type OrderPlaced struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	OrderId string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
@@ -185,6 +184,180 @@ func (x *OrderLine) GetUnitPrice() *v1.Money {
 	return nil
 }
 
+// OrderPaid says the money for an order is in. Published to
+// ecommerce.order.events.v1.
+//
+// The order service consumes this one back itself: turning the hold on stock
+// into a sale is a gRPC call to inventory, and a call made straight after the
+// transaction commits is a write nothing would retry if the process died
+// between the two. Reading the fact back off the topic makes the trigger as
+// durable as the payment.
+//
+// It is deliberately OrderPlaced that does not carry that job. Committing a
+// hold is selling the goods, and doing it before the money is in leaves a
+// failed payment with nothing to give back — inventory refuses to release a
+// reservation it has already committed.
+type OrderPaid struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	OrderId string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	UserId  string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// The hold taken at checkout, carried so the consumer that commits it needs
+	// no read of the order first.
+	ReservationId string `protobuf:"bytes,3,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	// What was actually paid, which is the order's total: this service takes no
+	// partial payments.
+	Total         *v1.Money              `protobuf:"bytes,4,opt,name=total,proto3" json:"total,omitempty"`
+	PaidAt        *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=paid_at,json=paidAt,proto3" json:"paid_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OrderPaid) Reset() {
+	*x = OrderPaid{}
+	mi := &file_ecommerce_events_v1_order_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrderPaid) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrderPaid) ProtoMessage() {}
+
+func (x *OrderPaid) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_events_v1_order_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrderPaid.ProtoReflect.Descriptor instead.
+func (*OrderPaid) Descriptor() ([]byte, []int) {
+	return file_ecommerce_events_v1_order_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *OrderPaid) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *OrderPaid) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *OrderPaid) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
+func (x *OrderPaid) GetTotal() *v1.Money {
+	if x != nil {
+		return x.Total
+	}
+	return nil
+}
+
+func (x *OrderPaid) GetPaidAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PaidAt
+	}
+	return nil
+}
+
+// OrderCancelled says an order will not be fulfilled and whatever it held is
+// to be given back. Published to ecommerce.order.events.v1.
+//
+// The order service consumes this one back itself too, for the same durability
+// reason: releasing the reservation is the compensating step, and it belongs on
+// the topic rather than in whatever process happened to decide the order was
+// over.
+//
+// It carries no reason. Why an order ended is a fact about the payment or the
+// timeout that ended it, published by whoever knew it; this event says only
+// that the stock is free again.
+type OrderCancelled struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	OrderId string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	UserId  string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// The hold to give back. Releasing one already released succeeds and changes
+	// nothing, which is what lets this event be redelivered.
+	ReservationId string                 `protobuf:"bytes,3,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	CancelledAt   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=cancelled_at,json=cancelledAt,proto3" json:"cancelled_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OrderCancelled) Reset() {
+	*x = OrderCancelled{}
+	mi := &file_ecommerce_events_v1_order_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrderCancelled) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrderCancelled) ProtoMessage() {}
+
+func (x *OrderCancelled) ProtoReflect() protoreflect.Message {
+	mi := &file_ecommerce_events_v1_order_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrderCancelled.ProtoReflect.Descriptor instead.
+func (*OrderCancelled) Descriptor() ([]byte, []int) {
+	return file_ecommerce_events_v1_order_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *OrderCancelled) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *OrderCancelled) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *OrderCancelled) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
+func (x *OrderCancelled) GetCancelledAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CancelledAt
+	}
+	return nil
+}
+
 var File_ecommerce_events_v1_order_proto protoreflect.FileDescriptor
 
 const file_ecommerce_events_v1_order_proto_rawDesc = "" +
@@ -201,7 +374,18 @@ const file_ecommerce_events_v1_order_proto_rawDesc = "" +
 	"\x03sku\x18\x01 \x01(\tR\x03sku\x12\x1a\n" +
 	"\bquantity\x18\x02 \x01(\x05R\bquantity\x129\n" +
 	"\n" +
-	"unit_price\x18\x03 \x01(\v2\x1a.ecommerce.common.v1.MoneyR\tunitPriceB\xec\x01\n" +
+	"unit_price\x18\x03 \x01(\v2\x1a.ecommerce.common.v1.MoneyR\tunitPrice\"\xcd\x01\n" +
+	"\tOrderPaid\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12%\n" +
+	"\x0ereservation_id\x18\x03 \x01(\tR\rreservationId\x120\n" +
+	"\x05total\x18\x04 \x01(\v2\x1a.ecommerce.common.v1.MoneyR\x05total\x123\n" +
+	"\apaid_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x06paidAt\"\xaa\x01\n" +
+	"\x0eOrderCancelled\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12%\n" +
+	"\x0ereservation_id\x18\x03 \x01(\tR\rreservationId\x12=\n" +
+	"\fcancelled_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\vcancelledAtB\xec\x01\n" +
 	"\x17com.ecommerce.events.v1B\n" +
 	"OrderProtoP\x01ZWgithub.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/events/v1;eventsv1\xa2\x02\x03EEX\xaa\x02\x13Ecommerce.Events.V1\xca\x02\x13Ecommerce\\Events\\V1\xe2\x02\x1fEcommerce\\Events\\V1\\GPBMetadata\xea\x02\x15Ecommerce::Events::V1b\x06proto3"
 
@@ -217,23 +401,28 @@ func file_ecommerce_events_v1_order_proto_rawDescGZIP() []byte {
 	return file_ecommerce_events_v1_order_proto_rawDescData
 }
 
-var file_ecommerce_events_v1_order_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_ecommerce_events_v1_order_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_ecommerce_events_v1_order_proto_goTypes = []any{
 	(*OrderPlaced)(nil),           // 0: ecommerce.events.v1.OrderPlaced
 	(*OrderLine)(nil),             // 1: ecommerce.events.v1.OrderLine
-	(*v1.Money)(nil),              // 2: ecommerce.common.v1.Money
-	(*timestamppb.Timestamp)(nil), // 3: google.protobuf.Timestamp
+	(*OrderPaid)(nil),             // 2: ecommerce.events.v1.OrderPaid
+	(*OrderCancelled)(nil),        // 3: ecommerce.events.v1.OrderCancelled
+	(*v1.Money)(nil),              // 4: ecommerce.common.v1.Money
+	(*timestamppb.Timestamp)(nil), // 5: google.protobuf.Timestamp
 }
 var file_ecommerce_events_v1_order_proto_depIdxs = []int32{
 	1, // 0: ecommerce.events.v1.OrderPlaced.lines:type_name -> ecommerce.events.v1.OrderLine
-	2, // 1: ecommerce.events.v1.OrderPlaced.total:type_name -> ecommerce.common.v1.Money
-	3, // 2: ecommerce.events.v1.OrderPlaced.placed_at:type_name -> google.protobuf.Timestamp
-	2, // 3: ecommerce.events.v1.OrderLine.unit_price:type_name -> ecommerce.common.v1.Money
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	4, // 1: ecommerce.events.v1.OrderPlaced.total:type_name -> ecommerce.common.v1.Money
+	5, // 2: ecommerce.events.v1.OrderPlaced.placed_at:type_name -> google.protobuf.Timestamp
+	4, // 3: ecommerce.events.v1.OrderLine.unit_price:type_name -> ecommerce.common.v1.Money
+	4, // 4: ecommerce.events.v1.OrderPaid.total:type_name -> ecommerce.common.v1.Money
+	5, // 5: ecommerce.events.v1.OrderPaid.paid_at:type_name -> google.protobuf.Timestamp
+	5, // 6: ecommerce.events.v1.OrderCancelled.cancelled_at:type_name -> google.protobuf.Timestamp
+	7, // [7:7] is the sub-list for method output_type
+	7, // [7:7] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_ecommerce_events_v1_order_proto_init() }
@@ -247,7 +436,7 @@ func file_ecommerce_events_v1_order_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ecommerce_events_v1_order_proto_rawDesc), len(file_ecommerce_events_v1_order_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

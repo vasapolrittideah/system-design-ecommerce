@@ -8,11 +8,10 @@ import "google/protobuf/timestamp.proto";
 // OrderPlaced says that an order exists and is waiting for payment, with stock
 // already held for it. Published to ecommerce.order.events.v1.
 //
-// It carries the reservation because the order service consumes this event back
-// itself: the step that turns the hold into a sale is a gRPC call to inventory,
-// and a call made straight after the transaction commits is a write nothing
-// would retry if the process died between the two. Reading the fact back off
-// the topic makes the trigger as durable as the order.
+// Nothing has been sold yet and no money has moved: the customer is on their
+// way to a payment screen, and the reservation's expires_at is how long they
+// have to reach it. What the order becomes is said by OrderPaid or
+// OrderCancelled.
 message OrderPlaced {
   string order_id = 1;
 
@@ -43,4 +42,56 @@ message OrderLine {
   int32 quantity = 2;
 
   ecommerce.common.v1.Money unit_price = 3;
+}
+
+// OrderPaid says the money for an order is in. Published to
+// ecommerce.order.events.v1.
+//
+// The order service consumes this one back itself: turning the hold on stock
+// into a sale is a gRPC call to inventory, and a call made straight after the
+// transaction commits is a write nothing would retry if the process died
+// between the two. Reading the fact back off the topic makes the trigger as
+// durable as the payment.
+//
+// It is deliberately OrderPlaced that does not carry that job. Committing a
+// hold is selling the goods, and doing it before the money is in leaves a
+// failed payment with nothing to give back — inventory refuses to release a
+// reservation it has already committed.
+message OrderPaid {
+  string order_id = 1;
+
+  string user_id = 2;
+
+  // The hold taken at checkout, carried so the consumer that commits it needs
+  // no read of the order first.
+  string reservation_id = 3;
+
+  // What was actually paid, which is the order's total: this service takes no
+  // partial payments.
+  ecommerce.common.v1.Money total = 4;
+
+  google.protobuf.Timestamp paid_at = 5;
+}
+
+// OrderCancelled says an order will not be fulfilled and whatever it held is
+// to be given back. Published to ecommerce.order.events.v1.
+//
+// The order service consumes this one back itself too, for the same durability
+// reason: releasing the reservation is the compensating step, and it belongs on
+// the topic rather than in whatever process happened to decide the order was
+// over.
+//
+// It carries no reason. Why an order ended is a fact about the payment or the
+// timeout that ended it, published by whoever knew it; this event says only
+// that the stock is free again.
+message OrderCancelled {
+  string order_id = 1;
+
+  string user_id = 2;
+
+  // The hold to give back. Releasing one already released succeeds and changes
+  // nothing, which is what lets this event be redelivered.
+  string reservation_id = 3;
+
+  google.protobuf.Timestamp cancelled_at = 4;
 }

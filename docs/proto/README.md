@@ -47,7 +47,9 @@
     - [UserRegistered](#ecommerce-events-v1-UserRegistered)
   
 - [ecommerce/events/v1/order.proto](#ecommerce_events_v1_order-proto)
+    - [OrderCancelled](#ecommerce-events-v1-OrderCancelled)
     - [OrderLine](#ecommerce-events-v1-OrderLine)
+    - [OrderPaid](#ecommerce-events-v1-OrderPaid)
     - [OrderPlaced](#ecommerce-events-v1-OrderPlaced)
   
 - [ecommerce/identity/v1/user.proto](#ecommerce_identity_v1_user-proto)
@@ -789,6 +791,34 @@ contract&#39;s break.
 
 
 
+<a name="ecommerce-events-v1-OrderCancelled"></a>
+
+### OrderCancelled
+OrderCancelled says an order will not be fulfilled and whatever it held is
+to be given back. Published to ecommerce.order.events.v1.
+
+The order service consumes this one back itself too, for the same durability
+reason: releasing the reservation is the compensating step, and it belongs on
+the topic rather than in whatever process happened to decide the order was
+over.
+
+It carries no reason. Why an order ended is a fact about the payment or the
+timeout that ended it, published by whoever knew it; this event says only
+that the stock is free again.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| order_id | [string](#string) |  |  |
+| user_id | [string](#string) |  |  |
+| reservation_id | [string](#string) |  | The hold to give back. Releasing one already released succeeds and changes nothing, which is what lets this event be redelivered. |
+| cancelled_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
 <a name="ecommerce-events-v1-OrderLine"></a>
 
 ### OrderLine
@@ -812,17 +842,47 @@ than the producer are still reading.
 
 
 
+<a name="ecommerce-events-v1-OrderPaid"></a>
+
+### OrderPaid
+OrderPaid says the money for an order is in. Published to
+ecommerce.order.events.v1.
+
+The order service consumes this one back itself: turning the hold on stock
+into a sale is a gRPC call to inventory, and a call made straight after the
+transaction commits is a write nothing would retry if the process died
+between the two. Reading the fact back off the topic makes the trigger as
+durable as the payment.
+
+It is deliberately OrderPlaced that does not carry that job. Committing a
+hold is selling the goods, and doing it before the money is in leaves a
+failed payment with nothing to give back — inventory refuses to release a
+reservation it has already committed.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| order_id | [string](#string) |  |  |
+| user_id | [string](#string) |  |  |
+| reservation_id | [string](#string) |  | The hold taken at checkout, carried so the consumer that commits it needs no read of the order first. |
+| total | [ecommerce.common.v1.Money](#ecommerce-common-v1-Money) |  | What was actually paid, which is the order&#39;s total: this service takes no partial payments. |
+| paid_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
 <a name="ecommerce-events-v1-OrderPlaced"></a>
 
 ### OrderPlaced
 OrderPlaced says that an order exists and is waiting for payment, with stock
 already held for it. Published to ecommerce.order.events.v1.
 
-It carries the reservation because the order service consumes this event back
-itself: the step that turns the hold into a sale is a gRPC call to inventory,
-and a call made straight after the transaction commits is a write nothing
-would retry if the process died between the two. Reading the fact back off
-the topic makes the trigger as durable as the order.
+Nothing has been sold yet and no money has moved: the customer is on their
+way to a payment screen, and the reservation&#39;s expires_at is how long they
+have to reach it. What the order becomes is said by OrderPaid or
+OrderCancelled.
 
 
 | Field | Type | Label | Description |
