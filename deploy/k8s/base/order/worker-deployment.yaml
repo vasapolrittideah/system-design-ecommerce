@@ -1,5 +1,6 @@
-# This service's own consumer of OrderPlaced: the half of checkout that turns
-# a reservation into a sale once the order holding it is durably persisted.
+# This service's own consumer of its order events: the half of checkout that
+# turns a reservation into a sale once the money is in, and gives it back once
+# the order is cancelled.
 #
 # Its own workload rather than a goroutine inside the server, for the same
 # reason the outbox relay has one — and unlike the relay, running more than one

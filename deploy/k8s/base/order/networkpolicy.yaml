@@ -68,8 +68,9 @@ spec:
         - protocol: TCP
           port: 4317
     # The two services this service calls: catalog and inventory, reached both
-    # by the server's Checkout and by the worker's own commit of a reservation
-    # once OrderPlaced comes back to it. This is the whole of east-west
+    # by the server's Checkout and by the worker's own commit or release of a
+    # reservation once the order's outcome comes back to it. This is the whole
+    # of east-west
     # traffic for this service, and Kong is deliberately absent from it: a
     # gateway that could be reached from here would be a way to leave the
     # cluster and come back in past everything it does.
