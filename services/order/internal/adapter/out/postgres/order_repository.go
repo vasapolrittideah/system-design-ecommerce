@@ -96,6 +96,50 @@ func (r *OrderRepository) Create(ctx context.Context, order *domain.Order) (*dom
 	return toDomain(&row, lines), nil
 }
 
+// Update writes an order that has moved, and the events it raised.
+//
+// Only the status can have changed: an order's lines are written once with it
+// and never modified, because changing what was bought would mean changing what
+// the customer agreed to.
+func (r *OrderRepository) Update(ctx context.Context, order *domain.Order) (*domain.Order, error) {
+	snapshot := order.Snapshot()
+
+	id, err := parseID(snapshot.ID.String(), "order id")
+	if err != nil {
+		return nil, err
+	}
+
+	queries := queriesFrom(ctx, r.pool)
+
+	row, err := queries.UpdateOrderStatus(ctx, sqlc.UpdateOrderStatusParams{
+		ID:      id,
+		Version: narrow(snapshot.Version),
+		Status:  string(snapshot.Status),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Either the row is gone, which cannot happen, or somebody else
+			// moved it first. Reported as a conflict so the loser finds out
+			// rather than believing it wrote.
+			return nil, errorx.Wrap(err, errorx.KindConflict, "order was modified concurrently").
+				WithReason("ORDER_MODIFIED")
+		}
+
+		return nil, errorx.Wrap(err, errorx.KindInternal, "update order")
+	}
+
+	if err := r.writeEvents(ctx, order, &row); err != nil {
+		return nil, err
+	}
+
+	lines, err := queries.GetOrderLines(ctx, id)
+	if err != nil {
+		return nil, errorx.Wrap(err, errorx.KindInternal, "get order lines")
+	}
+
+	return toDomain(&row, lines), nil
+}
+
 // FindByID returns one order with its lines.
 func (r *OrderRepository) FindByID(ctx context.Context, id domain.OrderID) (*domain.Order, error) {
 	orderID, err := parseID(id.String(), "order id")
@@ -112,6 +156,33 @@ func (r *OrderRepository) FindByID(ctx context.Context, id domain.OrderID) (*dom
 		}
 
 		return nil, errorx.Wrap(err, errorx.KindInternal, "get order")
+	}
+
+	lines, err := queries.GetOrderLines(ctx, orderID)
+	if err != nil {
+		return nil, errorx.Wrap(err, errorx.KindInternal, "get order lines")
+	}
+
+	return toDomain(&row, lines), nil
+}
+
+// FindByIDForUpdate is FindByID holding the row until the surrounding
+// transaction ends.
+func (r *OrderRepository) FindByIDForUpdate(ctx context.Context, id domain.OrderID) (*domain.Order, error) {
+	orderID, err := parseID(id.String(), "order id")
+	if err != nil {
+		return nil, err
+	}
+
+	queries := queriesFrom(ctx, r.pool)
+
+	row, err := queries.GetOrderForUpdate(ctx, orderID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrOrderNotFound
+		}
+
+		return nil, errorx.Wrap(err, errorx.KindInternal, "lock order")
 	}
 
 	lines, err := queries.GetOrderLines(ctx, orderID)

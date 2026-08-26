@@ -22,15 +22,45 @@ type OrderCancelledEvent struct {
 	ReservationID string
 }
 
-// CheckoutSaga is what this service's own consumer of its order events drives:
-// the half of checkout that runs after an order's outcome is durably
-// persisted rather than inside the transaction that persisted it.
+// PaymentSucceededEvent is what arrived on the payment service's topic to say
+// the money for an order is in.
 //
-// Both methods make a call to inventory that cannot be made from inside that
-// transaction — a call made right after commit is a write nothing would retry
-// if the process died between the two — so the trigger is read back off the
-// topic instead, where it is as durable as the order.
+// It carries no amount. What was collected is a fact about the payment, and an
+// order that checked it here would be re-deciding a question the payment
+// service already answered — with a number this service would have to be told
+// how to compare.
+type PaymentSucceededEvent struct {
+	EventID string
+
+	OrderID   string
+	PaymentID string
+}
+
+// CheckoutSaga is what this service's own consumers drive: the half of
+// checkout that runs after an outcome is durably persisted rather than inside
+// the transaction that persisted it.
+//
+// Two topics reach it. The payment service's says the money is in and moves the
+// order's own state machine; this service's own says what became of the order
+// and makes the one call to inventory that follows. They are deliberately two
+// hops rather than one — a payment is a fact about a payment, an order being
+// paid is a fact about an order, and collapsing them would put the order's
+// state machine inside a consumer that does not own it.
+//
+// There is no method for a payment that failed, and that absence is the design:
+// a declined card leaves the order open for the customer to try another, so
+// what ends an unpaid order is running out of time rather than one attempt
+// going wrong. The transition that ends it is the aggregate's Cancel, and its
+// caller is the timeout worker.
 type CheckoutSaga interface {
+	// MarkPaid records against the order that the money is in.
+	//
+	// It does not touch inventory. Marking the order raises OrderPaid, and the
+	// commit that turns the hold into a sale is driven by that — which is what
+	// keeps the call as durable as the transition, rather than being made
+	// straight after a commit by a process that may not survive to make it.
+	MarkPaid(ctx context.Context, event PaymentSucceededEvent) error
+
 	// CommitReservation turns the stock reserved for an order into a sale.
 	//
 	// It is driven by OrderPaid and not by OrderPlaced, because committing a

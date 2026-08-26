@@ -40,8 +40,26 @@ type OrderRepository interface {
 	// the same commit as the order.
 	Create(ctx context.Context, order *domain.Order) (*domain.Order, error)
 
+	// Update writes an order that has moved and the events it raised, carrying
+	// the version it was loaded at.
+	//
+	// A stale version affects zero rows and comes back as a conflict rather
+	// than silently overwriting: two writers deciding what becomes of one
+	// order is the ordinary case here, and the loser has to find out that it
+	// lost.
+	Update(ctx context.Context, order *domain.Order) (*domain.Order, error)
+
 	// FindByID returns one order, or ErrOrderNotFound.
 	FindByID(ctx context.Context, id domain.OrderID) (*domain.Order, error)
+
+	// FindByIDForUpdate is FindByID holding the row until the surrounding
+	// transaction ends, and it is only meaningful inside one.
+	//
+	// Advancing an order reads it and then writes it. Locking the row makes
+	// Postgres order the writers that meet — a payment's outcome and a saga
+	// timeout both decide what becomes of one order — so the second reads the
+	// first one's outcome rather than racing it to a version number.
+	FindByIDForUpdate(ctx context.Context, id domain.OrderID) (*domain.Order, error)
 
 	// List pages through one customer's orders, newest first.
 	List(ctx context.Context, filter OrderFilter) ([]*domain.Order, error)

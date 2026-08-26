@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"go.uber.org/zap"
@@ -56,27 +57,70 @@ func run() error {
 		return err
 	}
 
-	consumer, err := kafkax.NewConsumer(cfg.Kafka.Brokers, cfg.Consumer, dlq,
-		kafkax.WithRegisterer(obs.Registry()),
-	)
-	if err != nil {
-		return err
+	handlers := bootstrap.NewCheckoutSagaConsumers(pool, inventoryConn)
+
+	// Two subscriptions in one process, because a kafkax.Consumer reads one
+	// topic and this service reads two. One process rather than two
+	// Deployments because they are two halves of one saga driving one use
+	// case: the reason a background loop gets a workload of its own is that a
+	// goroutine per replica multiplies the work, and a consumer group does not
+	// — Kafka assigns each partition to exactly one member.
+	subscriptions := []struct {
+		name    string
+		cfg     kafkax.ConsumerConfig
+		handler kafkax.Handler
+	}{
+		{"order-events", cfg.Consumer, handlers.OrderEvents.Handle},
+		{"payment-events", cfg.PaymentConsumer, handlers.PaymentEvents.Handle},
 	}
 
-	handler := bootstrap.NewCheckoutSagaConsumer(pool, inventoryConn)
+	ctx = logger.Into(ctx, log)
 
-	log.Info("consumer started",
-		zap.Strings("brokers", cfg.Kafka.Brokers),
-		zap.String("topic", cfg.Consumer.Topic),
-		zap.String("group_id", cfg.Consumer.GroupID),
+	var (
+		wg        sync.WaitGroup
+		runErrs   = make([]error, len(subscriptions))
+		consumers = make([]*kafkax.Consumer, 0, len(subscriptions))
 	)
 
-	runErr := consumer.Run(logger.Into(ctx, log), handler.Handle)
+	for i, subscription := range subscriptions {
+		consumer, err := kafkax.NewConsumer(cfg.Kafka.Brokers, subscription.cfg, dlq,
+			kafkax.WithRegisterer(obs.Registry()),
+		)
+		if err != nil {
+			return err
+		}
+
+		consumers = append(consumers, consumer)
+
+		log.Info("consumer started",
+			zap.String("subscription", subscription.name),
+			zap.Strings("brokers", cfg.Kafka.Brokers),
+			zap.String("topic", subscription.cfg.Topic),
+			zap.String("group_id", subscription.cfg.GroupID),
+		)
+
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			runErrs[i] = consumer.Run(ctx, subscription.handler)
+		}()
+	}
+
+	// Both stop on the same cancelled context, so this returns when the last
+	// in-flight message has been handled rather than when the first consumer
+	// notices.
+	wg.Wait()
 
 	// Shut down in the reverse of the order things were built, and only after
-	// Run has returned — the pool and the connection have to outlive whatever
+	// both have returned — the pool and the connection have to outlive whatever
 	// was still in flight when ctx was cancelled.
-	closeErr := consumer.Close()
+	closeErrs := make([]error, 0, len(consumers))
+	for _, consumer := range consumers {
+		closeErrs = append(closeErrs, consumer.Close())
+	}
+
 	dlqCloseErr := dlq.Close()
 	pool.Close()
 	if connErr := inventoryConn.Close(); connErr != nil {
@@ -84,7 +128,12 @@ func run() error {
 	}
 	shutdownErr := obs.Shutdown(context.WithoutCancel(ctx))
 
-	if err := errors.Join(runErr, closeErr, dlqCloseErr, shutdownErr); err != nil {
+	if err := errors.Join(
+		errors.Join(runErrs...),
+		errors.Join(closeErrs...),
+		dlqCloseErr,
+		shutdownErr,
+	); err != nil {
 		return err
 	}
 

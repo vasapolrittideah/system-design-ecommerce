@@ -175,6 +175,74 @@ func (_c *MockOrderRepository_FindByID_Call) RunAndReturn(run func(ctx context.C
 	return _c
 }
 
+// FindByIDForUpdate provides a mock function for the type MockOrderRepository
+func (_mock *MockOrderRepository) FindByIDForUpdate(ctx context.Context, id domain.OrderID) (*domain.Order, error) {
+	ret := _mock.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindByIDForUpdate")
+	}
+
+	var r0 *domain.Order
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, domain.OrderID) (*domain.Order, error)); ok {
+		return returnFunc(ctx, id)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, domain.OrderID) *domain.Order); ok {
+		r0 = returnFunc(ctx, id)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*domain.Order)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, domain.OrderID) error); ok {
+		r1 = returnFunc(ctx, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockOrderRepository_FindByIDForUpdate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByIDForUpdate'
+type MockOrderRepository_FindByIDForUpdate_Call struct {
+	*mock.Call
+}
+
+// FindByIDForUpdate is a helper method to define mock.On call
+//   - ctx context.Context
+//   - id domain.OrderID
+func (_e *MockOrderRepository_Expecter) FindByIDForUpdate(ctx any, id any) *MockOrderRepository_FindByIDForUpdate_Call {
+	return &MockOrderRepository_FindByIDForUpdate_Call{Call: _e.mock.On("FindByIDForUpdate", ctx, id)}
+}
+
+func (_c *MockOrderRepository_FindByIDForUpdate_Call) Run(run func(ctx context.Context, id domain.OrderID)) *MockOrderRepository_FindByIDForUpdate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 domain.OrderID
+		if args[1] != nil {
+			arg1 = args[1].(domain.OrderID)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockOrderRepository_FindByIDForUpdate_Call) Return(order *domain.Order, err error) *MockOrderRepository_FindByIDForUpdate_Call {
+	_c.Call.Return(order, err)
+	return _c
+}
+
+func (_c *MockOrderRepository_FindByIDForUpdate_Call) RunAndReturn(run func(ctx context.Context, id domain.OrderID) (*domain.Order, error)) *MockOrderRepository_FindByIDForUpdate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // List provides a mock function for the type MockOrderRepository
 func (_mock *MockOrderRepository) List(ctx context.Context, filter out.OrderFilter) ([]*domain.Order, error) {
 	ret := _mock.Called(ctx, filter)
@@ -239,6 +307,74 @@ func (_c *MockOrderRepository_List_Call) Return(orders []*domain.Order, err erro
 }
 
 func (_c *MockOrderRepository_List_Call) RunAndReturn(run func(ctx context.Context, filter out.OrderFilter) ([]*domain.Order, error)) *MockOrderRepository_List_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Update provides a mock function for the type MockOrderRepository
+func (_mock *MockOrderRepository) Update(ctx context.Context, order *domain.Order) (*domain.Order, error) {
+	ret := _mock.Called(ctx, order)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Update")
+	}
+
+	var r0 *domain.Order
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *domain.Order) (*domain.Order, error)); ok {
+		return returnFunc(ctx, order)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *domain.Order) *domain.Order); ok {
+		r0 = returnFunc(ctx, order)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*domain.Order)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *domain.Order) error); ok {
+		r1 = returnFunc(ctx, order)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockOrderRepository_Update_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Update'
+type MockOrderRepository_Update_Call struct {
+	*mock.Call
+}
+
+// Update is a helper method to define mock.On call
+//   - ctx context.Context
+//   - order *domain.Order
+func (_e *MockOrderRepository_Expecter) Update(ctx any, order any) *MockOrderRepository_Update_Call {
+	return &MockOrderRepository_Update_Call{Call: _e.mock.On("Update", ctx, order)}
+}
+
+func (_c *MockOrderRepository_Update_Call) Run(run func(ctx context.Context, order *domain.Order)) *MockOrderRepository_Update_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *domain.Order
+		if args[1] != nil {
+			arg1 = args[1].(*domain.Order)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockOrderRepository_Update_Call) Return(order1 *domain.Order, err error) *MockOrderRepository_Update_Call {
+	_c.Call.Return(order1, err)
+	return _c
+}
+
+func (_c *MockOrderRepository_Update_Call) RunAndReturn(run func(ctx context.Context, order *domain.Order) (*domain.Order, error)) *MockOrderRepository_Update_Call {
 	_c.Call.Return(run)
 	return _c
 }

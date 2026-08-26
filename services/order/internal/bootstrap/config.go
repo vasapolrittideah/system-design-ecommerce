@@ -66,6 +66,12 @@ type WorkerConfig struct {
 	// Kafka is also the producer settings for this process's own DLQ writes:
 	// a dead letter is a message like any other, published with the same
 	// guarantee the outbox relay publishes with.
-	Kafka    kafkax.PublisherConfig `envPrefix:"KAFKA_"`
-	Consumer kafkax.ConsumerConfig  `envPrefix:"KAFKA_CONSUMER_"`
+	Kafka kafkax.PublisherConfig `envPrefix:"KAFKA_"`
+
+	// Two subscriptions, because a consumer reads one topic. Separate group
+	// ids as well as separate topics: the group is half the key in
+	// processed_events, so one shared id would let a delivery from one topic
+	// mask a delivery from the other that happened to carry the same event id.
+	Consumer        kafkax.ConsumerConfig `envPrefix:"KAFKA_CONSUMER_"`
+	PaymentConsumer kafkax.ConsumerConfig `envPrefix:"KAFKA_PAYMENT_CONSUMER_"`
 }

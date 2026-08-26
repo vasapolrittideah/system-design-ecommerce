@@ -45,18 +45,37 @@ func NewOrderHandler(pool *pgxpool.Pool, conns Conns) orderv1.OrderServiceServer
 	return grpcadapter.NewOrderHandler(app.NewOrderService(orders, idem, inventory, catalog, tx))
 }
 
-// NewCheckoutSagaConsumer assembles this service's own consumer of its order
-// events and returns the handler cmd/worker hands to a kafkax.Consumer.
+// Consumers are the two subscriptions cmd/worker runs, each handed to a
+// kafkax.Consumer of its own because a consumer reads one topic.
 //
-// It dials no catalog connection: unlike NewOrderHandler, nothing behind this
-// path prices a cart.
-func NewCheckoutSagaConsumer(pool *pgxpool.Pool, inventoryConn *grpc.ClientConn) *kafkaadapter.OrderEventsConsumer {
+// They are two views onto one saga rather than two sagas: the same
+// CheckoutSagaService is behind both, which is what keeps the whole sequence
+// readable in one file instead of spread across the processes that trigger it.
+type Consumers struct {
+	// OrderEvents is this service reading back what it published, to make the
+	// call to inventory that an order's own outcome triggers.
+	OrderEvents *kafkaadapter.OrderEventsConsumer
+
+	// PaymentEvents is the payment service telling this one what became of the
+	// money, which is what moves the order's state machine.
+	PaymentEvents *kafkaadapter.PaymentEventsConsumer
+}
+
+// NewCheckoutSagaConsumers assembles both of this service's subscriptions.
+//
+// It dials no catalog connection: unlike NewOrderHandler, nothing behind these
+// paths prices a cart.
+func NewCheckoutSagaConsumers(pool *pgxpool.Pool, inventoryConn *grpc.ClientConn) Consumers {
+	orders := postgres.NewOrderRepository(pool)
 	inboxStore := postgres.NewInboxStore(pool)
 	tx := txmanager.New(pool)
 
 	inventory := grpcclient.NewInventoryGateway(inventoryv1.NewInventoryServiceClient(inventoryConn))
 
-	saga := app.NewCheckoutSagaService(inboxStore, inventory, tx)
+	saga := app.NewCheckoutSagaService(orders, inboxStore, inventory, tx)
 
-	return kafkaadapter.NewOrderEventsConsumer(saga)
+	return Consumers{
+		OrderEvents:   kafkaadapter.NewOrderEventsConsumer(saga),
+		PaymentEvents: kafkaadapter.NewPaymentEventsConsumer(saga),
+	}
 }

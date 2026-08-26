@@ -6,12 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/proto"
 
 	eventsv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/events/v1"
+	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/postgres/postgrestest"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/txmanager"
 	adapter "github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/out/postgres"
@@ -327,5 +330,290 @@ func TestListPagesWithoutRepeatingOrSkipping(t *testing.T) {
 
 	if len(seen) != total {
 		t.Errorf("paging returned %d of %d orders", len(seen), total)
+	}
+}
+
+func TestUpdateMovesTheOrderAndBumpsTheVersion(t *testing.T) {
+	ctx := context.Background()
+	_, orders, _ := setup(t)
+
+	created, err := orders.Create(ctx, newOrder(t, userID, reservationID))
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+
+	if _, err := created.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid() error = %v, want nil", err)
+	}
+
+	paid, err := orders.Update(ctx, created)
+	if err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+
+	if paid.Status() != domain.StatusPaid {
+		t.Errorf("status = %q, want %q", paid.Status(), domain.StatusPaid)
+	}
+	if paid.Version() != 2 {
+		t.Errorf("version = %d, want 2", paid.Version())
+	}
+	// The lines come back with it. They are never modified — changing what was
+	// bought would change what the customer agreed to — but an order without
+	// them is not an order any caller can use.
+	if len(paid.Lines()) != 1 {
+		t.Errorf("got %d lines, want the order's own 1", len(paid.Lines()))
+	}
+}
+
+func TestUpdateAnnouncesTheTransition(t *testing.T) {
+	ctx := context.Background()
+	pool, orders, _ := setup(t)
+
+	created, err := orders.Create(ctx, newOrder(t, userID, reservationID))
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+	if _, err := created.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid() error = %v, want nil", err)
+	}
+	if _, err := orders.Update(ctx, created); err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+
+	var (
+		eventType string
+		payload   []byte
+	)
+	row := `SELECT event_type, payload FROM outbox ORDER BY id DESC LIMIT 1`
+	if err := pool.QueryRow(ctx, row).Scan(&eventType, &payload); err != nil {
+		t.Fatalf("read the outbox row: %v", err)
+	}
+
+	if eventType != "OrderPaid" {
+		t.Fatalf("event type = %q, want %q", eventType, "OrderPaid")
+	}
+
+	var envelope eventsv1.EventEnvelope
+	if err := proto.Unmarshal(payload, &envelope); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+
+	var paid eventsv1.OrderPaid
+	if err := envelope.GetPayload().UnmarshalTo(&paid); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	// This service consumes OrderPaid back to commit the hold, so the
+	// reservation has to travel with it.
+	if paid.GetReservationId() != reservationID.String() {
+		t.Errorf("event reservation = %q, want %q", paid.GetReservationId(), reservationID)
+	}
+}
+
+// The loser of a concurrent transition finds out rather than believing it
+// wrote. FOR UPDATE is what usually prevents the race; this is the backstop
+// behind it.
+func TestUpdateRefusesAStaleVersion(t *testing.T) {
+	ctx := context.Background()
+	_, orders, _ := setup(t)
+
+	created, err := orders.Create(ctx, newOrder(t, userID, reservationID))
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+
+	stale, err := orders.FindByID(ctx, created.ID())
+	if err != nil {
+		t.Fatalf("FindByID() error = %v, want nil", err)
+	}
+
+	if _, err := created.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid() error = %v, want nil", err)
+	}
+	if _, err := orders.Update(ctx, created); err != nil {
+		t.Fatalf("first Update() error = %v, want nil", err)
+	}
+
+	// stale still carries version 1, which no row has any more.
+	if _, err := stale.Cancel(); err != nil {
+		t.Fatalf("Cancel() error = %v, want nil", err)
+	}
+
+	_, err = orders.Update(ctx, stale)
+	if errorx.KindOf(err) != errorx.KindConflict {
+		t.Fatalf("second Update() error kind = %v, want %v", errorx.KindOf(err), errorx.KindConflict)
+	}
+}
+
+// A rolled-back transition announces nothing. Without this the outbox would be
+// telling inventory to sell stock for an order that is still pending.
+func TestUpdateRollsTheEventBackWithTheTransition(t *testing.T) {
+	ctx := context.Background()
+	pool, orders, _ := setup(t)
+
+	created, err := orders.Create(ctx, newOrder(t, userID, reservationID))
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+	if _, err := created.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid() error = %v, want nil", err)
+	}
+
+	before := countOutbox(t, ctx, pool)
+	wantErr := errors.New("something after the write failed")
+
+	err = txmanager.New(pool).Do(ctx, func(ctx context.Context) error {
+		if _, err := orders.Update(ctx, created); err != nil {
+			return err
+		}
+
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Do() error = %v, want %v", err, wantErr)
+	}
+
+	if got := countOutbox(t, ctx, pool); got != before {
+		t.Errorf("outbox has %d rows, want the %d it had before the rollback", got, before)
+	}
+
+	back, err := orders.FindByID(ctx, created.ID())
+	if err != nil {
+		t.Fatalf("FindByID() error = %v, want nil", err)
+	}
+	if back.Status() != domain.StatusPendingPayment {
+		t.Errorf("status = %q, want the transition rolled back to %q", back.Status(), domain.StatusPendingPayment)
+	}
+}
+
+func TestFindByIDForUpdateReturnsTheOrderWithItsLines(t *testing.T) {
+	ctx := context.Background()
+	pool, orders, _ := setup(t)
+
+	created, err := orders.Create(ctx, newOrder(t, userID, reservationID))
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+
+	// FOR UPDATE only means anything inside a transaction, which is also the
+	// only place the saga calls it from.
+	err = txmanager.New(pool).Do(ctx, func(ctx context.Context) error {
+		locked, err := orders.FindByIDForUpdate(ctx, created.ID())
+		if err != nil {
+			return err
+		}
+
+		if locked.ID() != created.ID() || locked.Status() != domain.StatusPendingPayment {
+			t.Errorf("locked order = %s / %q, want the created one", locked.ID(), locked.Status())
+		}
+		if len(locked.Lines()) != 1 {
+			t.Errorf("got %d lines, want 1", len(locked.Lines()))
+		}
+		// Loaded from storage, so it carries none of the events its creation
+		// raised — the transition about to be made is the only thing that will.
+		if pulled := locked.PullEvents(); len(pulled) != 0 {
+			t.Errorf("PullEvents() returned %d events, want 0", len(pulled))
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Do() error = %v, want nil", err)
+	}
+}
+
+func TestFindByIDForUpdateReportsAnOrderNobodyHas(t *testing.T) {
+	ctx := context.Background()
+	pool, orders, _ := setup(t)
+
+	err := txmanager.New(pool).Do(ctx, func(ctx context.Context) error {
+		_, err := orders.FindByIDForUpdate(ctx, domain.NewOrderID())
+
+		return err
+	})
+	if !errors.Is(err, domain.ErrOrderNotFound) {
+		t.Fatalf("FindByIDForUpdate() error = %v, want %v", err, domain.ErrOrderNotFound)
+	}
+}
+
+// One writer holds the row and the other waits for it, which is what makes the
+// second read the first one's outcome instead of racing it. Without FOR UPDATE
+// both would read pending_payment and the loser's UPDATE would match zero rows.
+func TestFindByIDForUpdateSerialisesTwoWriters(t *testing.T) {
+	ctx := context.Background()
+	pool, orders, _ := setup(t)
+
+	created, err := orders.Create(ctx, newOrder(t, userID, reservationID))
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+
+	tx := txmanager.New(pool)
+	held := make(chan struct{})
+	released := make(chan struct{})
+	second := make(chan domain.Status, 1)
+
+	// Released on every exit, including a failure. t.Fatalf ends this
+	// goroutine through runtime.Goexit, which runs deferred calls — without
+	// one here a failing assertion would leave the first transaction holding
+	// its lock forever, and the test would hang instead of reporting.
+	var once sync.Once
+	release := func() { once.Do(func() { close(released) }) }
+
+	defer release()
+
+	go func() {
+		_ = tx.Do(ctx, func(ctx context.Context) error {
+			order, err := orders.FindByIDForUpdate(ctx, created.ID())
+			if err != nil {
+				return err
+			}
+			if _, err := order.MarkPaid(); err != nil {
+				return err
+			}
+			if _, err := orders.Update(ctx, order); err != nil {
+				return err
+			}
+
+			// The row is locked and written but not yet committed. The reader
+			// below is now blocked on it.
+			close(held)
+			<-released
+
+			return nil
+		})
+	}()
+
+	<-held
+
+	go func() {
+		_ = tx.Do(ctx, func(ctx context.Context) error {
+			order, err := orders.FindByIDForUpdate(ctx, created.ID())
+			if err != nil {
+				return err
+			}
+
+			second <- order.Status()
+
+			return nil
+		})
+	}()
+
+	// Give the second writer long enough to have read, if it were going to.
+	select {
+	case status := <-second:
+		t.Fatalf("the second reader saw %q while the first still held the row, want it blocked", status)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	release()
+
+	select {
+	case status := <-second:
+		if status != domain.StatusPaid {
+			t.Errorf("the second reader saw %q, want the first writer's %q", status, domain.StatusPaid)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second reader never unblocked")
 	}
 }

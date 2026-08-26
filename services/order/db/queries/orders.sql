@@ -13,6 +13,18 @@ RETURNING *;
 -- name: GetOrder :one
 SELECT * FROM orders WHERE id = $1;
 
+-- name: GetOrderForUpdate :one
+-- Advancing an order reads it and then writes it, and the writers that meet
+-- here are ordinary rather than rare: a payment's outcome and a saga timeout
+-- can both decide what becomes of one order. FOR UPDATE makes Postgres order
+-- them, so the second reads the first one's outcome instead of racing it to a
+-- version number and losing.
+--
+-- The lines are not locked with it. They are written once with the order and
+-- never modified, so there is nothing about them for two writers to disagree
+-- over.
+SELECT * FROM orders WHERE id = $1 FOR UPDATE;
+
 -- name: GetOrderLines :many
 -- Ordered by SKU rather than by insertion, so an order reads the same way
 -- every time it is loaded and a test can compare two loads without sorting.

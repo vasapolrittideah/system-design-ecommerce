@@ -19,11 +19,17 @@ import (
 // .mockery.yml generates one for a driving port, which only ever has one real
 // caller — the adapter that drives it — and here that caller is this test.
 type fakeSaga struct {
-	paid      in.OrderPaidEvent
-	cancelled in.OrderCancelledEvent
-	commits   int
-	releases  int
-	returns   error
+	// What the two subscriptions handed over, kept apart so a test can assert
+	// that the right one was driven.
+	paid          in.OrderPaidEvent
+	cancelled     in.OrderCancelledEvent
+	paidByPayment in.PaymentSucceededEvent
+
+	commits  int
+	releases int
+	marks    int
+
+	returns error
 }
 
 func (f *fakeSaga) CommitReservation(_ context.Context, event in.OrderPaidEvent) error {
@@ -36,6 +42,13 @@ func (f *fakeSaga) CommitReservation(_ context.Context, event in.OrderPaidEvent)
 func (f *fakeSaga) ReleaseReservation(_ context.Context, event in.OrderCancelledEvent) error {
 	f.cancelled = event
 	f.releases++
+
+	return f.returns
+}
+
+func (f *fakeSaga) MarkPaid(_ context.Context, event in.PaymentSucceededEvent) error {
+	f.paidByPayment = event
+	f.marks++
 
 	return f.returns
 }

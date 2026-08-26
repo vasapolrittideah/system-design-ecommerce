@@ -30,6 +30,16 @@ type Querier interface {
 	DeleteExpiredIdempotencyKeys(ctx context.Context, createdAt time.Time) (int64, error)
 	GetIdempotencyKey(ctx context.Context, arg GetIdempotencyKeyParams) (IdempotencyKey, error)
 	GetOrder(ctx context.Context, id uuid.UUID) (Order, error)
+	// Advancing an order reads it and then writes it, and the writers that meet
+	// here are ordinary rather than rare: a payment's outcome and a saga timeout
+	// can both decide what becomes of one order. FOR UPDATE makes Postgres order
+	// them, so the second reads the first one's outcome instead of racing it to a
+	// version number and losing.
+	//
+	// The lines are not locked with it. They are written once with the order and
+	// never modified, so there is nothing about them for two writers to disagree
+	// over.
+	GetOrderForUpdate(ctx context.Context, id uuid.UUID) (Order, error)
 	// Ordered by SKU rather than by insertion, so an order reads the same way
 	// every time it is loaded and a test can compare two loads without sorting.
 	GetOrderLines(ctx context.Context, orderID uuid.UUID) ([]OrderLine, error)

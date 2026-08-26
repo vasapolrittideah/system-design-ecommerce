@@ -111,6 +111,36 @@ func (q *Queries) GetOrder(ctx context.Context, id uuid.UUID) (Order, error) {
 	return i, err
 }
 
+const getOrderForUpdate = `-- name: GetOrderForUpdate :one
+SELECT id, user_id, status, total_amount_minor, total_currency, reservation_id, created_at, updated_at, version FROM orders WHERE id = $1 FOR UPDATE
+`
+
+// Advancing an order reads it and then writes it, and the writers that meet
+// here are ordinary rather than rare: a payment's outcome and a saga timeout
+// can both decide what becomes of one order. FOR UPDATE makes Postgres order
+// them, so the second reads the first one's outcome instead of racing it to a
+// version number and losing.
+//
+// The lines are not locked with it. They are written once with the order and
+// never modified, so there is nothing about them for two writers to disagree
+// over.
+func (q *Queries) GetOrderForUpdate(ctx context.Context, id uuid.UUID) (Order, error) {
+	row := q.db.QueryRow(ctx, getOrderForUpdate, id)
+	var i Order
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Status,
+		&i.TotalAmountMinor,
+		&i.TotalCurrency,
+		&i.ReservationID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
 const getOrderLines = `-- name: GetOrderLines :many
 SELECT id, order_id, sku, quantity, unit_price_amount_minor, unit_price_currency, created_at FROM order_lines WHERE order_id = $1 ORDER BY sku
 `
