@@ -26,3 +26,7 @@ packages:
   github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/port/out:
     config:
       all: true
+
+  github.com/vasapolrittideah/system-design-ecommerce/services/payment/internal/port/out:
+    config:
+      all: true
