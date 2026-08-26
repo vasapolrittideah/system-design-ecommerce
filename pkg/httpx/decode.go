@@ -63,6 +63,38 @@ func (v *Validator) Bind(r *http.Request, dst any) error {
 	return v.Struct(r.Context(), dst)
 }
 
+// ReadBody returns the request body exactly as it arrived, capped at
+// [MaxBodyBytes].
+//
+// For the one kind of request whose bytes are the point rather than their
+// shape: a provider signs its webhook over precisely what it sent, so a body
+// that has been decoded and re-encoded no longer verifies — a different key
+// order is enough — and whatever forwards one has to pass the original through.
+//
+// It validates nothing beyond the size and the content type. What the body
+// means belongs to whoever holds the signing secret, which is never this tier.
+func ReadBody(r *http.Request) ([]byte, error) {
+	if err := requireJSON(r); err != nil {
+		return nil, err
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, MaxBodyBytes))
+	if err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			return nil, errBodyTooLarge
+		}
+
+		return nil, errorx.Wrap(err, errorx.KindInvalidInput, "read request body").
+			WithReason("MALFORMED_JSON")
+	}
+
+	if len(body) == 0 {
+		return nil, errEmptyBody
+	}
+
+	return body, nil
+}
+
 func decode(r *http.Request, dst any) error {
 	if err := requireJSON(r); err != nil {
 		return err
