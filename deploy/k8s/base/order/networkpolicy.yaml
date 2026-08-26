@@ -22,13 +22,22 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # gRPC, from the BFF and from nothing else. Kong is deliberately absent:
+    # gRPC, from the BFF and from payment. Kong is deliberately absent:
     # north-south traffic terminates at bff-web, and a gateway that could reach
     # a service directly is the shape this rule exists to prevent.
+    #
+    # payment reads an order before it asks anybody for money, to learn what it
+    # costs and whether it may still be paid for. Its own egress list names
+    # this service; both halves have to exist or the call is refused by the
+    # side that did not get written — which arrives as `connection refused` and
+    # reads as order being down.
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bff-web
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: payment
       ports:
         - protocol: TCP
           port: 50051
