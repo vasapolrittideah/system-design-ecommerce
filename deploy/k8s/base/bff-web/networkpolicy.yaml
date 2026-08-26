@@ -38,6 +38,12 @@ spec:
       ports:
         - protocol: TCP
           port: 9090
+    # The ingress list has one more entry than this file holds. The local
+    # overlay's stand-in payment provider posts its webhooks here, and the rule
+    # admitting it lives in that component rather than in base: it describes a
+    # workload no other cluster runs, and it is removed the moment the fake is.
+    # A real provider needs nothing here at all — it arrives through Kong like
+    # every other request from outside.
   egress:
     - to:
         - namespaceSelector:
@@ -76,6 +82,13 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: order
+      ports:
+        - protocol: TCP
+          port: 50051
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: payment
       ports:
         - protocol: TCP
           port: 50051

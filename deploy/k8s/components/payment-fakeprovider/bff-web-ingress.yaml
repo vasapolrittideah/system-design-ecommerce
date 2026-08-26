@@ -1,0 +1,34 @@
+# The one hole the fake provider needs on the other side of its webhook.
+#
+# bff-web's own policy admits Kong and nothing else, which is right for every
+# cluster: a real provider's callback arrives from the internet and comes
+# through the gateway like any other request. This one does not — it is a pod in
+# the namespace — so it needs a rule, and the rule belongs here rather than in
+# base for the reason the Deployment does. It describes a workload no other
+# cluster runs, and including this component is what creates it; leaving the
+# component out leaves bff-web reachable from the gateway alone.
+#
+# NetworkPolicies selecting the same pods are additive, so this adds to
+# bff-web's ingress list without restating it. It deliberately does not touch
+# egress: what bff-web may reach is the same everywhere, and a policy here that
+# named an egress rule would be a second, partial answer to a question base
+# already answers in full.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-fakeprovider-to-bff-web
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bff-web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: payment-fakeprovider
+      ports:
+        - protocol: TCP
+          port: 8080
