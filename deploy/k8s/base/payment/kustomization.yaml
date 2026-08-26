@@ -1,0 +1,52 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# No namespace here on purpose: base describes the service, an overlay decides
+# where it lands. Same for the image tag — kustomize rewrites it per overlay.
+
+resources:
+  - deployment.yaml
+  - outboxrelay-deployment.yaml
+  - service.yaml
+  - migration-job.yaml
+  - hpa.yaml
+  - networkpolicy.yaml
+
+# includeSelectors stays off: every selector in this directory is written by
+# hand, and a transformer that edits a Job's auto-generated selector produces
+# an immutable-field error on the second apply.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/name: payment
+      app.kubernetes.io/part-of: ecommerce
+
+# A generator so the values live in a readable .env file rather than inline
+# YAML, but with a fixed name.
+#
+# The content hash kustomize would otherwise append does roll the Deployment on
+# a change, which is the behaviour we want — but it gets there by creating a
+# new object every time and orphaning the last one. Nothing deletes those, so a
+# rotated signing key leaves the previous key sitting in the cluster forever,
+# readable by anything that can read Secrets. That is the wrong shape of
+# solution to keep, and it is also not the shape production has: an External
+# Secrets operator writes one Secret under one name.
+#
+# So the name is fixed and the rollout comes from the Reloader annotation on
+# the Deployment instead. The trade is real and worth stating: kubectl apply
+# rolls a renamed object all by itself, whereas this depends on a running
+# operator — which is why `make deploy` refuses to run when Reloader is not
+# ready.
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: payment-config
+    envs:
+      - config.env
+
+images:
+  - name: ecommerce/payment
+    newTag: dev
+  - name: ecommerce/payment-migrate
+    newTag: dev

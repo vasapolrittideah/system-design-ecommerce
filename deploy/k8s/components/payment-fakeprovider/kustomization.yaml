@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# A payment provider that can be made to misbehave, for a cluster that has no
+# real one to sign with.
+#
+# A component rather than part of base, and included by the local overlay
+# alone: it is a stand-in, and a deployment that has signed with a provider
+# points PAYMENT_PROVIDER_BASE_URL at that provider instead and includes
+# nothing from here. Which provider a cluster talks to is therefore a value
+# rather than a branch — there is no `if env == "local"` anywhere in the Go.
+#
+# It runs the same image as the service, picking a different binary. Building a
+# separate one would let the fake be built from a commit the service was not,
+# which is the one way a stand-in can start lying about the API it stands in
+# for.
+resources:
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml

@@ -1,0 +1,14 @@
+# An ordinary ClusterIP, unlike every other Service here: this one carries HTTP
+# rather than gRPC, and there is exactly one replica behind it, so neither
+# reason for a headless Service applies.
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-fakeprovider
+spec:
+  selector:
+    app.kubernetes.io/name: payment-fakeprovider
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

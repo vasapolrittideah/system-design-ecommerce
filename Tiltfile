@@ -458,6 +458,95 @@ k8s_resource(
 )
 
 # ------------------------------------------------------------------------------
+# payment
+#
+# The same shape again, with one workload no other service has: a stand-in
+# provider, running the same image and picking a different binary. It is what
+# makes an ambiguous timeout, a duplicated webhook, and a webhook that overtakes
+# its own response reproducible on a laptop — none of which a real provider's
+# sandbox will do on request.
+#
+# Which behaviour it takes is the last two digits of the amount, so clicking
+# through the storefront selects one by choosing what to buy. See
+# services/payment/cmd/fakeprovider for the table.
+# ------------------------------------------------------------------------------
+
+k8s_yaml(kustomize('deploy/k8s/overlays/local/payment'))
+
+k8s_resource(
+    'payment-postgres',
+    # 5436 on the host: 5432 through 5435 are taken. Five databases on a laptop
+    # is what "database per service" costs, and the port collision is where
+    # that keeps showing up.
+    port_forwards=[port_forward(5436, 5432, name='postgres')],
+    labels=['payment'],
+)
+
+docker_build(
+    'ecommerce/payment',
+    context='.',
+    dockerfile='services/payment/Dockerfile',
+    target='server',
+    build_args={'GOOSE_VERSION': 'v3.27.3'},
+    only=['go.mod', 'go.sum', 'pkg', 'gen', 'services/payment'],
+)
+
+docker_build(
+    'ecommerce/payment-migrate',
+    context='.',
+    dockerfile='services/payment/Dockerfile',
+    target='migrate',
+    build_args={'GOOSE_VERSION': 'v3.27.3'},
+    only=['go.mod', 'go.sum', 'pkg', 'gen', 'services/payment'],
+)
+
+k8s_resource(
+    'payment-migrate',
+    resource_deps=['payment-postgres'],
+    labels=['payment'],
+)
+
+k8s_resource(
+    'payment-fakeprovider',
+    # Before the service, because the service dials it on the first attempt
+    # rather than at startup — but a fresh cluster whose first click lands
+    # before this is Ready fails with PROVIDER_UNAVAILABLE, which reads as a
+    # bug in the code being edited.
+    #
+    # Port-forwarded so a charge can be inspected by hand: GET /v1/charges/{id}
+    # is how you find out what the provider thinks happened when the service
+    # and it disagree.
+    port_forwards=['8081:8080'],
+    labels=['payment'],
+)
+
+k8s_resource(
+    'payment',
+    # order has to be answering: an attempt reads what the order costs and
+    # whether it may still be paid for before anything is written, so a payment
+    # brought up against an order service that is not there fails every request
+    # for a reason unrelated to the code being edited.
+    resource_deps=['payment-migrate', 'reloader', 'order', 'payment-fakeprovider'],
+    port_forwards=[
+        '50055:50051',
+        '9100:9090',
+    ],
+    labels=['payment'],
+)
+
+k8s_resource(
+    'payment-outboxrelay',
+    # Nothing routes to it, so there is no gRPC port to forward. The admin one
+    # is here because a stalled relay is invisible everywhere else — and here
+    # it is more than a metric: the relay is what tells the order service the
+    # money arrived, so a relay that has stopped is a paid order that stays
+    # pending forever.
+    resource_deps=['payment-migrate', 'kafka-topics', 'reloader'],
+    port_forwards=['9101:9090'],
+    labels=['payment'],
+)
+
+# ------------------------------------------------------------------------------
 # bff-web
 #
 # No Postgres and no migration Job: the BFF has no database. Everything it

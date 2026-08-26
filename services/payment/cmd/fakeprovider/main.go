@@ -51,7 +51,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg := config.MustLoad[fakeprovider.Config](config.WithPrefix("FAKEPROVIDER_"))
+	cfg := config.MustLoad[fakeprovider.Config]()
 
 	log := logger.MustNew(cfg.Log)
 	defer func() { _ = logger.Sync(log) }()

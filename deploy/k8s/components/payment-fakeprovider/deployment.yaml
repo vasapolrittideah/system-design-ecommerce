@@ -1,0 +1,77 @@
+# The stand-in payment provider. Local only — see the component's kustomization.
+#
+# It keeps its charges in memory on purpose. Nothing depends on their
+# durability, and a restart losing them is indistinguishable from a provider
+# this system has never spoken to; giving it a database would make it a thing
+# to migrate.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-fakeprovider
+  annotations:
+    reloader.stakater.com/auto: "true"
+    # Alongside the service it stands in for. It is a dependency of payment's
+    # server, but not one worth an earlier wave: the server does not dial it at
+    # startup, and an attempt made in the seconds before it is up fails with a
+    # reason code rather than crash-looping.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # One replica, and no HPA. Two would each hold their own charges in their own
+  # memory, so the retry that is supposed to reach an existing charge would
+  # reach a replica that has never heard of it — which is the fake breaking the
+  # one guarantee it exists to provide.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payment-fakeprovider
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: payment-fakeprovider
+        app.kubernetes.io/part-of: ecommerce
+    spec:
+      # Long enough for a webhook still sleeping through its delay to be
+      # delivered. Cutting it short would cancel the behaviour this pod exists
+      # to produce, and it would look like a flaky test rather than a rollout.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fakeprovider
+          image: ecommerce/payment
+          imagePullPolicy: IfNotPresent
+          command: ["/app/fakeprovider"]
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            # The service's own ConfigMap and Secret, so the signing secret it
+            # signs with is by construction the one payment verifies with. Two
+            # values that have to match are one value or they are a bug waiting
+            # for somebody to rotate half of it.
+            - configMapRef:
+                name: payment-config
+            - secretRef:
+                name: payment-secret
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

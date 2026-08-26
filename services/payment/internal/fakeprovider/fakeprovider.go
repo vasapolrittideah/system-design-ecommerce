@@ -68,26 +68,34 @@ const (
 const behaviourModulus = 100
 
 // Config is what the fake reads from the environment.
+//
+// The variables are named in full rather than loaded under a prefix, because
+// one of them is deliberately not the fake's own: the signing secret is
+// PAYMENT_PROVIDER_SECRET, the same variable the payment service verifies
+// with. Two names for one value is how a webhook starts failing to verify
+// after somebody rotates half of it, with nothing reporting why.
 type Config struct {
 	Log logger.Config `envPrefix:"LOG_"`
 
-	Addr string `env:"ADDR" envDefault:":8080"`
+	Addr string `env:"FAKEPROVIDER_ADDR" envDefault:":8080"`
 
-	// CallbackURL is where webhooks are posted — the payment service's own
-	// endpoint, reached the way a real provider would reach it.
-	CallbackURL string `env:"CALLBACK_URL,required"`
+	// CallbackURL is where webhooks are posted. It is the BFF's callback
+	// endpoint rather than the payment service directly, because that is the
+	// path a real provider takes — one that reached the service would exercise
+	// a route no provider can use.
+	CallbackURL string `env:"FAKEPROVIDER_CALLBACK_URL,required"`
 
-	// Secret signs those webhooks, and has to be the one the payment service
-	// verifies with.
-	Secret config.Secret `env:"SECRET,required"`
+	// Secret signs those webhooks. See the note above on why this one name is
+	// the service's rather than this process's.
+	Secret config.Secret `env:"PAYMENT_PROVIDER_SECRET,required"`
 
 	// WebhookDelay is how long a deferred settlement waits, short enough that a
 	// person clicking through does not think it broke.
-	WebhookDelay time.Duration `env:"WEBHOOK_DELAY" envDefault:"2s"`
+	WebhookDelay time.Duration `env:"FAKEPROVIDER_WEBHOOK_DELAY" envDefault:"2s"`
 
 	// ShutdownTimeout has to outlast WebhookDelay, or a rollout cancels the
 	// very behaviour this exists to produce.
-	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"15s"`
+	ShutdownTimeout time.Duration `env:"FAKEPROVIDER_SHUTDOWN_TIMEOUT" envDefault:"15s"`
 }
 
 // charge is one row of the fake's memory.

@@ -75,12 +75,15 @@ spec:
               # order.events.v1.dlq is the one .dlq topic so far, because order
               # is the one service with a consumer: its own worker reads back
               # what it just published to commit a reservation, and a message
-              # that fails every retry lands here instead. identity has no
-              # consumer yet, so it has no dead letters to declare either.
+              # that fails every retry lands here instead. identity and payment
+              # both publish and consume nothing, so neither has dead letters
+              # to declare — payment.events.v1.dlq arrives the day something
+              # reads that topic, which on current plans is the order service.
               for spec in \
                 "ecommerce.identity.events.v1 6" \
                 "ecommerce.order.events.v1 6" \
-                "ecommerce.order.events.v1.dlq 6"
+                "ecommerce.order.events.v1.dlq 6" \
+                "ecommerce.payment.events.v1 6"
               do
                 set -- $spec
                 echo "declaring $1 with $2 partition(s)"

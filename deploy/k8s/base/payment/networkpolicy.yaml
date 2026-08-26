@@ -1,0 +1,123 @@
+# Who may reach payment, and what payment may reach.
+#
+# Ports are numeric rather than the names the Service and the scrape config use.
+# A NetworkPolicy may name a port, but the resolution is the CNI's to implement
+# and a rule the CNI silently ignores is a rule that is not there — the one
+# failure mode this whole file exists to remove.
+#
+# The migration Job's pods carry app.kubernetes.io/name: payment too, so they
+# are selected by everything here. That is why the Job needs no policy of its
+# own, and why the egress rule it depends on — the one reaching Postgres — is
+# in the local overlay beside the database it reaches.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payment
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # gRPC, from the BFF and from nothing else. Kong is deliberately absent:
+    # north-south traffic terminates at bff-web, and a gateway that could reach
+    # a service directly is the shape this rule exists to prevent.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bff-web
+      ports:
+        - protocol: TCP
+          port: 50051
+    # The admin port carries /metrics, /healthz, and /readyz. Only the scraper
+    # has a reason to reach it from another pod; the kubelet's probes come from
+    # the node, which is not a pod and not subject to this.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    # DNS, selected by the label the API server puts on every namespace rather
+    # than by kube-dns's ClusterIP, which differs per cluster. Forgetting this
+    # rule breaks name resolution rather than one dependency, so it reads as
+    # every dependency being down at once.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Spans, over OTLP/gRPC.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jaeger
+      ports:
+        - protocol: TCP
+          port: 4317
+    # The one service this service calls, to learn what an order costs and
+    # whether it may still be paid for. That is the whole of east-west traffic
+    # here, and Kong is deliberately absent from it: a gateway that could be
+    # reached from here would be a way to leave the cluster and come back in
+    # past everything it does.
+    #
+    # The name alone, without a component. Which of a service's workloads
+    # answers on 50051 is that service's business — order labels its server
+    # pods because it runs a relay and a worker beside them — and an egress
+    # rule that named the component would be a rule that breaks when the callee
+    # rearranges its workloads. The pods it additionally admits listen on
+    # nothing.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: order
+      ports:
+        - protocol: TCP
+          port: 50051
+    # The payment provider, which in every deployment but local is outside this
+    # cluster and is therefore not reachable through any rule here at all: an
+    # egress policy selects pods, and api.stripe.com is not one.
+    #
+    # This entry exists for the local overlay's stand-in, and it is written here
+    # rather than in that overlay because the alternative is a base whose pods
+    # cannot reach a dependency the base itself configures. A cluster that runs
+    # no fake provider matches nothing and loses nothing.
+    #
+    # Reaching a provider on the internet needs an egress rule this file
+    # deliberately does not have. Adding one means naming a CIDR, which is a
+    # decision about one deployment and belongs in its overlay.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: payment-fakeprovider
+      ports:
+        - protocol: TCP
+          port: 8080
+    # The broker, for the outbox relay's publishes. It wears
+    # app.kubernetes.io/name: payment like every other workload this service
+    # ships, so this rule reaches it without a policy of its own — and the
+    # server, which touches Kafka not at all, gains a route it never dials.
+    #
+    # There is no consumer here and no DLQ. This service publishes what
+    # happened and reads nothing back: what a payment means for an order is the
+    # order service's to decide.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka
+              app.kubernetes.io/component: broker
+      ports:
+        - protocol: TCP
+          port: 9092

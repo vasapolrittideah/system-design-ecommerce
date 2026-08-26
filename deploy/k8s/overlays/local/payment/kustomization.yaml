@@ -1,0 +1,65 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce
+
+resources:
+  - ../../../base/payment
+
+# The Postgres instance this service talks to locally, plus the policies that
+# keep it reachable by payment alone. Staging includes the same component; a
+# deploy whose database is managed elsewhere would include neither.
+components:
+  - ../../../components/payment-postgres
+  # The stand-in provider. Local alone includes it: a deployment that has
+  # signed with a real provider points PAYMENT_PROVIDER_BASE_URL at that one
+  # and includes nothing from here.
+  - ../../../components/payment-fakeprovider
+
+configMapGenerator:
+  - name: payment-config
+    behavior: merge
+    envs:
+      - config.env
+
+# Fixed name, matching the ConfigMap in base and for the same reason: a hashed
+# name creates a new object on every change and orphans the last one, with
+# nothing to clean them up. The Reloader annotation on the Deployment is what
+# restarts the pods instead.
+generatorOptions:
+  disableNameSuffixHash: true
+
+secretGenerator:
+  - name: payment-secret
+    literals:
+      # Read from here by both sides: the service connects with it, and
+      # postgres.yaml sets POSTGRES_PASSWORD from this same key, so the two
+      # cannot drift into a database nobody can log into. Local only — a real
+      # deployment takes it from External Secrets.
+      #
+      # Deliberately not the service name. Tilt redacts every Secret value from
+      # its logs, so a password of "payment" would blank that word out of
+      # every line naming the service, its image, or its Deployment.
+      - PAYMENT_DB_PASSWORD=insecure-local-only
+      # What the fake provider signs its webhooks with and what the service
+      # verifies them with — one variable, read by both processes out of this
+      # one Secret. The fake names it PAYMENT_PROVIDER_SECRET too rather than
+      # taking a name of its own, because two names for one value is how a
+      # webhook stops verifying after somebody rotates half of it.
+      - PAYMENT_PROVIDER_SECRET=insecure-local-only-webhook-secret
+
+patches:
+  - path: patch-hpa.yaml
+  - path: patch-deployment.yaml
+
+# The fake provider's image, stated here and not only in base.
+#
+# base/payment's images: transform reaches base's own resources, and the fake
+# arrives as a component listed by this overlay — so without this line it
+# renders as `ecommerce/payment` with no tag, the kubelet appends :latest, and
+# a tag nothing ever built is pulled forever. It fails as ImagePullBackOff on
+# one pod while the rest of the service comes up healthy, which reads as the
+# fake being broken rather than as untagged.
+images:
+  - name: ecommerce/payment
+    newTag: dev

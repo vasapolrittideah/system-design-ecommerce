@@ -1,0 +1,50 @@
+# The database half of payment's policy, here rather than in base for the same
+# reason postgres.yaml is: an overlay whose database is managed elsewhere
+# includes neither, and reaching that instance is an ipBlock rule rather than a
+# pod selector.
+#
+# Both directions are stated. The ingress rule is the one that carries the
+# architecture — "never query another service's tables", enforced by the side
+# that owns them, so a second service reaching for this database is refused by
+# the database's own policy and not by everyone remembering. The egress rule
+# only re-opens for payment what its base policy closed; without it the
+# service and the migration Job both start and then fail to connect.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payment-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    # The server and the migration Job, which share this label.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: payment
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-egress-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payment
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: payment-postgres
+      ports:
+        - protocol: TCP
+          port: 5432

@@ -1,0 +1,60 @@
+# Who may reach the fake provider, and what it may reach.
+#
+# It is the one workload here that legitimately calls *into* the system: a
+# webhook is a provider making a request, and this one has to reach whatever
+# forwards those to the payment service. That makes its egress list the thing
+# to read carefully — it is the shape a real provider's traffic would have if
+# the provider were inside the cluster, and the point of the fake is that it is
+# not a special case in any other way.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-fakeprovider
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payment-fakeprovider
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # The payment service alone. Nothing else has a reason to ask it for money,
+    # and the label covers the server and the migration Job both — the latter
+    # never dials it.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: payment
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Where webhooks go. bff-web is what a real provider would post to as well:
+    # it is the only thing in this system that speaks HTTP, and the callback
+    # endpoint it exposes forwards the raw body and its signature to payment
+    # over gRPC without interpreting either.
+    #
+    # Deliberately not payment:50051 directly. A fake that delivered its
+    # webhooks straight to the service would exercise a path no real provider
+    # can take, and the forwarding hop — the one that must not decode and
+    # re-encode the body — would never be tested at all.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bff-web
+      ports:
+        - protocol: TCP
+          port: 8080
