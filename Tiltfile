@@ -617,7 +617,13 @@ local_resource(
 local_resource(
     'sqlc',
     'make sqlc',
-    deps=['services/identity/db', 'services/catalog/db', 'services/inventory/db'],
+    deps=[
+        'services/identity/db',
+        'services/catalog/db',
+        'services/inventory/db',
+        'services/order/db',
+        'services/payment/db',
+    ],
     trigger_mode=TRIGGER_MODE_MANUAL,
     auto_init=False,
     labels=['generate'],
