@@ -197,6 +197,49 @@ groups:
           summary: "inventory's reservation reaper failed {{ $value }} sweeps in 10m"
           description: "Sweeps are rolled back, so nothing is lost — but held stock is not going back on the shelf, and every failure doubles the wait before the next attempt."
 
+  - name: order
+    rules:
+      # The same shape of failure as a stalled reaper, one service upstream and
+      # quieter again: the API answers, readiness stays green, and orders nobody
+      # paid for accumulate in pending_payment while inventory's own reaper
+      # quietly takes their stock back. The order rows are then stuck in that
+      # state forever, because nothing else in this system ever ends one.
+      - alert: OrderSagaTimeoutStalled
+        expr: |
+          sum(rate(order_saga_timeouts_total[30m])) == 0
+          and on() sum(increase(order_saga_timeouts_total[24h])) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "order has expired no stale orders for 30m"
+          description: "The second half of the expression is what keeps this quiet on a system with no traffic: it only fires where the sweep has done work in the last day and then stopped."
+
+      - alert: OrderSagaTimeoutSweepsFailing
+        expr: increase(order_saga_timeout_sweeps_failed_total[10m]) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "order's saga timeout worker failed {{ $value }} sweeps in 10m"
+          description: "Sweeps are rolled back, so nothing is lost — but orders nobody paid for are not being cancelled, and every failure doubles the wait before the next attempt."
+
+      # Not a stalled sweep but a working one with too much to do. A sustained
+      # rise means shoppers are reaching the payment screen and not finishing,
+      # which is a checkout or provider problem showing up here first — and
+      # every one of these is stock that was held and then given back.
+      - alert: OrderSagaTimeoutRateHigh
+        expr: |
+          sum(rate(order_saga_timeouts_total[15m]))
+          /
+          sum(rate(grpc_server_handled_total{grpc_service="ecommerce.order.v1.OrderService",grpc_method="Checkout"}[15m]))
+          > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "more than 20% of checkouts are timing out unpaid"
+          description: "Orders are being placed and then abandoned. Look at payment's provider before order: this metric moves for anything between the checkout screen and the money arriving."
+
   - name: logs
     rules:
       # Everything else in this file is inferred from a service's own metrics.

@@ -8,6 +8,7 @@ resources:
   - deployment.yaml
   - outboxrelay-deployment.yaml
   - worker-deployment.yaml
+  - timeout-deployment.yaml
   - service.yaml
   - migration-job.yaml
   - hpa.yaml

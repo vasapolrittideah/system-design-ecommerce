@@ -462,6 +462,20 @@ k8s_resource(
     labels=['order'],
 )
 
+k8s_resource(
+    'order-timeoutworker',
+    # The sweep that ends orders nobody paid for. It dials nothing — cancelling
+    # raises OrderCancelled and order-worker releases the hold — so its only
+    # dependency is the schema.
+    #
+    # Nothing routes to it, so there is no gRPC port to forward; the admin one
+    # is where order_saga_timeouts_total sitting at zero forever would show up,
+    # which is the only way a stalled sweep is visible at all.
+    resource_deps=['order-migrate', 'reloader'],
+    port_forwards=['9102:9090'],
+    labels=['order'],
+)
+
 # ------------------------------------------------------------------------------
 # payment
 #
