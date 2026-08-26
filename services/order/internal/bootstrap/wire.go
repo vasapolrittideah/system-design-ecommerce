@@ -1,7 +1,10 @@
 package bootstrap
 
 import (
+	"time"
+
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 
 	catalogv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/catalog/v1"
@@ -10,6 +13,7 @@ import (
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/txmanager"
 	grpcadapter "github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/in/grpc"
 	kafkaadapter "github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/in/kafka"
+	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/in/timeout"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/out/grpcclient"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/out/postgres"
 	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/app"
@@ -78,4 +82,21 @@ func NewCheckoutSagaConsumers(pool *pgxpool.Pool, inventoryConn *grpc.ClientConn
 		OrderEvents:   kafkaadapter.NewOrderEventsConsumer(saga),
 		PaymentEvents: kafkaadapter.NewPaymentEventsConsumer(saga),
 	}
+}
+
+// NewSagaTimeoutWorker assembles the sweep that ends orders nobody paid for and
+// returns the loop cmd/timeoutworker runs.
+//
+// It dials nothing. Cancelling an order raises OrderCancelled, and the
+// reservation is given back by the consumer that reads it — so this process
+// needs a database and a clock and no gateway at all.
+func NewSagaTimeoutWorker(pool *pgxpool.Pool, cfg TimeoutConfig, reg prometheus.Registerer) (*timeout.Worker, error) {
+	orders := postgres.NewOrderRepository(pool)
+	tx := txmanager.New(pool)
+
+	policy := app.Policy{PaymentWindow: cfg.PaymentWindow, Now: time.Now}
+
+	return timeout.New(app.NewSagaTimeoutService(orders, tx, policy), cfg.Timeout,
+		timeout.WithRegisterer(reg),
+	)
 }

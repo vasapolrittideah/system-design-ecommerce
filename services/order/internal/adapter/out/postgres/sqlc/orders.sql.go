@@ -7,10 +7,70 @@ package sqlc
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const claimStaleOrders = `-- name: ClaimStaleOrders :many
+SELECT id, user_id, status, total_amount_minor, total_currency, reservation_id, created_at, updated_at, version FROM orders
+WHERE status = 'pending_payment'
+  AND created_at <= $1
+ORDER BY created_at
+LIMIT $2
+FOR UPDATE SKIP LOCKED
+`
+
+type ClaimStaleOrdersParams struct {
+	CreatedBefore time.Time
+	RowLimit      int32
+}
+
+// What the timeout worker sweeps: orders nobody paid for in time.
+//
+// FOR UPDATE SKIP LOCKED rather than a plain SELECT, so that two workers — a
+// rolling restart is the ordinary case — divide the backlog instead of one
+// waiting behind the other. The same reason pkg/outbox's relay claims its rows
+// this way, and the rows stay locked until the transaction that cancels them
+// commits.
+//
+// The cut-off is a parameter rather than now() minus an interval, so a test can
+// sweep without waiting out a window, and so the deadline the domain judges by
+// is the one this statement selected on.
+//
+// Only pending_payment. A paid order is finished and a cancelled one already
+// gave its stock back; sweeping either would be this query re-deciding a
+// question the state machine has answered.
+func (q *Queries) ClaimStaleOrders(ctx context.Context, arg ClaimStaleOrdersParams) ([]Order, error) {
+	rows, err := q.db.Query(ctx, claimStaleOrders, arg.CreatedBefore, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Order{}
+	for rows.Next() {
+		var i Order
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Status,
+			&i.TotalAmountMinor,
+			&i.TotalCurrency,
+			&i.ReservationID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
 const createOrder = `-- name: CreateOrder :one
 INSERT INTO orders (

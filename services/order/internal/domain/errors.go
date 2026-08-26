@@ -67,6 +67,16 @@ var (
 		kind: "conflict",
 	}
 
+	// ErrOrderNotExpired refuses expiring an order whose payment window has not
+	// run out. It is what keeps a sweep whose predicate drifted from cancelling
+	// orders somebody is still paying for, and it is a conflict rather than an
+	// invalid input: the caller asked for something reasonable about a real
+	// order, and the answer is not yet.
+	ErrOrderNotExpired = &sentinelError{
+		msg:  "order's payment window has not run out",
+		kind: "conflict",
+	}
+
 	// ErrTotalOutOfRange refuses a total that does not fit in the column that
 	// stores it. Unreachable through the request bounds the contract declares,
 	// and kept because the alternative to a refusal is an amount that wrapped

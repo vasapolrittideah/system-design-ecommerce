@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -230,6 +231,53 @@ func (r *OrderRepository) List(ctx context.Context, filter out.OrderFilter) ([]*
 	lines, err := queries.GetOrderLinesByOrderIDs(ctx, ids)
 	if err != nil {
 		return nil, errorx.Wrap(err, errorx.KindInternal, "list order lines")
+	}
+
+	byOrder := make(map[uuid.UUID][]sqlc.OrderLine, len(rows))
+	for _, line := range lines {
+		byOrder[line.OrderID] = append(byOrder[line.OrderID], line)
+	}
+
+	orders := make([]*domain.Order, 0, len(rows))
+	for i := range rows {
+		orders = append(orders, toDomain(&rows[i], byOrder[rows[i].ID]))
+	}
+
+	return orders, nil
+}
+
+// ClaimStaleOrders claims orders nobody paid for in time.
+//
+// The lines come back with each one. They are not what the sweep judges, but an
+// aggregate rebuilt without them is one whose events would carry an empty
+// basket — and the same toDomain builds every order this package returns.
+func (r *OrderRepository) ClaimStaleOrders(
+	ctx context.Context,
+	createdBefore time.Time,
+	limit int,
+) ([]*domain.Order, error) {
+	queries := queriesFrom(ctx, r.pool)
+
+	rows, err := queries.ClaimStaleOrders(ctx, sqlc.ClaimStaleOrdersParams{
+		CreatedBefore: createdBefore,
+		RowLimit:      narrow(limit),
+	})
+	if err != nil {
+		return nil, errorx.Wrap(err, errorx.KindInternal, "claim stale orders")
+	}
+
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	ids := make([]uuid.UUID, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].ID)
+	}
+
+	lines, err := queries.GetOrderLinesByOrderIDs(ctx, ids)
+	if err != nil {
+		return nil, errorx.Wrap(err, errorx.KindInternal, "get the claimed orders' lines")
 	}
 
 	byOrder := make(map[uuid.UUID][]sqlc.OrderLine, len(rows))

@@ -23,6 +23,22 @@ type Querier interface {
 	// here until that transaction ends, and then either finds the committed claim
 	// or takes the key the rollback released.
 	ClaimIdempotencyKey(ctx context.Context, arg ClaimIdempotencyKeyParams) (IdempotencyKey, error)
+	// What the timeout worker sweeps: orders nobody paid for in time.
+	//
+	// FOR UPDATE SKIP LOCKED rather than a plain SELECT, so that two workers — a
+	// rolling restart is the ordinary case — divide the backlog instead of one
+	// waiting behind the other. The same reason pkg/outbox's relay claims its rows
+	// this way, and the rows stay locked until the transaction that cancels them
+	// commits.
+	//
+	// The cut-off is a parameter rather than now() minus an interval, so a test can
+	// sweep without waiting out a window, and so the deadline the domain judges by
+	// is the one this statement selected on.
+	//
+	// Only pending_payment. A paid order is finished and a cancelled one already
+	// gave its stock back; sweeping either would be this query re-deciding a
+	// question the state machine has answered.
+	ClaimStaleOrders(ctx context.Context, arg ClaimStaleOrdersParams) ([]Order, error)
 	CreateOrder(ctx context.Context, arg CreateOrderParams) (Order, error)
 	CreateOrderLine(ctx context.Context, arg CreateOrderLineParams) (OrderLine, error)
 	// The sweep. Kept 24h: long enough to outlive any retry a client is still

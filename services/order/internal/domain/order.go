@@ -268,6 +268,49 @@ func (o *Order) Cancel() (bool, error) {
 	return true, nil
 }
 
+// Expire ends an order that has waited longer than its payment window, raising
+// OrderCancelled exactly as Cancel does.
+//
+// A second method reaching the same state, and the difference is the guard.
+// Cancel ends an order because somebody decided to; this ends one because
+// nobody did anything, and it re-checks the deadline itself rather than
+// trusting whichever query selected it. The sweep's predicate and this one have
+// to agree, and the cheap way to guarantee that is for the aggregate to refuse
+// what it does not think is due.
+//
+// window is how long an order may wait to be paid for. It is a deployment's
+// number rather than the domain's, which is why it arrives as an argument — but
+// what it means is a rule about orders, and that lives here.
+//
+// The boundary is inclusive: at exactly created_at+window the sweep's own
+// predicate already selects this row, and the two must agree or an order is
+// claimed, refused, and claimed again on every pass.
+func (o *Order) Expire(now time.Time, window time.Duration) (bool, error) {
+	if window <= 0 {
+		return false, ValidationError{Field: "window", Message: "is not a positive duration"}
+	}
+
+	switch o.status {
+	case StatusCancelled:
+		return false, nil
+	case StatusPaid:
+		return false, ErrOrderPaid
+	}
+
+	if now.Before(o.createdAt.Add(window)) {
+		return false, ErrOrderNotExpired
+	}
+
+	o.status = StatusCancelled
+	o.events = append(o.events, OrderCancelled{
+		OrderID:       o.id,
+		UserID:        o.userID,
+		ReservationID: o.reservationID,
+	})
+
+	return true, nil
+}
+
 // PullEvents returns the events this instance has raised and forgets them, so a
 // repository that persists the same aggregate twice does not publish them twice.
 //

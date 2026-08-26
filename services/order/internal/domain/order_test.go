@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/domain"
 )
@@ -470,5 +471,157 @@ func mustCancel(t *testing.T, o *domain.Order) {
 
 	if _, err := o.Cancel(); err != nil {
 		t.Fatalf("Cancel() error = %v, want nil", err)
+	}
+}
+
+func TestExpire(t *testing.T) {
+	const window = 15 * time.Minute
+
+	// The order's created_at is the database's, so a test drives the clock
+	// instead: an order stored an hour ago is one whose window has run out.
+	stored := func(t *testing.T, createdAt time.Time) *domain.Order {
+		t.Helper()
+
+		return domain.ReconstituteOrder(domain.OrderSnapshot{
+			ID:            domain.NewOrderID(),
+			UserID:        userID,
+			Status:        domain.StatusPendingPayment,
+			Lines:         []domain.OrderLine{line(t, "SHIRT-BLUE-M", 2, thb(t, 49900))},
+			Total:         thb(t, 99800),
+			ReservationID: reservationID,
+			CreatedAt:     createdAt,
+			Version:       1,
+		})
+	}
+
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name      string
+		createdAt time.Time
+		setUp     func(*testing.T, *domain.Order)
+		want      bool
+		wantErr   error
+	}{
+		{
+			name:      "a window that has run out",
+			createdAt: now.Add(-window - time.Second),
+			want:      true,
+		},
+		{
+			// Inclusive, because the sweep's own predicate already selects this
+			// row at exactly this instant. Disagreeing would have an order
+			// claimed, refused, and claimed again on every pass.
+			name:      "exactly at the deadline",
+			createdAt: now.Add(-window),
+			want:      true,
+		},
+		{
+			name:      "still inside the window",
+			createdAt: now.Add(-window + time.Second),
+			wantErr:   domain.ErrOrderNotExpired,
+		},
+		{
+			name:      "an order already cancelled",
+			createdAt: now.Add(-window - time.Second),
+			setUp:     func(t *testing.T, o *domain.Order) { mustCancel(t, o) },
+			want:      false,
+		},
+		{
+			// The customer paid inside the window and the sweep is late. Ending
+			// the order now would be cancelling something the money is already
+			// in for.
+			name:      "an order paid before the sweep arrived",
+			createdAt: now.Add(-window - time.Second),
+			setUp:     func(t *testing.T, o *domain.Order) { mustMarkPaid(t, o) },
+			wantErr:   domain.ErrOrderPaid,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o := stored(t, tt.createdAt)
+			if tt.setUp != nil {
+				tt.setUp(t, o)
+			}
+			o.PullEvents()
+
+			moved, err := o.Expire(now, window)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Expire() error = %v, want %v", err, tt.wantErr)
+			}
+			if moved != tt.want {
+				t.Errorf("Expire() = %v, want %v", moved, tt.want)
+			}
+			if tt.wantErr == nil && o.Status() != domain.StatusCancelled {
+				t.Errorf("status = %q, want %q", o.Status(), domain.StatusCancelled)
+			}
+		})
+	}
+}
+
+// Expiring raises the same fact cancelling does, because it is the same fact:
+// the order is over and the stock is free again. Why it ended is not something
+// this event carries.
+func TestExpireRaisesOrderCancelled(t *testing.T) {
+	o := domain.ReconstituteOrder(domain.OrderSnapshot{
+		ID:            domain.NewOrderID(),
+		UserID:        userID,
+		Status:        domain.StatusPendingPayment,
+		Total:         thb(t, 99800),
+		ReservationID: reservationID,
+		CreatedAt:     time.Now().Add(-time.Hour),
+		Version:       1,
+	})
+
+	if _, err := o.Expire(time.Now(), time.Minute); err != nil {
+		t.Fatalf("Expire() error = %v, want nil", err)
+	}
+
+	pulled := o.PullEvents()
+	if len(pulled) != 1 {
+		t.Fatalf("PullEvents() returned %d events, want 1", len(pulled))
+	}
+
+	event, ok := pulled[0].(domain.OrderCancelled)
+	if !ok {
+		t.Fatalf("PullEvents() returned %T, want domain.OrderCancelled", pulled[0])
+	}
+	// The hold this names is what the compensating step gives back.
+	if event.ReservationID != reservationID {
+		t.Errorf("event reservation id = %q, want %q", event.ReservationID, reservationID)
+	}
+}
+
+// A refused expiry raises nothing, for the reason every refused transition
+// does: the order did not move.
+func TestExpireRaisesNothingWhenItRefuses(t *testing.T) {
+	o := domain.ReconstituteOrder(domain.OrderSnapshot{
+		ID:            domain.NewOrderID(),
+		UserID:        userID,
+		Status:        domain.StatusPendingPayment,
+		Total:         thb(t, 99800),
+		ReservationID: reservationID,
+		CreatedAt:     time.Now(),
+		Version:       1,
+	})
+
+	if _, err := o.Expire(time.Now(), time.Hour); !errors.Is(err, domain.ErrOrderNotExpired) {
+		t.Fatalf("Expire() error = %v, want %v", err, domain.ErrOrderNotExpired)
+	}
+	if pulled := o.PullEvents(); len(pulled) != 0 {
+		t.Errorf("PullEvents() returned %d events, want 0", len(pulled))
+	}
+}
+
+func TestExpireRefusesAWindowThatIsNotOne(t *testing.T) {
+	o := order(t)
+
+	_, err := o.Expire(time.Now(), 0)
+
+	var invalid domain.ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("Expire() error = %v, want a ValidationError", err)
 	}
 }

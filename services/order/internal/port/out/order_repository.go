@@ -61,6 +61,16 @@ type OrderRepository interface {
 	// first one's outcome rather than racing it to a version number.
 	FindByIDForUpdate(ctx context.Context, id domain.OrderID) (*domain.Order, error)
 
+	// ClaimStaleOrders returns at most limit orders still waiting for payment
+	// that were created no later than createdBefore, holding each row until the
+	// surrounding transaction ends.
+	//
+	// SKIP LOCKED rather than a plain read, so that two workers — a rolling
+	// restart is the ordinary case — divide the backlog instead of one waiting
+	// behind the other. Returning fewer than limit is how a caller learns it
+	// has caught up.
+	ClaimStaleOrders(ctx context.Context, createdBefore time.Time, limit int) ([]*domain.Order, error)
+
 	// List pages through one customer's orders, newest first.
 	List(ctx context.Context, filter OrderFilter) ([]*domain.Order, error)
 }

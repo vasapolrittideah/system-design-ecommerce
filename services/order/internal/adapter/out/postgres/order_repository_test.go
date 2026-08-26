@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/proto"
 
@@ -615,5 +616,211 @@ func TestFindByIDForUpdateSerialisesTwoWriters(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the second reader never unblocked")
+	}
+}
+
+// stale writes an order and backdates it, since created_at is the database's to
+// set and no test waits out a payment window.
+func stale(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orders *adapter.OrderRepository, age time.Duration) *domain.Order {
+	t.Helper()
+
+	created, err := orders.Create(ctx, newOrder(t, userID, domain.ReservationID(uuid.NewString())))
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+
+	_, err = pool.Exec(ctx, `UPDATE orders SET created_at = $2 WHERE id = $1`,
+		created.ID().String(), time.Now().Add(-age))
+	if err != nil {
+		t.Fatalf("backdate the order: %v", err)
+	}
+
+	return created
+}
+
+func TestClaimStaleOrdersReturnsOnlyWhatIsPastTheCutOff(t *testing.T) {
+	ctx := context.Background()
+	pool, orders, _ := setup(t)
+
+	old := stale(t, ctx, pool, orders, 2*time.Hour)
+	stale(t, ctx, pool, orders, time.Minute)
+
+	err := txmanager.New(pool).Do(ctx, func(ctx context.Context) error {
+		claimed, err := orders.ClaimStaleOrders(ctx, time.Now().Add(-time.Hour), 10)
+		if err != nil {
+			return err
+		}
+
+		if len(claimed) != 1 {
+			t.Fatalf("claimed %d orders, want only the one past the cut-off", len(claimed))
+		}
+		if claimed[0].ID() != old.ID() {
+			t.Errorf("claimed %q, want %q", claimed[0].ID(), old.ID())
+		}
+		// The lines come back with it: an aggregate rebuilt without them is one
+		// whose events would carry an empty basket.
+		if len(claimed[0].Lines()) != 1 {
+			t.Errorf("claimed order has %d lines, want 1", len(claimed[0].Lines()))
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Do() error = %v, want nil", err)
+	}
+}
+
+// A paid order is finished and a cancelled one already gave its stock back.
+// Sweeping either would be the query re-deciding what the state machine has
+// answered.
+func TestClaimStaleOrdersIgnoresOrdersThatAreOver(t *testing.T) {
+	ctx := context.Background()
+	pool, orders, _ := setup(t)
+
+	paid := stale(t, ctx, pool, orders, 2*time.Hour)
+	if _, err := paid.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid() error = %v, want nil", err)
+	}
+	if _, err := orders.Update(ctx, paid); err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+
+	cancelled := stale(t, ctx, pool, orders, 2*time.Hour)
+	if _, err := cancelled.Cancel(); err != nil {
+		t.Fatalf("Cancel() error = %v, want nil", err)
+	}
+	if _, err := orders.Update(ctx, cancelled); err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+
+	err := txmanager.New(pool).Do(ctx, func(ctx context.Context) error {
+		claimed, err := orders.ClaimStaleOrders(ctx, time.Now().Add(-time.Hour), 10)
+		if err != nil {
+			return err
+		}
+
+		if len(claimed) != 0 {
+			t.Errorf("claimed %d orders, want none — both are already over", len(claimed))
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Do() error = %v, want nil", err)
+	}
+}
+
+func TestClaimStaleOrdersHonoursItsLimit(t *testing.T) {
+	ctx := context.Background()
+	pool, orders, _ := setup(t)
+
+	for range 3 {
+		stale(t, ctx, pool, orders, 2*time.Hour)
+	}
+
+	err := txmanager.New(pool).Do(ctx, func(ctx context.Context) error {
+		claimed, err := orders.ClaimStaleOrders(ctx, time.Now().Add(-time.Hour), 2)
+		if err != nil {
+			return err
+		}
+
+		if len(claimed) != 2 {
+			t.Errorf("claimed %d orders, want the limit of 2", len(claimed))
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Do() error = %v, want nil", err)
+	}
+}
+
+// SKIP LOCKED is what lets two workers overlapping during a rolling restart
+// divide the backlog instead of one waiting behind the other. Without it the
+// second claim would block until the first transaction ended, and a restart
+// would halve the sweep rate rather than leaving it alone.
+func TestClaimStaleOrdersLetsASecondWorkerSkipWhatIsHeld(t *testing.T) {
+	ctx := context.Background()
+	pool, orders, _ := setup(t)
+
+	first := stale(t, ctx, pool, orders, 2*time.Hour)
+	stale(t, ctx, pool, orders, 3*time.Hour)
+
+	tx := txmanager.New(pool)
+	held := make(chan struct{})
+	locked := make(chan struct{})
+	second := make(chan []domain.OrderID, 1)
+
+	var once sync.Once
+	release := func() { once.Do(func() { close(held) }) }
+
+	defer release()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		_ = tx.Do(ctx, func(ctx context.Context) error {
+			// One row, so the other is left for whoever asks next.
+			claimed, err := orders.ClaimStaleOrders(ctx, time.Now().Add(-time.Hour), 1)
+			if err != nil {
+				return err
+			}
+			if len(claimed) != 1 {
+				t.Errorf("the first worker claimed %d orders, want 1", len(claimed))
+			}
+
+			// Only now is a row actually locked. Without this the second worker
+			// can run first and claim both, which passes for the wrong reason.
+			close(locked)
+			<-held
+
+			return nil
+		})
+	}()
+
+	select {
+	case <-locked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first worker never claimed a row")
+	}
+
+	// The second worker asks for everything while the first still holds its
+	// row. Its own deadline is what turns a missing SKIP LOCKED into a failed
+	// assertion instead of a deadlock: without it the claim would block on the
+	// first transaction, which is itself waiting on this one to finish.
+	claiming, cancelClaim := context.WithTimeout(ctx, 3*time.Second)
+	defer cancelClaim()
+
+	err := tx.Do(claiming, func(ctx context.Context) error {
+		claimed, err := orders.ClaimStaleOrders(ctx, time.Now().Add(-time.Hour), 10)
+		if err != nil {
+			return err
+		}
+
+		ids := make([]domain.OrderID, 0, len(claimed))
+		for _, order := range claimed {
+			ids = append(ids, order.ID())
+		}
+		second <- ids
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("the second worker's Do() error = %v, want nil — it should have skipped the held row", err)
+	}
+
+	release()
+	<-done
+
+	ids := <-second
+	if len(ids) != 1 {
+		t.Fatalf("the second worker claimed %d orders, want 1 — the other was held", len(ids))
+	}
+	// Which one it got depends on which the first claimed; what matters is that
+	// it is not the same one and that it did not wait.
+	if ids[0] == first.ID() {
+		t.Log("the first worker claimed the older order; the second correctly skipped it")
 	}
 }

@@ -4,6 +4,8 @@
 package bootstrap
 
 import (
+	"time"
+
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/grpcx/client"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/grpcx/server"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/kafkax"
@@ -11,6 +13,7 @@ import (
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/observability"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/outbox"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/postgres"
+	"github.com/vasapolrittideah/system-design-ecommerce/services/order/internal/adapter/in/timeout"
 )
 
 // Config is everything the server process reads from the environment.
@@ -74,4 +77,24 @@ type WorkerConfig struct {
 	// mask a delivery from the other that happened to carry the same event id.
 	Consumer        kafkax.ConsumerConfig `envPrefix:"KAFKA_CONSUMER_"`
 	PaymentConsumer kafkax.ConsumerConfig `envPrefix:"KAFKA_PAYMENT_CONSUMER_"`
+}
+
+// TimeoutConfig is everything the saga timeout worker reads from the
+// environment.
+//
+// A struct of its own though it mounts the same ConfigMap: the worker reads its
+// own database and writes an outbox row, and calls neither a broker nor another
+// service — so a Kafka address it never dials and a gateway it never reaches
+// must not be things it fails to start without.
+type TimeoutConfig struct {
+	Log logger.Config        `envPrefix:"LOG_"`
+	Obs observability.Config `envPrefix:"OBS_"`
+	DB  postgres.Config      `envPrefix:"ORDER_DB_"`
+
+	Timeout timeout.Config `envPrefix:"ORDER_TIMEOUT_"`
+
+	// PaymentWindow is how long an order stays open for payment. It has to stay
+	// shorter than inventory's INVENTORY_RESERVATION_TTL by more than one sweep
+	// interval — see app.Policy for what breaks in each direction.
+	PaymentWindow time.Duration `env:"ORDER_PAYMENT_WINDOW" envDefault:"10m"`
 }
