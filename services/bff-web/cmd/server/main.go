@@ -57,6 +57,7 @@ func run() error {
 		Catalog:   client.MustDial(cfg.Catalog, client.WithLogger(log)),
 		Inventory: client.MustDial(cfg.Inventory, client.WithLogger(log)),
 		Order:     client.MustDial(cfg.Order, client.WithLogger(log)),
+		Payment:   client.MustDial(cfg.Payment, client.WithLogger(log)),
 	}
 
 	// Deliberately no readiness check on any of them.
@@ -78,7 +79,13 @@ func run() error {
 	// Serve has returned: the connections have to outlive the requests still
 	// draining, and telemetry has to outlive both, or the last spans before a
 	// shutdown — the interesting ones — are never flushed.
-	closeErr := errors.Join(conns.Identity.Close(), conns.Catalog.Close(), conns.Inventory.Close())
+	closeErr := errors.Join(
+		conns.Identity.Close(),
+		conns.Catalog.Close(),
+		conns.Inventory.Close(),
+		conns.Order.Close(),
+		conns.Payment.Close(),
+	)
 
 	// ctx is already cancelled by the time this runs, and Shutdown given a
 	// cancelled context skips the flush it exists to perform.

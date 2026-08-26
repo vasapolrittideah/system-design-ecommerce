@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	catalogv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/catalog/v1"
+	paymentv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/payment/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
 )
 
@@ -95,6 +96,12 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		WithReason("USER_NOT_FOUND"))
 	missingProduct := errorx.ToGRPC(errorx.New(errorx.KindNotFound, "product not found").
 		WithReason("PRODUCT_NOT_FOUND"))
+	missingOrder := errorx.ToGRPC(errorx.New(errorx.KindNotFound, "order not found").
+		WithReason("ORDER_NOT_FOUND"))
+	notPayable := errorx.ToGRPC(errorx.New(errorx.KindConflict, "order is not waiting for payment").
+		WithReason("ORDER_NOT_PAYABLE"))
+	badSignature := errorx.ToGRPC(errorx.New(errorx.KindUnauthenticated, "callback signature").
+		WithReason("CALLBACK_SIGNATURE_INVALID"))
 
 	cases := []struct {
 		name string
@@ -105,6 +112,11 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		contentType   string
 		authenticated bool
 
+		// headers are the ones no other field covers — a provider's signature,
+		// which is what stands in for a token on the one endpoint no person
+		// calls.
+		headers map[string]string
+
 		// authorization is a header set by hand, for the tokens no signer of
 		// this test's would produce.
 		authorization string
@@ -112,6 +124,7 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		identity  *stubIdentityClient
 		catalog   *stubCatalogClient
 		inventory *stubInventoryClient
+		payments  *stubPaymentClient
 
 		wantStatus int
 
@@ -355,6 +368,96 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 			catalog:    &stubCatalogClient{err: status.Error(codes.Unavailable, "connection refused")},
 			wantStatus: http.StatusServiceUnavailable,
 		},
+		{
+			name:          "start a payment",
+			method:        http.MethodPost,
+			path:          "/api/v1/orders/" + testProductID + "/payment",
+			body:          `{"idempotencyKey": "pay-4f2b1c8a", "method": "promptpay"}`,
+			authenticated: true,
+			payments: &stubPaymentClient{
+				payment:       testPayment(paymentv1.PaymentStatus_PAYMENT_STATUS_PENDING),
+				nextActionURL: "https://provider.test/3ds/b7c0c5d2",
+			},
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:          "start a payment the provider declined",
+			method:        http.MethodPost,
+			path:          "/api/v1/orders/" + testProductID + "/payment",
+			body:          `{"idempotencyKey": "pay-4f2b1c8a"}`,
+			authenticated: true,
+			payments:      &stubPaymentClient{payment: testPayment(paymentv1.PaymentStatus_PAYMENT_STATUS_FAILED)},
+			wantStatus:    http.StatusCreated,
+		},
+		{
+			name:          "start a payment without a key",
+			method:        http.MethodPost,
+			path:          "/api/v1/orders/" + testProductID + "/payment",
+			body:          `{}`,
+			authenticated: true,
+			wantStatus:    http.StatusBadRequest,
+			specRejects:   true,
+		},
+		{
+			name:          "start a payment under an order id that is not a uuid",
+			method:        http.MethodPost,
+			path:          "/api/v1/orders/not-a-uuid/payment",
+			body:          `{"idempotencyKey": "pay-4f2b1c8a"}`,
+			authenticated: true,
+			wantStatus:    http.StatusBadRequest,
+			specRejects:   true,
+		},
+		{
+			name:       "start a payment without a token",
+			method:     http.MethodPost,
+			path:       "/api/v1/orders/" + testProductID + "/payment",
+			body:       `{"idempotencyKey": "pay-4f2b1c8a"}`,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:          "start a payment for an order that is not the caller's",
+			method:        http.MethodPost,
+			path:          "/api/v1/orders/" + testProductID + "/payment",
+			body:          `{"idempotencyKey": "pay-4f2b1c8a"}`,
+			authenticated: true,
+			payments:      &stubPaymentClient{err: missingOrder},
+			wantStatus:    http.StatusNotFound,
+		},
+		{
+			name:          "start a payment for an order nobody may pay for any more",
+			method:        http.MethodPost,
+			path:          "/api/v1/orders/" + testProductID + "/payment",
+			body:          `{"idempotencyKey": "pay-4f2b1c8a"}`,
+			authenticated: true,
+			payments:      &stubPaymentClient{err: notPayable},
+			wantStatus:    http.StatusConflict,
+		},
+		{
+			name:       "a provider's webhook",
+			method:     http.MethodPost,
+			path:       "/api/v1/webhooks/payment",
+			body:       `{"id": "chrg_b7c0c5d2", "status": "succeeded"}`,
+			headers:    map[string]string{"X-Provider-Signature": "b2f1c0"},
+			payments:   &stubPaymentClient{payment: testPayment(paymentv1.PaymentStatus_PAYMENT_STATUS_SUCCEEDED)},
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:        "a webhook nobody signed",
+			method:      http.MethodPost,
+			path:        "/api/v1/webhooks/payment",
+			body:        `{"id": "chrg_b7c0c5d2", "status": "succeeded"}`,
+			wantStatus:  http.StatusBadRequest,
+			specRejects: true,
+		},
+		{
+			name:       "a webhook signed by somebody else",
+			method:     http.MethodPost,
+			path:       "/api/v1/webhooks/payment",
+			body:       `{"id": "chrg_b7c0c5d2", "status": "succeeded"}`,
+			headers:    map[string]string{"X-Provider-Signature": "0000"},
+			payments:   &stubPaymentClient{err: badSignature},
+			wantStatus: http.StatusUnauthorized,
+		},
 	}
 
 	doc := loadSpec(t)
@@ -381,7 +484,12 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 				inventory = &stubInventoryClient{}
 			}
 
-			srv, signer := newServer(t, identity, catalog, inventory)
+			payments := tc.payments
+			if payments == nil {
+				payments = &stubPaymentClient{}
+			}
+
+			srv, signer := newServer(t, identity, catalog, inventory, backends{payments: payments})
 
 			authorization := tc.authorization
 			if tc.authenticated {
@@ -405,6 +513,9 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 				}
 				if authorization != "" {
 					req.Header.Set("Authorization", authorization)
+				}
+				for name, value := range tc.headers {
+					req.Header.Set(name, value)
 				}
 
 				return req

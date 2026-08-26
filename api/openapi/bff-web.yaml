@@ -71,6 +71,9 @@ tags:
     description: What is on sale, shaped for the screen that shows it.
   - name: orders
     description: Buying, and the record of what was bought.
+  - name: payments
+    description: |
+      Paying for an order, and what the provider says about it afterwards.
 
 paths:
   /api/v1/auth/register:
@@ -637,6 +640,247 @@ paths:
         '504':
           $ref: '#/components/responses/UpstreamTimeout'
 
+  /api/v1/orders/{id}/payment:
+    post:
+      operationId: startPayment
+      tags: [payments]
+      summary: Start paying for an order
+      description: |
+        Tells the provider about the money and returns as soon as it has been
+        told — it does not wait for the money to arrive. A card that needs a
+        3-D Secure page comes back `pending` with `nextActionUrl`; send the
+        customer there. The outcome reaches the order a moment later, so poll
+        `GET /api/v1/orders/{id}` rather than holding this request open.
+
+        The amount is not in the request and cannot be. What the order costs is
+        read from the order itself, so a client that could name its own amount
+        would be naming what it pays.
+
+        A declined card is a `201` carrying a `failed` attempt, not an error:
+        nothing about the request was wrong, the order stays `pendingPayment`,
+        and the customer may try again with a new `idempotencyKey` until the
+        hold on their stock expires. Only running out of time cancels an order.
+
+        `idempotencyKey` deduplicates the submit and not the order. The same key
+        replays the first attempt; a fresh key is a fresh attempt.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The order to collect for, as `order.id` from checkout.
+          schema:
+            type: string
+            format: uuid
+            pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          example: 3f2504e0-4f89-41d3-9a0c-0305e82c3301
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartPaymentRequest'
+      responses:
+        '201':
+          description: |
+            The attempt, in whatever state the provider left it — `pending` with
+            somewhere to send the customer, `succeeded`, or `failed`.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          description: |
+            No order of the caller's under this id — `ORDER_NOT_FOUND`, exactly
+            as `GET /api/v1/orders/{id}` answers it.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [ORDER_NOT_FOUND]
+        '409':
+          description: |
+            The order cannot be paid for as it stands.
+
+            `ORDER_NOT_PAYABLE` — already paid, or cancelled; the order's own
+            `status` says which. `PAYMENT_ALREADY_IN_FLIGHT` — an attempt against
+            this order is still unresolved, which is what a double-clicked
+            button produces; wait for it rather than starting another.
+            `IDEMPOTENCY_KEY_REUSED` — the same key sent for a different order,
+            which is a client bug and not a retry.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum:
+                              - ORDER_NOT_PAYABLE
+                              - PAYMENT_ALREADY_IN_FLIGHT
+                              - IDEMPOTENCY_KEY_REUSED
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          description: |
+            Something broke, and the provider is one of the things it could have
+            been: `PROVIDER_UNAVAILABLE` is a call that did not complete —
+            possibly after the money moved, which is why the attempt is kept and
+            reconciled rather than guessed at — and `PROVIDER_REJECTED` and
+            `PROVIDER_MALFORMED` are an integration bug on this side.
+
+            All of them mean the same thing to a client as `INTERNAL` does:
+            nothing it sent was wrong. Do not retry with the same key expecting
+            a different answer; read the order back instead.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum:
+                              - INTERNAL
+                              - UNKNOWN
+                              - DATA_LOSS
+                              - PROVIDER_UNAVAILABLE
+                              - PROVIDER_REJECTED
+                              - PROVIDER_MALFORMED
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
+  /api/v1/webhooks/payment:
+    post:
+      operationId: handlePaymentWebhook
+      tags: [payments]
+      summary: A payment provider's callback
+      description: |
+        Not for storefront clients. It is here because a webhook is north-south
+        traffic like everything else, and this is the only thing in the system
+        that speaks HTTP.
+
+        No token, and none would help: the caller is not a person. What
+        authenticates the request is `X-Provider-Signature`, an HMAC over the
+        body, checked by the service that holds the secret — a stronger claim
+        than a forwarded user id, since it says who wrote the bytes rather than
+        who relayed them.
+
+        The body is whatever the provider sends and is passed on untouched. It
+        is described here as an open object for that reason: this tier does not
+        parse it, and a schema naming its fields would be this API claiming a
+        shape it neither owns nor checks.
+
+        Idempotent, because providers redeliver. A callback naming an attempt
+        this system does not have is accepted and changes nothing — answering
+        404 would make the provider retry it forever.
+      parameters:
+        - name: X-Provider-Signature
+          in: header
+          required: true
+          description: |
+            The provider's signature over the body exactly as sent. Computed
+            over the bytes, so anything that re-encodes the JSON on the way here
+            invalidates it.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 1024
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: The provider's own event body, forwarded byte for byte.
+              additionalProperties: true
+      responses:
+        '204':
+          description: |
+            The callback was taken. No body: a provider has no use for one, and
+            what it needs is the 2xx that stops the retries.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+        '400':
+          description: |
+            The request could not be read — the shared decode codes, plus
+            `CALLBACK_MALFORMED` for a signed body that verifies and then names
+            nothing this system recognises.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum:
+                              - INVALID_INPUT
+                              - MALFORMED_JSON
+                              - EMPTY_BODY
+                              - CALLBACK_MALFORMED
+        '401':
+          description: |
+            The signature does not verify — `CALLBACK_SIGNATURE_INVALID`. The
+            body is not a fact about anything and nothing was changed.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationID'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [CALLBACK_SIGNATURE_INVALID]
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/UpstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/UpstreamTimeout'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1182,6 +1426,102 @@ components:
           description: |
             What was agreed for one at the moment of checkout, not what the
             catalog charges now.
+
+    StartPaymentRequest:
+      type: object
+      description: One attempt to collect for an order.
+      additionalProperties: false
+      required: [idempotencyKey]
+      properties:
+        idempotencyKey:
+          type: string
+          description: |
+            The client's own key for this attempt, repeated on every retry of
+            it. One per attempt the shopper makes — a fresh key on each HTTP
+            retry would defeat the deduplication entirely, and here that means a
+            second charge.
+          minLength: 8
+          maxLength: 128
+          example: pay-4f2b1c8a
+        method:
+          type: string
+          description: |
+            How the customer chose to pay, in this system's vocabulary rather
+            than a provider's — `card`, `promptpay`. Omitted leaves it to the
+            provider's default, which is what a hosted checkout page decides for
+            itself.
+
+            Deliberately not an enum: which methods are on offer is a question
+            about the shop and the provider it has signed with, and a closed set
+            here would make every new method a change to this contract. Lowercase
+            letters, digits, and underscores, starting with a letter; a name
+            outside that is refused by the payment service as `INVALID_INPUT`.
+          maxLength: 32
+          example: promptpay
+
+    PaymentResponse:
+      type: object
+      required: [payment]
+      properties:
+        payment:
+          $ref: '#/components/schemas/Payment'
+        nextActionUrl:
+          type: string
+          format: uri
+          description: |
+            Where to send the customer to finish paying — a 3-D Secure page, a
+            hosted form, a QR code. Absent when there is nothing for them to do
+            and the answer is simply on its way.
+
+            On the response rather than on the payment because that is what it
+            is: a fact about this answer. It expires, and a URL that authorises a
+            charge is not something to hand back on every later read.
+
+    Payment:
+      type: object
+      description: |
+        One attempt to collect for an order. There may be several against the
+        same order — a declined card is a finished attempt, and trying again is
+        a new one.
+
+        The provider's reference and its failure reason are deliberately not
+        here. Both are written in the provider's vocabulary for whoever operates
+        the integration, and rendering either to a shopper would bind this API
+        to a set of strings the provider changes without telling anyone.
+      required: [id, orderId, status, amount, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: |
+            `pending` — the provider has been told; the customer may still have
+            something to do, or the answer may simply not be back.
+            `succeeded` — the money is in, and the order becomes `paid` shortly
+            after.
+            `failed` — this attempt is over and no money moved. The order is
+            not: start another attempt with a new `idempotencyKey`.
+
+            Branch on the values you know and render anything else as in
+            progress.
+          enum: [pending, succeeded, failed, unknown]
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: |
+            What was sent to the provider, copied from the order when the attempt
+            started rather than read back now — so it stays readable next to what
+            the provider says it charged.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
 
     Money:
       type: object

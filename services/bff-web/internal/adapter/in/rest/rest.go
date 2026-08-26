@@ -16,6 +16,7 @@ import (
 	identityv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/identity/v1"
 	inventoryv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/inventory/v1"
 	orderv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/order/v1"
+	paymentv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/payment/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/httpx"
 )
 
@@ -31,6 +32,7 @@ type Handler struct {
 	catalog   catalogv1.CatalogServiceClient
 	inventory inventoryv1.InventoryServiceClient
 	orders    orderv1.OrderServiceClient
+	payments  paymentv1.PaymentServiceClient
 	validator *httpx.Validator
 }
 
@@ -40,6 +42,7 @@ func NewHandler(
 	catalog catalogv1.CatalogServiceClient,
 	inventory inventoryv1.InventoryServiceClient,
 	orders orderv1.OrderServiceClient,
+	payments paymentv1.PaymentServiceClient,
 	validator *httpx.Validator,
 ) *Handler {
 	return &Handler{
@@ -47,6 +50,7 @@ func NewHandler(
 		catalog:   catalog,
 		inventory: inventory,
 		orders:    orders,
+		payments:  payments,
 		validator: validator,
 	}
 }
@@ -64,6 +68,11 @@ func NewHandler(
 // shopper does before deciding to have an account, and an endpoint that answered
 // 401 to an anonymous visitor would put a login screen in front of the shop
 // window.
+//
+// The payment webhook is outside it for a third: the caller is not a person at
+// all. What stands in for identity there is the provider's signature over the
+// body, which the payment service checks — a stronger claim than a forwarded
+// user id, since it says who wrote the bytes rather than who relayed them.
 func (h *Handler) Mount(r chi.Router, authenticate func(http.Handler) http.Handler) {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {
@@ -75,6 +84,8 @@ func (h *Handler) Mount(r chi.Router, authenticate func(http.Handler) http.Handl
 
 		r.Get("/products", h.listProducts)
 		r.Get("/products/{id}", h.getProduct)
+
+		r.Post("/webhooks/payment", h.handleProviderWebhook)
 
 		r.Group(func(r chi.Router) {
 			r.Use(authenticate)
@@ -88,6 +99,7 @@ func (h *Handler) Mount(r chi.Router, authenticate func(http.Handler) http.Handl
 			r.Post("/checkout", h.checkout)
 			r.Get("/orders", h.listOrders)
 			r.Get("/orders/{id}", h.getOrder)
+			r.Post("/orders/{id}/payment", h.startPayment)
 		})
 	})
 }

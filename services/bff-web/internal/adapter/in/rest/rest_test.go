@@ -26,6 +26,7 @@ import (
 	identityv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/identity/v1"
 	inventoryv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/inventory/v1"
 	orderv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/order/v1"
+	paymentv1 "github.com/vasapolrittideah/system-design-ecommerce/gen/go/ecommerce/payment/v1"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/auth"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/config"
 	"github.com/vasapolrittideah/system-design-ecommerce/pkg/errorx"
@@ -233,6 +234,43 @@ func (s *stubOrderClient) ListOrders(
 	}
 
 	return &orderv1.ListOrdersResponse{Orders: s.orders, NextPageToken: s.nextPageToken}, nil
+}
+
+// stubPaymentClient answers the paying half of checkout.
+//
+// The interface is embedded for the same reason the others embed theirs: an RPC
+// no test set up is a nil call that panics.
+type stubPaymentClient struct {
+	paymentv1.PaymentServiceClient
+
+	initiateReq *paymentv1.InitiatePaymentRequest
+	callbackReq *paymentv1.HandleProviderCallbackRequest
+
+	payment       *paymentv1.Payment
+	nextActionURL string
+	err           error
+}
+
+func (s *stubPaymentClient) InitiatePayment(
+	_ context.Context, in *paymentv1.InitiatePaymentRequest, _ ...grpc.CallOption,
+) (*paymentv1.InitiatePaymentResponse, error) {
+	s.initiateReq = in
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return &paymentv1.InitiatePaymentResponse{Payment: s.payment, NextActionUrl: s.nextActionURL}, nil
+}
+
+func (s *stubPaymentClient) HandleProviderCallback(
+	_ context.Context, in *paymentv1.HandleProviderCallbackRequest, _ ...grpc.CallOption,
+) (*paymentv1.HandleProviderCallbackResponse, error) {
+	s.callbackReq = in
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return &paymentv1.HandleProviderCallbackResponse{Payment: s.payment}, nil
 }
 
 func TestRegisterReturnsCreatedWithNoTokens(t *testing.T) {
@@ -640,6 +678,14 @@ func TestWrongMethodAnswers405(t *testing.T) {
 // newServer builds the router the way bootstrap does, minus the metrics
 // registry: the tests below run in one process and a shared registry would
 // panic on the second router built.
+// backends are the clients only some screens reach, gathered into one value so
+// that a test naming the payment service does not have to name the order
+// service beside it. A zero field takes an empty stub.
+type backends struct {
+	orders   orderv1.OrderServiceClient
+	payments paymentv1.PaymentServiceClient
+}
+
 func newServer(
 	t *testing.T,
 	identity identityv1.IdentityServiceClient,
@@ -649,7 +695,7 @@ func newServer(
 	// reading as they did: a screen that never reaches the order service has
 	// nothing to say about it, and passing an empty stub at each of those call
 	// sites would be noise standing in for a dependency none of them uses.
-	orders ...orderv1.OrderServiceClient,
+	extra ...backends,
 ) (*chi.Mux, *auth.Signer) {
 	t.Helper()
 
@@ -678,12 +724,21 @@ func newServer(
 
 	validator := httpx.MustNewValidator()
 	router := httpx.MustNewRouter(validator)
+
 	order := orderv1.OrderServiceClient(&stubOrderClient{})
-	if len(orders) > 0 {
-		order = orders[0]
+	payment := paymentv1.PaymentServiceClient(&stubPaymentClient{})
+
+	if len(extra) > 0 {
+		if extra[0].orders != nil {
+			order = extra[0].orders
+		}
+		if extra[0].payments != nil {
+			payment = extra[0].payments
+		}
 	}
 
-	rest.NewHandler(identity, catalog, inventory, order, validator).Mount(router, auth.Authenticate(verifier))
+	rest.NewHandler(identity, catalog, inventory, order, payment, validator).
+		Mount(router, auth.Authenticate(verifier))
 
 	return router, signer
 }
@@ -982,7 +1037,7 @@ func testOrder() *orderv1.Order {
 
 func TestCheckoutPassesTheCartAndTheKeyThrough(t *testing.T) {
 	orders := &stubOrderClient{order: testOrder()}
-	srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+	srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{orders: orders})
 
 	res := do(t, srv, http.MethodPost, "/api/v1/checkout", bearer(t, signer), `{
 		"idempotencyKey": "checkout-4f2b1c8a",
@@ -1029,7 +1084,7 @@ func TestCheckoutPassesTheCartAndTheKeyThrough(t *testing.T) {
 
 func TestCheckoutRefusesAnUnsignedRequest(t *testing.T) {
 	orders := &stubOrderClient{order: testOrder()}
-	srv, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+	srv, _ := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{orders: orders})
 
 	res := do(t, srv, http.MethodPost, "/api/v1/checkout", "", `{
 		"idempotencyKey": "checkout-4f2b1c8a",
@@ -1059,7 +1114,7 @@ func TestCheckoutRejectsACartThisAPIWillNotAccept(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			orders := &stubOrderClient{order: testOrder()}
-			srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+			srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{orders: orders})
 
 			res := do(t, srv, http.MethodPost, "/api/v1/checkout", bearer(t, signer), tt.body)
 
@@ -1075,7 +1130,7 @@ func TestCheckoutRejectsACartThisAPIWillNotAccept(t *testing.T) {
 
 func TestListOrdersPassesThePageThrough(t *testing.T) {
 	orders := &stubOrderClient{orders: []*orderv1.Order{testOrder()}, nextPageToken: "next"}
-	srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+	srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{orders: orders})
 
 	res := do(t, srv, http.MethodGet, "/api/v1/orders?pageSize=10&pageToken=abc", bearer(t, signer), "")
 
@@ -1103,7 +1158,7 @@ func TestListOrdersPassesThePageThrough(t *testing.T) {
 
 func TestGetOrderRefusesAnIDThisAPIWillNotAccept(t *testing.T) {
 	orders := &stubOrderClient{order: testOrder()}
-	srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, orders)
+	srv, signer := newServer(t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{orders: orders})
 
 	// Checked here rather than left to the order service, which would also
 	// refuse it: a rejection from downstream arrives as a bare 400 where every
@@ -1115,5 +1170,253 @@ func TestGetOrderRefusesAnIDThisAPIWillNotAccept(t *testing.T) {
 	}
 	if orders.getReq != nil {
 		t.Error("an id this API refuses was forwarded anyway")
+	}
+}
+
+func testPayment(status paymentv1.PaymentStatus) *paymentv1.Payment {
+	return &paymentv1.Payment{
+		Id:                "b7c0c5d2-3f5a-4a6e-9f21-6d2c1b0a9e44",
+		OrderId:           "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+		UserId:            testUserID,
+		Status:            status,
+		Amount:            &commonv1.Money{AmountMinor: 99800, CurrencyCode: "THB"},
+		ProviderReference: "chrg_b7c0c5d2",
+		FailureReason:     "card_declined",
+		CreatedAt:         timestamppb.New(time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)),
+		UpdatedAt:         timestamppb.New(time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)),
+	}
+}
+
+func TestStartPaymentPassesTheOrderAndTheKeyThrough(t *testing.T) {
+	payments := &stubPaymentClient{
+		payment:       testPayment(paymentv1.PaymentStatus_PAYMENT_STATUS_PENDING),
+		nextActionURL: "https://provider.test/3ds/b7c0c5d2",
+	}
+	srv, signer := newServer(
+		t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{payments: payments},
+	)
+
+	res := do(t, srv, http.MethodPost, "/api/v1/orders/"+testOrder().GetId()+"/payment", bearer(t, signer), `{
+		"idempotencyKey": "pay-4f2b1c8a",
+		"method": "promptpay"
+	}`)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusCreated, res.Body)
+	}
+
+	// The order comes from the path and the key from the body, and both have to
+	// reach the service that owns the attempt: this tier deduplicates nothing.
+	if got := payments.initiateReq.GetOrderId(); got != testOrder().GetId() {
+		t.Errorf("order id = %q, want the one in the path", got)
+	}
+	if got := payments.initiateReq.GetIdempotencyKey(); got != "pay-4f2b1c8a" {
+		t.Errorf("idempotency key = %q, want the one the client sent", got)
+	}
+	if got := payments.initiateReq.GetMethod(); got != "promptpay" {
+		t.Errorf("method = %q, want the one the client chose", got)
+	}
+
+	var body struct {
+		Payment struct {
+			ID                string `json:"id"`
+			OrderID           string `json:"orderId"`
+			Status            string `json:"status"`
+			UserID            string `json:"userId"`
+			ProviderReference string `json:"providerReference"`
+			FailureReason     string `json:"failureReason"`
+		} `json:"payment"`
+		NextActionURL string `json:"nextActionUrl"`
+	}
+	decode(t, res, &body)
+
+	if body.Payment.Status != "pending" || body.NextActionURL == "" {
+		t.Errorf("body = %+v, want a pending attempt and somewhere to send the customer", body)
+	}
+
+	// The provider's own vocabulary, and the identity the caller already has.
+	// None of the three is a fact a storefront renders, and each would bind a
+	// client to something this API does not own.
+	if body.Payment.UserID != "" || body.Payment.ProviderReference != "" || body.Payment.FailureReason != "" {
+		t.Errorf("payment = %+v, want the provider's fields and the user id left behind", body.Payment)
+	}
+}
+
+func TestStartPaymentAnswersADeclineAsAFailedAttempt(t *testing.T) {
+	payments := &stubPaymentClient{payment: testPayment(paymentv1.PaymentStatus_PAYMENT_STATUS_FAILED)}
+	srv, signer := newServer(
+		t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{payments: payments},
+	)
+
+	res := do(t, srv, http.MethodPost, "/api/v1/orders/"+testOrder().GetId()+"/payment", bearer(t, signer), `{
+		"idempotencyKey": "pay-4f2b1c8a"
+	}`)
+
+	// A declined card is not an error: the order is still open and the customer
+	// may try another one. Answering 4xx here would tell a client the request
+	// was wrong, and nothing about it was.
+	if res.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusCreated, res.Body)
+	}
+
+	var body struct {
+		Payment struct {
+			Status string `json:"status"`
+		} `json:"payment"`
+	}
+	decode(t, res, &body)
+
+	if body.Payment.Status != "failed" {
+		t.Errorf("status = %q, want %q", body.Payment.Status, "failed")
+	}
+}
+
+func TestStartPaymentRefusesARequestThisAPIWillNotAccept(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"order id that is not a uuid", "/api/v1/orders/not-a-uuid/payment", `{"idempotencyKey": "pay-4f2b1c8a"}`},
+		{"no idempotency key", "/api/v1/orders/" + testProductID + "/payment", `{}`},
+		{"key too short", "/api/v1/orders/" + testProductID + "/payment", `{"idempotencyKey": "short"}`},
+		{
+			"method that is not lowercase",
+			"/api/v1/orders/" + testProductID + "/payment",
+			`{"idempotencyKey": "pay-4f2b1c8a", "method": "PromptPay"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payments := &stubPaymentClient{payment: testPayment(paymentv1.PaymentStatus_PAYMENT_STATUS_PENDING)}
+			srv, signer := newServer(
+				t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{payments: payments},
+			)
+
+			res := do(t, srv, http.MethodPost, tt.path, bearer(t, signer), tt.body)
+
+			if res.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusBadRequest, res.Body)
+			}
+			if payments.initiateReq != nil {
+				t.Error("a request this API refuses was forwarded anyway")
+			}
+		})
+	}
+}
+
+func TestStartPaymentRefusesAnUnsignedRequest(t *testing.T) {
+	payments := &stubPaymentClient{payment: testPayment(paymentv1.PaymentStatus_PAYMENT_STATUS_PENDING)}
+	srv, _ := newServer(
+		t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{payments: payments},
+	)
+
+	res := do(t, srv, http.MethodPost, "/api/v1/orders/"+testOrder().GetId()+"/payment", "", `{
+		"idempotencyKey": "pay-4f2b1c8a"
+	}`)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusUnauthorized, res.Body)
+	}
+	if payments.initiateReq != nil {
+		t.Error("a payment was started without a verified caller")
+	}
+}
+
+// The signature is computed over exactly the bytes the provider sent, so a hop
+// that decoded the JSON and re-encoded it forwards a body that no longer
+// verifies — a different key order is enough, and the failure arrives as a
+// rejected webhook with nothing pointing at this hop.
+func TestPaymentWebhookForwardsTheBodyByteForByte(t *testing.T) {
+	payments := &stubPaymentClient{}
+	srv, _ := newServer(
+		t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{payments: payments},
+	)
+
+	// Deliberately not canonical JSON: the whitespace and the key order are
+	// what a re-encoding hop would quietly normalise away.
+	body := `{"status":"succeeded",  "id":"chrg_b7c0c5d2", "idempotency_key":"b7c0c5d2-3f5a-4a6e-9f21-6d2c1b0a9e44"}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/payment", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Provider-Signature", "b2f1c0")
+
+	res := httptest.NewRecorder()
+	srv.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusNoContent, res.Body)
+	}
+	if got := string(payments.callbackReq.GetPayload()); got != body {
+		t.Errorf("payload = %q, want the bytes that arrived", got)
+	}
+	if got := payments.callbackReq.GetSignature(); got != "b2f1c0" {
+		t.Errorf("signature = %q, want the header's value", got)
+	}
+}
+
+// A provider is not a person and presents no token. What stands in for identity
+// is the signature over the body, which only the payment service can check.
+func TestPaymentWebhookNeedsNoToken(t *testing.T) {
+	payments := &stubPaymentClient{}
+	srv, _ := newServer(
+		t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{payments: payments},
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/payment", strings.NewReader(`{"id":"chrg_1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Provider-Signature", "b2f1c0")
+
+	res := httptest.NewRecorder()
+	srv.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusNoContent, res.Body)
+	}
+	if payments.callbackReq == nil {
+		t.Error("the callback was not forwarded")
+	}
+}
+
+func TestPaymentWebhookWithoutASignatureIsRefused(t *testing.T) {
+	payments := &stubPaymentClient{}
+	srv, _ := newServer(
+		t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{payments: payments},
+	)
+
+	res := do(t, srv, http.MethodPost, "/api/v1/webhooks/payment", "", `{"id":"chrg_1"}`)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusBadRequest, res.Body)
+	}
+	// An unsigned body is not a fact about anything, and forwarding one would
+	// spend a call on a request that cannot succeed.
+	if payments.callbackReq != nil {
+		t.Error("an unsigned callback was forwarded anyway")
+	}
+}
+
+// A callback for a charge made elsewhere settles nothing here, and payment
+// answers it with no attempt at all rather than NotFound — a refusal would make
+// a provider retry forever.
+func TestPaymentWebhookAcceptsACallbackAboutNothingOfOurs(t *testing.T) {
+	payments := &stubPaymentClient{}
+	srv, _ := newServer(
+		t, &stubIdentityClient{}, &stubCatalogClient{}, &stubInventoryClient{}, backends{payments: payments},
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/payment", strings.NewReader(`{"id":"chrg_x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Provider-Signature", "b2f1c0")
+
+	res := httptest.NewRecorder()
+	srv.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d (body %s)", res.Code, http.StatusNoContent, res.Body)
+	}
+	if res.Body.Len() != 0 {
+		t.Errorf("body = %s, want none", res.Body)
 	}
 }
