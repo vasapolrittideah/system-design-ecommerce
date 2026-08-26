@@ -445,13 +445,18 @@ k8s_resource(
 
 k8s_resource(
     'order-worker',
-    # Its own consumer of the topic order-outboxrelay publishes to, so
-    # kafka-topics has to have declared both it and its .dlq first — and
-    # inventory has to be answering, the same reason the server's own deps
-    # name it, because this is the workload that actually calls
-    # CommitReservation. Nothing routes to it, so there is no gRPC port to
-    # forward; the admin one is where kafka_consumer_dlq_messages_total
-    # climbing would show up.
+    # Both of this service's subscriptions: the topic order-outboxrelay
+    # publishes to, and the payment service's. kafka-topics has to have
+    # declared all four — each of those plus its .dlq — and inventory has to be
+    # answering, the same reason the server's own deps name it, because this is
+    # the workload that actually calls CommitReservation.
+    #
+    # payment is deliberately not a dependency. Nothing here dials it: the
+    # traffic goes the other way, through a topic, so a worker started before
+    # payment exists simply has nothing to read yet.
+    #
+    # Nothing routes to it, so there is no gRPC port to forward; the admin one
+    # is where kafka_consumer_dlq_messages_total climbing would show up.
     resource_deps=['order-migrate', 'kafka-topics', 'inventory', 'reloader'],
     port_forwards=['9099:9090'],
     labels=['order'],

@@ -72,18 +72,19 @@ spec:
               # guess — a partition is the unit of consumer parallelism, so a
               # topic can never be consumed by more instances than it has.
               #
-              # order.events.v1.dlq is the one .dlq topic so far, because order
-              # is the one service with a consumer: its own worker reads back
-              # what it just published to commit a reservation, and a message
-              # that fails every retry lands here instead. identity and payment
-              # both publish and consume nothing, so neither has dead letters
-              # to declare — payment.events.v1.dlq arrives the day something
-              # reads that topic, which on current plans is the order service.
+              # A .dlq exists for every topic something reads, and only for
+              # those: a dead letter is a message a consumer gave up on, so a
+              # topic nobody consumes can never produce one. order's worker
+              # reads both of the others — its own events, to commit or release
+              # a reservation, and payment's, to move an order's state machine
+              # — so both carry one. identity's does not: nothing consumes it
+              # yet.
               for spec in \
                 "ecommerce.identity.events.v1 6" \
                 "ecommerce.order.events.v1 6" \
                 "ecommerce.order.events.v1.dlq 6" \
-                "ecommerce.payment.events.v1 6"
+                "ecommerce.payment.events.v1 6" \
+                "ecommerce.payment.events.v1.dlq 6"
               do
                 set -- $spec
                 echo "declaring $1 with $2 partition(s)"

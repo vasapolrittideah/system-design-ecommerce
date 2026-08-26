@@ -1,6 +1,15 @@
-# This service's own consumer of its order events: the half of checkout that
-# turns a reservation into a sale once the money is in, and gives it back once
-# the order is cancelled.
+# The worker that runs both of this service's subscriptions.
+#
+# One reads the payment service's events and moves the order's own state
+# machine; the other reads this service's own events and makes the one call to
+# inventory that an order's outcome triggers — turning a reservation into a
+# sale once the money is in, and giving it back once the order is cancelled.
+#
+# Two consumers in one process rather than a Deployment each, because they are
+# two halves of one saga driving one use case. The reason a background loop
+# gets a workload of its own is that a goroutine per replica multiplies the
+# work it does; a consumer group does not, since Kafka assigns each partition
+# to exactly one member.
 #
 # Its own workload rather than a goroutine inside the server, for the same
 # reason the outbox relay has one — and unlike the relay, running more than one
