@@ -52,6 +52,10 @@
     - [OrderPaid](#ecommerce-events-v1-OrderPaid)
     - [OrderPlaced](#ecommerce-events-v1-OrderPlaced)
   
+- [ecommerce/events/v1/payment.proto](#ecommerce_events_v1_payment-proto)
+    - [PaymentFailed](#ecommerce-events-v1-PaymentFailed)
+    - [PaymentSucceeded](#ecommerce-events-v1-PaymentSucceeded)
+  
 - [ecommerce/identity/v1/user.proto](#ecommerce_identity_v1_user-proto)
     - [User](#ecommerce-identity-v1-User)
   
@@ -114,6 +118,23 @@
     - [ListOrdersResponse](#ecommerce-order-v1-ListOrdersResponse)
   
     - [OrderService](#ecommerce-order-v1-OrderService)
+  
+- [ecommerce/payment/v1/payment.proto](#ecommerce_payment_v1_payment-proto)
+    - [Payment](#ecommerce-payment-v1-Payment)
+  
+    - [PaymentStatus](#ecommerce-payment-v1-PaymentStatus)
+  
+- [ecommerce/payment/v1/payment_service.proto](#ecommerce_payment_v1_payment_service-proto)
+    - [GetPaymentRequest](#ecommerce-payment-v1-GetPaymentRequest)
+    - [GetPaymentResponse](#ecommerce-payment-v1-GetPaymentResponse)
+    - [GetPaymentsByOrderIDsRequest](#ecommerce-payment-v1-GetPaymentsByOrderIDsRequest)
+    - [GetPaymentsByOrderIDsResponse](#ecommerce-payment-v1-GetPaymentsByOrderIDsResponse)
+    - [HandleProviderCallbackRequest](#ecommerce-payment-v1-HandleProviderCallbackRequest)
+    - [HandleProviderCallbackResponse](#ecommerce-payment-v1-HandleProviderCallbackResponse)
+    - [InitiatePaymentRequest](#ecommerce-payment-v1-InitiatePaymentRequest)
+    - [InitiatePaymentResponse](#ecommerce-payment-v1-InitiatePaymentResponse)
+  
+    - [PaymentService](#ecommerce-payment-v1-PaymentService)
   
 - [Scalar Value Types](#scalar-value-types)
 
@@ -893,6 +914,79 @@ OrderCancelled.
 | lines | [OrderLine](#ecommerce-events-v1-OrderLine) | repeated |  |
 | total | [ecommerce.common.v1.Money](#ecommerce-common-v1-Money) |  |  |
 | placed_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="ecommerce_events_v1_payment-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/events/v1/payment.proto
+
+
+
+<a name="ecommerce-events-v1-PaymentFailed"></a>
+
+### PaymentFailed
+PaymentFailed says one attempt to collect is over and no money moved.
+Published to ecommerce.payment.events.v1.
+
+It does not say the order is dead. A customer whose card was declined may try
+another one while their stock is still held, so the order service cancels on
+this only when it has decided not to wait any longer — which is a decision
+about an order, and therefore the order service&#39;s to make.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| payment_id | [string](#string) |  |  |
+| order_id | [string](#string) |  |  |
+| user_id | [string](#string) |  |  |
+| amount | [ecommerce.common.v1.Money](#ecommerce-common-v1-Money) |  |  |
+| reason | [string](#string) |  | Why, in the provider&#39;s vocabulary. A developer and support aid: the set of these belongs to the provider and changes without this system being told, so no consumer may branch on it. |
+| failed_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-events-v1-PaymentSucceeded"></a>
+
+### PaymentSucceeded
+PaymentSucceeded says the money for an order is in. Published to
+ecommerce.payment.events.v1.
+
+The order service consumes it and marks its order paid, which is what
+eventually turns the hold on stock into a sale. Two hops through Kafka rather
+than one: this event is a fact about a payment, and OrderPaid is a fact about
+an order, and collapsing them would put the order&#39;s state machine inside a
+consumer that does not own it.
+
+The key is the payment id and not the order id, so redelivered attempts
+against one order stay ordered per attempt. A consumer that needs them
+ordered per order has the order id in the body.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| payment_id | [string](#string) |  |  |
+| order_id | [string](#string) |  |  |
+| user_id | [string](#string) |  |  |
+| amount | [ecommerce.common.v1.Money](#ecommerce-common-v1-Money) |  | What was actually collected. It is the order&#39;s total: this system takes no partial payments, and a consumer comparing the two is how a mismatch with the provider gets noticed at all. |
+| provider_reference | [string](#string) |  | The provider&#39;s own identifier for the charge, carried so that an order can be traced to a line in the provider&#39;s dashboard without a second read. |
+| paid_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
 
@@ -1825,6 +1919,260 @@ Reserving happens first and synchronously, so a shopper learns that something is
 Deliberately not named Get* or Batch*: the client retry policy reads method names to decide what is safe to retry, and a retried checkout that was not deduplicated is a second order. |
 | GetOrder | [GetOrderRequest](#ecommerce-order-v1-GetOrderRequest) | [GetOrderResponse](#ecommerce-order-v1-GetOrderResponse) | GetOrder reads one order. A caller may only read their own. |
 | ListOrders | [ListOrdersRequest](#ecommerce-order-v1-ListOrdersRequest) | [ListOrdersResponse](#ecommerce-order-v1-ListOrdersResponse) | ListOrders pages through the caller&#39;s own orders, newest first. |
+
+ 
+
+
+
+<a name="ecommerce_payment_v1_payment-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/payment/v1/payment.proto
+
+
+
+<a name="ecommerce-payment-v1-Payment"></a>
+
+### Payment
+Payment is what the payment service tells everyone else about one attempt to
+collect the money for an order.
+
+It is the outward shape, not the aggregate: the provider&#39;s own request and
+response bodies, the idempotency record, and the optimistic-locking version
+stay inside the service. One order may have several of these — a declined
+card is a finished attempt, and trying again is a new one.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+| order_id | [string](#string) |  | The order this is collecting for. Not unique: a failed attempt does not stop the customer trying another card. |
+| user_id | [string](#string) |  | Who is paying, taken from the verified identity on the call that started it. A payment may only be read by the person who made it. |
+| status | [PaymentStatus](#ecommerce-payment-v1-PaymentStatus) |  |  |
+| amount | [ecommerce.common.v1.Money](#ecommerce-common-v1-Money) |  | What is being collected, copied from the order at the moment the attempt started. Copied rather than read back, for the reason an order line copies its price: this is the amount that was actually sent to the provider, and it has to stay readable next to what the provider says it charged. |
+| provider_reference | [string](#string) |  | The provider&#39;s own identifier for this attempt, empty until the provider has answered. It is what a human reconciles against in the provider&#39;s dashboard, and what an ambiguous timeout is resolved by asking about. |
+| failure_reason | [string](#string) |  | Why a failed attempt failed, in the provider&#39;s vocabulary — empty unless status is FAILED. A developer aid and a support aid; it is deliberately not a reason code a client branches on, because the set of them belongs to the provider and changes without this system being told. |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="ecommerce-payment-v1-PaymentStatus"></a>
+
+### PaymentStatus
+PaymentStatus is where one attempt to collect has got to.
+
+Three states and not four: there is no separate &#34;awaiting the customer&#34;.
+Whether the money has not arrived because a 3-D Secure page is still open or
+because the provider is slow is the provider&#39;s business, and a state per
+reason would be this service tracking a flow it does not own. What the client
+needs in order to act is next_action_url, not a finer status.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PAYMENT_STATUS_UNSPECIFIED | 0 |  |
+| PAYMENT_STATUS_PENDING | 1 | Sent to the provider, no money yet. The customer may still have something to do, or the provider may simply not have answered. |
+| PAYMENT_STATUS_SUCCEEDED | 2 | The money is in. Terminal, and what makes the order paid. |
+| PAYMENT_STATUS_FAILED | 3 | The attempt is over and no money moved. Terminal for this attempt, and not for the order: the customer may try again until the hold on their stock expires. |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="ecommerce_payment_v1_payment_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## ecommerce/payment/v1/payment_service.proto
+
+
+
+<a name="ecommerce-payment-v1-GetPaymentRequest"></a>
+
+### GetPaymentRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-payment-v1-GetPaymentResponse"></a>
+
+### GetPaymentResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| payment | [Payment](#ecommerce-payment-v1-Payment) |  |  |
+
+
+
+
+
+
+<a name="ecommerce-payment-v1-GetPaymentsByOrderIDsRequest"></a>
+
+### GetPaymentsByOrderIDsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| order_ids | [string](#string) | repeated | Bounded because the response is: an unbounded list is how a batch read drives its own callee out of memory. |
+
+
+
+
+
+
+<a name="ecommerce-payment-v1-GetPaymentsByOrderIDsResponse"></a>
+
+### GetPaymentsByOrderIDsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| payments | [Payment](#ecommerce-payment-v1-Payment) | repeated | Every attempt against the orders asked for, in no guaranteed order and possibly none at all. An order nobody has tried to pay for yet is not an error: one such row must not fail the whole screen a caller is assembling. |
+
+
+
+
+
+
+<a name="ecommerce-payment-v1-HandleProviderCallbackRequest"></a>
+
+### HandleProviderCallbackRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| payload | [bytes](#bytes) |  | The provider&#39;s request body, byte for byte as it arrived.
+
+bytes rather than a parsed message, and this is load-bearing: the signature is computed over exactly these bytes, so a hop that decoded the JSON and re-encoded it would produce a body that no longer verifies — a different key order is enough. Whoever forwards this must pass the raw body through. |
+| signature | [string](#string) |  | The provider&#39;s signature over that body, taken from its own header. |
+
+
+
+
+
+
+<a name="ecommerce-payment-v1-HandleProviderCallbackResponse"></a>
+
+### HandleProviderCallbackResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| payment | [Payment](#ecommerce-payment-v1-Payment) |  | The attempt as it stands after the callback was applied, so a caller that wants to log what changed does not need a second read.
+
+A callback naming an attempt this service does not know about is not an error and leaves this empty: providers send events for things they were never asked to do, and answering 404 would make them retry forever. |
+
+
+
+
+
+
+<a name="ecommerce-payment-v1-InitiatePaymentRequest"></a>
+
+### InitiatePaymentRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| order_id | [string](#string) |  | The order to collect for. What it costs is read from the order service rather than taken from this request. |
+| idempotency_key | [string](#string) |  | The client&#39;s own key for this attempt, echoed on every retry of it.
+
+A field rather than metadata, for the reason CheckoutRequest states: an idempotency key is a fact about one call rather than about the request chain, and forwarding it as a header would attach a single key to every hop a fan-out touches.
+
+It deduplicates the *submit*, not the order: a customer whose card was declined and who tries again is sending a new key, and gets a new attempt. |
+| method | [string](#string) |  | Which method the customer chose, in this system&#39;s vocabulary rather than the provider&#39;s. Empty means the provider&#39;s default. |
+
+
+
+
+
+
+<a name="ecommerce-payment-v1-InitiatePaymentResponse"></a>
+
+### InitiatePaymentResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| payment | [Payment](#ecommerce-payment-v1-Payment) |  |  |
+| next_action_url | [string](#string) |  | Where to send the customer to finish paying — a 3-D Secure page, a hosted form, a QR code. Empty when there is nothing for them to do and the answer is simply on its way.
+
+Not stored on the Payment: it is a fact about this response, it expires, and a URL that authorises a charge is not something to hand back on every later read of the attempt. |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="ecommerce-payment-v1-PaymentService"></a>
+
+### PaymentService
+PaymentService owns attempts to collect money: what was charged, to whom, by
+which provider, and how it ended. It is reached over east-west gRPC only.
+
+It owns no orders. How much an order costs and whether it is still waiting to
+be paid are the order service&#39;s answers, read synchronously before an attempt
+starts — a client that could name its own amount would be naming what it
+pays. What this service owns is everything after that: the call to the
+provider, the record of what it said, and the fact published when the money
+is in or gone for good.
+
+It is deliberately not the orchestrator. Order drives the checkout saga and
+consumes PaymentSucceeded and PaymentFailed to advance or compensate; this
+service publishes what happened and decides nothing about the order.
+
+Every field constraint below is declared here rather than checked in a
+handler: a single interceptor enforces them, so a handler that validates its
+own input is a bug wherever it appears.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| InitiatePayment | [InitiatePaymentRequest](#ecommerce-payment-v1-InitiatePaymentRequest) | [InitiatePaymentResponse](#ecommerce-payment-v1-InitiatePaymentResponse) | InitiatePayment starts one attempt to collect for an order and returns as soon as the provider has been told about it.
+
+It does not wait for the money. A card may need a 3-D Secure page and a QR code needs somebody to scan it, so what comes back is a PENDING payment and wherever the customer has to go next; the outcome arrives later as a callback from the provider.
+
+An order that is not still waiting for payment is FailedPrecondition with reason ORDER_NOT_PAYABLE — already paid, cancelled, or somebody else&#39;s.
+
+Deliberately not named Get* or Batch*: the client retry policy reads method names to decide what is safe to retry, and a retried attempt that was not deduplicated is a second charge. |
+| GetPayment | [GetPaymentRequest](#ecommerce-payment-v1-GetPaymentRequest) | [GetPaymentResponse](#ecommerce-payment-v1-GetPaymentResponse) | GetPayment reads one attempt. A caller may only read their own. |
+| GetPaymentsByOrderIDs | [GetPaymentsByOrderIDsRequest](#ecommerce-payment-v1-GetPaymentsByOrderIDsRequest) | [GetPaymentsByOrderIDsResponse](#ecommerce-payment-v1-GetPaymentsByOrderIDsResponse) | GetPaymentsByOrderIDs reads the attempts made against many orders, so a caller can fill an order-history screen without looping single-item calls. |
+| HandleProviderCallback | [HandleProviderCallbackRequest](#ecommerce-payment-v1-HandleProviderCallbackRequest) | [HandleProviderCallbackResponse](#ecommerce-payment-v1-HandleProviderCallbackResponse) | HandleProviderCallback takes a webhook exactly as the provider sent it and settles the attempt it names.
+
+The BFF forwards the request here without interpreting it: verifying the signature needs the provider&#39;s secret and knowing what the body means is this service&#39;s business, and a BFF has neither. It arrives as bytes and a signature for that reason.
+
+Idempotent, because a provider redelivers: a callback for an attempt that is already settled is accepted and changes nothing. Not named for a read even so — it writes, and the retry policy must not send it again on its own. |
 
  
 

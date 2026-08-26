@@ -1,0 +1,163 @@
+syntax = "proto3";
+
+package ecommerce.payment.v1;
+
+import "buf/validate/validate.proto";
+import "ecommerce/payment/v1/payment.proto";
+
+// PaymentService owns attempts to collect money: what was charged, to whom, by
+// which provider, and how it ended. It is reached over east-west gRPC only.
+//
+// It owns no orders. How much an order costs and whether it is still waiting to
+// be paid are the order service's answers, read synchronously before an attempt
+// starts — a client that could name its own amount would be naming what it
+// pays. What this service owns is everything after that: the call to the
+// provider, the record of what it said, and the fact published when the money
+// is in or gone for good.
+//
+// It is deliberately not the orchestrator. Order drives the checkout saga and
+// consumes PaymentSucceeded and PaymentFailed to advance or compensate; this
+// service publishes what happened and decides nothing about the order.
+//
+// Every field constraint below is declared here rather than checked in a
+// handler: a single interceptor enforces them, so a handler that validates its
+// own input is a bug wherever it appears.
+service PaymentService {
+  // InitiatePayment starts one attempt to collect for an order and returns as
+  // soon as the provider has been told about it.
+  //
+  // It does not wait for the money. A card may need a 3-D Secure page and a QR
+  // code needs somebody to scan it, so what comes back is a PENDING payment and
+  // wherever the customer has to go next; the outcome arrives later as a
+  // callback from the provider.
+  //
+  // An order that is not still waiting for payment is FailedPrecondition with
+  // reason ORDER_NOT_PAYABLE — already paid, cancelled, or somebody else's.
+  //
+  // Deliberately not named Get* or Batch*: the client retry policy reads method
+  // names to decide what is safe to retry, and a retried attempt that was not
+  // deduplicated is a second charge.
+  rpc InitiatePayment(InitiatePaymentRequest) returns (InitiatePaymentResponse);
+
+  // GetPayment reads one attempt. A caller may only read their own.
+  rpc GetPayment(GetPaymentRequest) returns (GetPaymentResponse);
+
+  // GetPaymentsByOrderIDs reads the attempts made against many orders, so a
+  // caller can fill an order-history screen without looping single-item calls.
+  rpc GetPaymentsByOrderIDs(GetPaymentsByOrderIDsRequest) returns (GetPaymentsByOrderIDsResponse);
+
+  // HandleProviderCallback takes a webhook exactly as the provider sent it and
+  // settles the attempt it names.
+  //
+  // The BFF forwards the request here without interpreting it: verifying the
+  // signature needs the provider's secret and knowing what the body means is
+  // this service's business, and a BFF has neither. It arrives as bytes and a
+  // signature for that reason.
+  //
+  // Idempotent, because a provider redelivers: a callback for an attempt that
+  // is already settled is accepted and changes nothing. Not named for a read
+  // even so — it writes, and the retry policy must not send it again on its
+  // own.
+  rpc HandleProviderCallback(HandleProviderCallbackRequest) returns (HandleProviderCallbackResponse);
+}
+
+message InitiatePaymentRequest {
+  // The order to collect for. What it costs is read from the order service
+  // rather than taken from this request.
+  string order_id = 1 [(buf.validate.field).string.uuid = true];
+
+  // The client's own key for this attempt, echoed on every retry of it.
+  //
+  // A field rather than metadata, for the reason CheckoutRequest states: an
+  // idempotency key is a fact about one call rather than about the request
+  // chain, and forwarding it as a header would attach a single key to every hop
+  // a fan-out touches.
+  //
+  // It deduplicates the *submit*, not the order: a customer whose card was
+  // declined and who tries again is sending a new key, and gets a new attempt.
+  string idempotency_key = 2 [(buf.validate.field).string = {
+    min_len: 8
+    max_len: 128
+    pattern: "^[A-Za-z0-9._:-]+$"
+  }];
+
+  // Which method the customer chose, in this system's vocabulary rather than
+  // the provider's. Empty means the provider's default.
+  string method = 3 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string = {
+      max_len: 32
+      pattern: "^[a-z][a-z0-9_]*$"
+    }
+  ];
+}
+
+message InitiatePaymentResponse {
+  Payment payment = 1;
+
+  // Where to send the customer to finish paying — a 3-D Secure page, a hosted
+  // form, a QR code. Empty when there is nothing for them to do and the answer
+  // is simply on its way.
+  //
+  // Not stored on the Payment: it is a fact about this response, it expires,
+  // and a URL that authorises a charge is not something to hand back on every
+  // later read of the attempt.
+  string next_action_url = 2;
+}
+
+message GetPaymentRequest {
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message GetPaymentResponse {
+  Payment payment = 1;
+}
+
+message GetPaymentsByOrderIDsRequest {
+  // Bounded because the response is: an unbounded list is how a batch read
+  // drives its own callee out of memory.
+  repeated string order_ids = 1 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 100
+      unique: true
+    },
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+}
+
+message GetPaymentsByOrderIDsResponse {
+  // Every attempt against the orders asked for, in no guaranteed order and
+  // possibly none at all. An order nobody has tried to pay for yet is not an
+  // error: one such row must not fail the whole screen a caller is assembling.
+  repeated Payment payments = 1;
+}
+
+message HandleProviderCallbackRequest {
+  // The provider's request body, byte for byte as it arrived.
+  //
+  // bytes rather than a parsed message, and this is load-bearing: the signature
+  // is computed over exactly these bytes, so a hop that decoded the JSON and
+  // re-encoded it would produce a body that no longer verifies — a different
+  // key order is enough. Whoever forwards this must pass the raw body through.
+  bytes payload = 1 [(buf.validate.field).bytes = {
+    min_len: 1
+    max_len: 65536
+  }];
+
+  // The provider's signature over that body, taken from its own header.
+  string signature = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1024
+  }];
+}
+
+message HandleProviderCallbackResponse {
+  // The attempt as it stands after the callback was applied, so a caller that
+  // wants to log what changed does not need a second read.
+  //
+  // A callback naming an attempt this service does not know about is not an
+  // error and leaves this empty: providers send events for things they were
+  // never asked to do, and answering 404 would make them retry forever.
+  Payment payment = 1;
+}

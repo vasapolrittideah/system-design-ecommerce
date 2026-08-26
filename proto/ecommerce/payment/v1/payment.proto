@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package ecommerce.payment.v1;
+
+import "ecommerce/common/v1/money.proto";
+import "google/protobuf/timestamp.proto";
+
+// Payment is what the payment service tells everyone else about one attempt to
+// collect the money for an order.
+//
+// It is the outward shape, not the aggregate: the provider's own request and
+// response bodies, the idempotency record, and the optimistic-locking version
+// stay inside the service. One order may have several of these — a declined
+// card is a finished attempt, and trying again is a new one.
+message Payment {
+  string id = 1;
+
+  // The order this is collecting for. Not unique: a failed attempt does not
+  // stop the customer trying another card.
+  string order_id = 2;
+
+  // Who is paying, taken from the verified identity on the call that started
+  // it. A payment may only be read by the person who made it.
+  string user_id = 3;
+
+  PaymentStatus status = 4;
+
+  // What is being collected, copied from the order at the moment the attempt
+  // started. Copied rather than read back, for the reason an order line copies
+  // its price: this is the amount that was actually sent to the provider, and
+  // it has to stay readable next to what the provider says it charged.
+  ecommerce.common.v1.Money amount = 5;
+
+  // The provider's own identifier for this attempt, empty until the provider
+  // has answered. It is what a human reconciles against in the provider's
+  // dashboard, and what an ambiguous timeout is resolved by asking about.
+  string provider_reference = 6;
+
+  // Why a failed attempt failed, in the provider's vocabulary — empty unless
+  // status is FAILED. A developer aid and a support aid; it is deliberately not
+  // a reason code a client branches on, because the set of them belongs to the
+  // provider and changes without this system being told.
+  string failure_reason = 7;
+
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+// PaymentStatus is where one attempt to collect has got to.
+//
+// Three states and not four: there is no separate "awaiting the customer".
+// Whether the money has not arrived because a 3-D Secure page is still open or
+// because the provider is slow is the provider's business, and a state per
+// reason would be this service tracking a flow it does not own. What the client
+// needs in order to act is next_action_url, not a finer status.
+enum PaymentStatus {
+  PAYMENT_STATUS_UNSPECIFIED = 0;
+
+  // Sent to the provider, no money yet. The customer may still have something
+  // to do, or the provider may simply not have answered.
+  PAYMENT_STATUS_PENDING = 1;
+
+  // The money is in. Terminal, and what makes the order paid.
+  PAYMENT_STATUS_SUCCEEDED = 2;
+
+  // The attempt is over and no money moved. Terminal for this attempt, and not
+  // for the order: the customer may try again until the hold on their stock
+  // expires.
+  PAYMENT_STATUS_FAILED = 3;
+}
