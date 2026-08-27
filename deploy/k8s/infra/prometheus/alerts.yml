@@ -169,7 +169,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "{{ $labels.service }} routed a message to its dead letter topic"
+          summary: "{{ $labels.service }} routed a message from {{ $labels.topic }} to its dead letter topic"
           description: "The message's own error_reason header names why — read it off the .dlq topic rather than from this alert."
 
   - name: inventory
