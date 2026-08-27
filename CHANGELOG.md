@@ -1,5 +1,84 @@
 # Changelog
 
+## [1.1.0](https://github.com/vasapolrittideah/system-design-ecommerce/compare/v1.0.0...v1.1.0) (2026-08-27)
+
+
+### Features
+
+* **bff-web:** add checkout, order history, and order detail ([5c161bd](https://github.com/vasapolrittideah/system-design-ecommerce/commit/5c161bd4e36d55890ef3915dffc5269e96fb42ff))
+* **bff-web:** add order payment and provider webhook endpoints ([526bd46](https://github.com/vasapolrittideah/system-design-ecommerce/commit/526bd46bbdfa9e06ed3460ed21ed90640a25d972))
+* **catalog:** answer variant prices by SKU ([df00700](https://github.com/vasapolrittideah/system-design-ecommerce/commit/df00700f8f40d990048e86b0ebe507865ecd4986))
+* **deploy:** add local-only kafka console that decodes protobuf ([3c8ceab](https://github.com/vasapolrittideah/system-design-ecommerce/commit/3c8ceab1d987d22d6b31445dc175b9625cd2ca77))
+* **deploy:** add order workloads and its database ([3cf4230](https://github.com/vasapolrittideah/system-design-ecommerce/commit/3cf423066f2cc52e2326a7998b58ae26c5214893))
+* **deploy:** add payment workloads, its database, and fake provider ([0151714](https://github.com/vasapolrittideah/system-design-ecommerce/commit/01517146c91322e6c156c93658e4f7b2f7e3416e))
+* **deploy:** add topic to DLQ alert summary ([40cfa1e](https://github.com/vasapolrittideah/system-design-ecommerce/commit/40cfa1e3c8b0627a60ca0c8244a27623caa38da1))
+* **deploy:** allow bff-web egress to payment, ingress from fakeprovider ([17d2b5b](https://github.com/vasapolrittideah/system-design-ecommerce/commit/17d2b5b6dadbd2746d8cb861a0fed13aeb40b2e5))
+* **deploy:** let bff-web reach order ([8f8bc2b](https://github.com/vasapolrittideah/system-design-ecommerce/commit/8f8bc2b21f369c9e990f9f82eab7a64627e29b69))
+* **deploy:** run Kafka in KRaft mode with declared topics ([9993482](https://github.com/vasapolrittideah/system-design-ecommerce/commit/9993482582c2ee4c186f516aa7fb229204e130a8))
+* **deploy:** run order's own OrderPlaced consumer ([e37e78b](https://github.com/vasapolrittideah/system-design-ecommerce/commit/e37e78b49bc11cde80c0ed59564777e079c6d73f))
+* **deploy:** run order's payment subscription ([b5c247a](https://github.com/vasapolrittideah/system-design-ecommerce/commit/b5c247a99042fec44ee9c5a7e7ae66c294406f9a))
+* **deploy:** run order's saga timeout worker ([872283d](https://github.com/vasapolrittideah/system-design-ecommerce/commit/872283d5df2c1195f1ad0b37b8fe8f7a611c0d8e))
+* **deploy:** run staging beside prod in its own namespace ([3afe2ef](https://github.com/vasapolrittideah/system-design-ecommerce/commit/3afe2ef321288cf22184bde2a95d3cd384a0468c))
+* **events:** decode envelope and restore its trace ([854d8ae](https://github.com/vasapolrittideah/system-design-ecommerce/commit/854d8ae3791fad78988ab6e7eb6df86137c2fb86))
+* **events:** turn domain events into outbox records ([6881d77](https://github.com/vasapolrittideah/system-design-ecommerce/commit/6881d7764a3b55c83622a221cb1edf747c919c38))
+* **httpx:** add ReadBody for bodies forwarded byte for byte ([d724e4a](https://github.com/vasapolrittideah/system-design-ecommerce/commit/d724e4a34c806b8f37aea6cda0d0443d004d22c6))
+* **identity:** raise UserRegistered into outbox rows ([4e283ff](https://github.com/vasapolrittideah/system-design-ecommerce/commit/4e283ff1dc92e832e7e09a478047ecaaa1c13576))
+* **identity:** run outbox relay as its own workload ([9ca0481](https://github.com/vasapolrittideah/system-design-ecommerce/commit/9ca0481244057a866bd25143feb7dfa3c6142509))
+* **inbox:** add processed_events claim for consumer idempotency ([d001c81](https://github.com/vasapolrittideah/system-design-ecommerce/commit/d001c8116c415fc7aa5555cb54d0673857a52097))
+* **kafkax:** consume with retry then dead letter ([1e3aa3c](https://github.com/vasapolrittideah/system-design-ecommerce/commit/1e3aa3c213dbbcd79bbeafea8a86a792c11b3200))
+* **kafkax:** publish outbox rows to Kafka with acks=all ([c477a6b](https://github.com/vasapolrittideah/system-design-ecommerce/commit/c477a6b90c21ef79b9df6b952f6465f24cb88f09))
+* **order:** add order aggregate and its state machine ([1f488e2](https://github.com/vasapolrittideah/system-design-ecommerce/commit/1f488e2ddbbcfe08854c83260bada23a88f256bf))
+* **order:** consume own OrderPlaced to commit reservation ([94be82a](https://github.com/vasapolrittideah/system-design-ecommerce/commit/94be82a2feb806745f26bf9abdc10c8b9e0567fd))
+* **order:** consume payment events to mark orders paid ([bf2774d](https://github.com/vasapolrittideah/system-design-ecommerce/commit/bf2774d0ead288cf55ec2c78dd1cce55aefe9f49))
+* **order:** end orders nobody paid for in time ([1a00eac](https://github.com/vasapolrittideah/system-design-ecommerce/commit/1a00eac7368e2b270a7038427d5bf99db3358c23))
+* **order:** orchestrate checkout over its ports ([73a3d9d](https://github.com/vasapolrittideah/system-design-ecommerce/commit/73a3d9dc7b3b99f267f357e2e82c9f3825ed67b8))
+* **order:** serve OrderService and relay its outbox ([e0a0432](https://github.com/vasapolrittideah/system-design-ecommerce/commit/e0a0432911b0253515745a267c45edfe266332e2))
+* **order:** store orders and idempotency claims in postgres ([d744ca6](https://github.com/vasapolrittideah/system-design-ecommerce/commit/d744ca6e4a79f0d84e7450ccc41f75a52555fbae))
+* **payment:** add payment aggregate and its state machine ([e2f63f7](https://github.com/vasapolrittideah/system-design-ecommerce/commit/e2f63f7321f81e5a226665d1369a4843dd9b4b8a))
+* **payment:** call provider over HTTP, with misbehaving fake ([804e296](https://github.com/vasapolrittideah/system-design-ecommerce/commit/804e296174e798c1dcbd19dd5f56b12400276a27))
+* **payment:** orchestrate one charge over its ports ([a13af78](https://github.com/vasapolrittideah/system-design-ecommerce/commit/a13af786b11bba1a8c85c499fa39e9f4dcbcb811))
+* **payment:** serve PaymentService and relay its outbox ([3153d0b](https://github.com/vasapolrittideah/system-design-ecommerce/commit/3153d0bf78adff1ab1b1a2e03aac18f3b7423065))
+* **payment:** store attempts and idempotency claims in postgres ([6fc7eaf](https://github.com/vasapolrittideah/system-design-ecommerce/commit/6fc7eaf03a07479612581d7b87b42ad02c325345))
+* **proto:** add event envelope and UserRegistered fact ([43c3b2d](https://github.com/vasapolrittideah/system-design-ecommerce/commit/43c3b2dca93d76fe4830a56b632de5ec5bfcb7dc))
+* **proto:** add order contract and catalog's read by SKU ([e9b278b](https://github.com/vasapolrittideah/system-design-ecommerce/commit/e9b278bd4cceb7faed7ba875387003952da40ee0))
+* **proto:** add OrderPaid and OrderCancelled facts ([8e6162f](https://github.com/vasapolrittideah/system-design-ecommerce/commit/8e6162fa8ba38775601584d973ce40a3678c5eca))
+* **proto:** add payment contract and its two facts ([e6e4dcd](https://github.com/vasapolrittideah/system-design-ecommerce/commit/e6e4dcd48d67eeacd876444bdfd278375001df0f))
+
+
+### Bug fixes
+
+* **deploy:** generate URL-safe database passwords ([8153241](https://github.com/vasapolrittideah/system-design-ecommerce/commit/8153241f39a4d8506f90e50e00ffb56a57f1c40d))
+* **deploy:** let payment reach kafka ([6495d6b](https://github.com/vasapolrittideah/system-design-ecommerce/commit/6495d6ba4de86e51603f1756bf600c689ba392f9))
+* **deploy:** let payment reach order ([adf85e1](https://github.com/vasapolrittideah/system-design-ecommerce/commit/adf85e16b4366446dbc1f9dabe7cdb88e2d4926d))
+* **deploy:** mark sqlc stale on order and payment query edits ([4e67e37](https://github.com/vasapolrittideah/system-design-ecommerce/commit/4e67e37189ee153688dfde865f76068bb267d48a))
+* **deploy:** order migrations by sync wave, not by PreSync ([771f3cb](https://github.com/vasapolrittideah/system-design-ecommerce/commit/771f3cbaa3f1bf4993f7355edd412e58db802d4d))
+* **deploy:** point kong at bff-web in its own namespace ([060fcd6](https://github.com/vasapolrittideah/system-design-ecommerce/commit/060fcd61656ff002e4f8cafc9978800c996e1931))
+* **deploy:** widen smoke's wait for a cold gateway ([0b7a22d](https://github.com/vasapolrittideah/system-design-ecommerce/commit/0b7a22d0dc405e97d87f6ac289482049beb55ec6))
+* import images into k3d nodes directly ([afe1af2](https://github.com/vasapolrittideah/system-design-ecommerce/commit/afe1af243279787d9f5b4a988fd78fb5479663a8))
+* **kafkax:** let several consumers share one registry ([2f63643](https://github.com/vasapolrittideah/system-design-ecommerce/commit/2f636439c849333e9e5f4628021d84930dad43b1))
+* **order:** commit reservation on payment, not placement ([4e2f9ce](https://github.com/vasapolrittideah/system-design-ecommerce/commit/4e2f9ce391d58ee798268c140ade997a131d36bf))
+
+
+### Refactoring
+
+* **identity:** move RelayConfig into config.go ([30694ca](https://github.com/vasapolrittideah/system-design-ecommerce/commit/30694cabc0580cd4c8dfaad46984419e6634d4ed))
+
+
+### Documentation
+
+* **agent:** drop in-flight state from idempotency record ([e27b139](https://github.com/vasapolrittideah/system-design-ecommerce/commit/e27b139fabb6eb1fa10cecae24dc4503479c8663))
+* **agent:** move idempotency record from Redis to Postgres ([49896bb](https://github.com/vasapolrittideah/system-design-ecommerce/commit/49896bb9ef705a94200f974675e626785dff5e56))
+* **agent:** point Kafka idempotency rule at pkg/inbox ([115687a](https://github.com/vasapolrittideah/system-design-ecommerce/commit/115687a66aacc8047c22729ec7b0a2a4737941e0))
+* **agent:** record saga timeout and provider conventions ([3d80bf0](https://github.com/vasapolrittideah/system-design-ecommerce/commit/3d80bf09d834ff48b08fcb96dec097aa9bc87152))
+* **agent:** record which topic policy the cluster holds ([2baa395](https://github.com/vasapolrittideah/system-design-ecommerce/commit/2baa39542dabc269d64432f4f89b1f358ab64ef1))
+* **deploy:** describe order's worker by both its triggers ([a6fe50c](https://github.com/vasapolrittideah/system-design-ecommerce/commit/a6fe50cfe94d70bee75a297de95916670a22c4b6))
+
+
+### Build and images
+
+* add cluster-stop and cluster-start ([45a3dea](https://github.com/vasapolrittideah/system-design-ecommerce/commit/45a3deaebf1fc8a02480fe994d911d6290560a17))
+* **deps:** bump moby/go-archive to close path traversal ([97734d7](https://github.com/vasapolrittideah/system-design-ecommerce/commit/97734d7849f1891571f8eb191010056940b338d1))
+
 ## 1.0.0 (2026-08-20)
 
 
