@@ -32,6 +32,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: order
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: payment
         # The Job beside this file, which declares the topics.
         - podSelector:
             matchLabels:
