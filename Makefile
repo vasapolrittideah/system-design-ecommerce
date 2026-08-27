@@ -650,6 +650,12 @@ image: ## Build a service's images and import them into the cluster (SVC=identit
 	@# The migrate image exists only for a service that owns a database. The
 	@# presence of a migrations directory is what says so — the Composition
 	@# API has neither, and its Dockerfile has no such stage to build.
+	@#
+	@# --mode direct streams each image into the nodes' containerd. k3d's
+	@# default routes them through a tarball in a volume shared by every node,
+	@# written by a tools node it creates and destroys per invocation — and
+	@# this target is one invocation per service, six in a row on CI, where a
+	@# node's ctr has been seen to find nothing at the path it was handed.
 	@images="ecommerce/$(SVC):$(IMAGE_TAG)"; \
 	if [ -d services/$(SVC)/db/migrations ]; then \
 		docker buildx build --load --provenance=false \
@@ -658,7 +664,7 @@ image: ## Build a service's images and import them into the cluster (SVC=identit
 			-t ecommerce/$(SVC)-migrate:$(IMAGE_TAG) . || exit 1; \
 		images="$$images ecommerce/$(SVC)-migrate:$(IMAGE_TAG)"; \
 	fi; \
-	k3d image import -c $(CLUSTER) $$images
+	k3d image import -c $(CLUSTER) --mode direct $$images
 
 .PHONY: deploy
 deploy: ## Build, migrate, and roll out a service (make deploy SVC=identity [OVERLAY=staging])
