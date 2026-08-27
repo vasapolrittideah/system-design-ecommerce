@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# A read-only console onto the broker, for a cluster somebody is debugging.
+#
+# A component rather than part of deploy/k8s/infra, and included by the local
+# infra overlay alone: everything under infra/ reaches all three clusters, and
+# staging and prod share a host and answer on a Cloudflare tunnel. A console
+# that reads every topic with no authentication belongs in neither. That is the
+# same trade cloudflared makes from the other direction — one component, one
+# overlay, no `if env` anywhere.
+#
+# What it buys is the two things Prometheus cannot answer here. Consumer lag
+# needs an exporter reading the broker's own offsets and nothing runs one, and
+# a message on a DLQ is a fact about one message rather than a series — the
+# alert says a message arrived, and this is where its error_reason header and
+# its payload are read.
+#
+# The protos are not a copy of proto/. They are `make kafka-console-protos`
+# output — the event schemas plus every transitive import, including
+# buf/validate/validate.proto, which money.proto imports and this repo does not
+# hold. Mounting proto/ directly resolves nothing.
+resources:
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml
+
+configMapGenerator:
+  - name: kafka-console-config
+    files:
+      - config.yaml
+  # Flat by necessity: a ConfigMap key may not contain a slash. The Deployment
+  # mounts each of these back to the import path its file has to sit at.
+  - name: kafka-console-protos
+    files:
+      - validate.proto=protos/buf/validate/validate.proto
+      - money.proto=protos/ecommerce/common/v1/money.proto
+      - envelope.proto=protos/ecommerce/events/v1/envelope.proto
+      - identity.proto=protos/ecommerce/events/v1/identity.proto
+      - order.proto=protos/ecommerce/events/v1/order.proto
+      - payment.proto=protos/ecommerce/events/v1/payment.proto
+
+generatorOptions:
+  disableNameSuffixHash: true

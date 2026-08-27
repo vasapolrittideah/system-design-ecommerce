@@ -1,0 +1,18 @@
+# An ordinary ClusterIP: this one carries HTTP rather than gRPC and has one
+# replica behind it, so neither reason for a headless Service applies.
+#
+# It is reached by `kubectl port-forward` and by nothing inside the cluster.
+# The port is deliberately not named `admin`: Prometheus discovers targets by
+# that name, and a console publishing no metrics would join every dashboard's
+# `up` series as a target that is always down.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-console
+spec:
+  selector:
+    app.kubernetes.io/name: kafka-console
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

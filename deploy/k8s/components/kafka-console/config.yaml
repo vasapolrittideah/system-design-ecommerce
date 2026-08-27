@@ -1,0 +1,55 @@
+# What the console reads at startup. Local only — see this component's
+# kustomization.
+#
+# Every message on every topic is an EventEnvelope, so the mapping below is the
+# same line five times rather than a decision per topic. A topic that is added
+# without an entry here shows its messages as raw bytes: the console has no
+# schema registry to ask, and this file is the whole of what it knows.
+
+kafka:
+  brokers:
+    - kafka:9092
+
+# serde, not kafka. The console still registers -kafka.protobuf.* command-line
+# flags that its own config loader rejects, so a config written from those
+# flags parses nowhere. Strict validation is on by default and refuses an
+# unknown key outright, which is what turns that into a pod that will not start
+# rather than a console that silently shows raw bytes.
+serde:
+  protobuf:
+    enabled: true
+
+    # Topic to message type. The key is an aggregate id — a plain string — so
+    # only the value is declared.
+    mappings:
+      - topicName: ecommerce.identity.events.v1
+        valueProtoType: ecommerce.events.v1.EventEnvelope
+      - topicName: ecommerce.order.events.v1
+        valueProtoType: ecommerce.events.v1.EventEnvelope
+      - topicName: ecommerce.order.events.v1.dlq
+        valueProtoType: ecommerce.events.v1.EventEnvelope
+      - topicName: ecommerce.payment.events.v1
+        valueProtoType: ecommerce.events.v1.EventEnvelope
+      - topicName: ecommerce.payment.events.v1.dlq
+        valueProtoType: ecommerce.events.v1.EventEnvelope
+
+    # The schemas, from a directory this component mounts rather than from a
+    # registry, because there is no registry: both ends of every topic are
+    # generated from proto/ in this repo, and `buf breaking` in CI is what
+    # holds them compatible.
+    #
+    # The tree under it is not a copy of proto/ — see the kustomization. It has
+    # to include every transitive import or none of the mappings resolve.
+    fileSystem:
+      enabled: true
+      paths:
+        - /etc/console/protos
+      # Nothing rewrites these files while the pod runs: the ConfigMap is
+      # mounted by subPath, which the kubelet never updates, and a change to it
+      # restarts the pod through Reloader. The interval is what the console
+      # wants set, not a refresh anything depends on.
+      refreshInterval: 10m
+
+server:
+  listenAddress: 0.0.0.0
+  listenPort: 8080

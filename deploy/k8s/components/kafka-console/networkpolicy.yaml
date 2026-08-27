@@ -1,0 +1,67 @@
+# What the console may reach, and the one hole it needs on the other side.
+#
+# It is a reader and not a participant: nothing in the namespace calls it, so
+# it has no ingress rule at all and the namespace's default deny is the whole
+# of its inbound policy. `kubectl port-forward` arrives from the node rather
+# than from a pod and is not filtered, which is the only way anyone reaches it.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka-console
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kafka-console
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka
+              app.kubernetes.io/component: broker
+      ports:
+        - protocol: TCP
+          port: 9092
+---
+# The broker's allow-list is in deploy/k8s/infra/kafka, where it names the
+# services that publish and consume. This entry is not one of those and does
+# not belong there: it admits a workload only a cluster including this
+# component runs, and it leaves when the component does.
+#
+# Policies selecting the same pods are additive, so this adds the console to
+# who may reach 9092 without base restating a list it already holds in full.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka-console-to-kafka
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kafka
+      app.kubernetes.io/component: broker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka-console
+      ports:
+        - protocol: TCP
+          port: 9092

@@ -18,6 +18,12 @@ namespace: ecommerce
 resources:
   - ../../../infra
 
+# The Kafka console. local alone, because the other two clusters share a host
+# and face the internet through a tunnel, and this reads every topic with no
+# authentication in front of it.
+components:
+  - ../../../components/kafka-console
+
 configMapGenerator:
   # Merged over the empty one in infra/kong, and read by the init container
   # that renders kong.yml.

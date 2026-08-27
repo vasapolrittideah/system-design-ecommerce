@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package ecommerce.events.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// UserRegistered says that an account now exists. Published to
+// ecommerce.identity.events.v1.
+//
+// The fields are declared here rather than by embedding
+// ecommerce.identity.v1.User, though the two overlap today. That message is the
+// answer to GetUser and may be changed to suit callers of it; this one is a
+// fact already written to a topic, which consumers older than the producer are
+// still reading. Sharing the shape would make one contract's change the other
+// contract's break.
+message UserRegistered {
+  string user_id = 1;
+
+  // Carried because a consumer that wants to welcome this user would otherwise
+  // call identity back for it — for every event, at consumer speed.
+  string email = 2;
+
+  // What the account was created with, which is not what it holds now: a role
+  // granted later is its own event, and reading this one as current is how a
+  // consumer builds a stale copy of a user.
+  repeated string roles = 3;
+
+  google.protobuf.Timestamp registered_at = 4;
+}

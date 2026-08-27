@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package ecommerce.events.v1;
+
+import "ecommerce/common/v1/money.proto";
+import "google/protobuf/timestamp.proto";
+
+// PaymentSucceeded says the money for an order is in. Published to
+// ecommerce.payment.events.v1.
+//
+// The order service consumes it and marks its order paid, which is what
+// eventually turns the hold on stock into a sale. Two hops through Kafka rather
+// than one: this event is a fact about a payment, and OrderPaid is a fact about
+// an order, and collapsing them would put the order's state machine inside a
+// consumer that does not own it.
+//
+// The key is the payment id and not the order id, so redelivered attempts
+// against one order stay ordered per attempt. A consumer that needs them
+// ordered per order has the order id in the body.
+message PaymentSucceeded {
+  string payment_id = 1;
+
+  string order_id = 2;
+
+  string user_id = 3;
+
+  // What was actually collected. It is the order's total: this system takes no
+  // partial payments, and a consumer comparing the two is how a mismatch with
+  // the provider gets noticed at all.
+  ecommerce.common.v1.Money amount = 4;
+
+  // The provider's own identifier for the charge, carried so that an order can
+  // be traced to a line in the provider's dashboard without a second read.
+  string provider_reference = 5;
+
+  google.protobuf.Timestamp paid_at = 6;
+}
+
+// PaymentFailed says one attempt to collect is over and no money moved.
+// Published to ecommerce.payment.events.v1.
+//
+// It does not say the order is dead. A customer whose card was declined may try
+// another one while their stock is still held, so the order service cancels on
+// this only when it has decided not to wait any longer — which is a decision
+// about an order, and therefore the order service's to make.
+message PaymentFailed {
+  string payment_id = 1;
+
+  string order_id = 2;
+
+  string user_id = 3;
+
+  ecommerce.common.v1.Money amount = 4;
+
+  // Why, in the provider's vocabulary. A developer and support aid: the set of
+  // these belongs to the provider and changes without this system being told,
+  // so no consumer may branch on it.
+  string reason = 5;
+
+  google.protobuf.Timestamp failed_at = 6;
+}

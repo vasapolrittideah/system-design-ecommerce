@@ -1,0 +1,105 @@
+# A read-only window onto the broker. Local only — see the kustomization.
+#
+# It keeps nothing: every answer it gives is a live read of Kafka, and a
+# restart loses a scroll position. That is what makes it safe to run without a
+# database, without a volume, and without any of the care the workloads beside
+# it need.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-console
+  annotations:
+    reloader.stakater.com/auto: "true"
+    # Alongside the broker it reads. It is not a dependency of anything, so it
+    # needs no earlier wave — and a console that starts before Kafka retries
+    # its way in rather than crash-looping.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # One replica, and no HPA. Nothing depends on it being up, and a second copy
+  # would be a second idle process holding a connection to the broker.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka-console
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka-console
+        app.kubernetes.io/part-of: ecommerce
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: console
+          # Pinned by tag rather than tracking a major. The config schema moves
+          # between them — this repo's own protobuf block is under a key that
+          # did not exist in v2 — so an unpinned upgrade is a pod that stops
+          # parsing its config.
+          image: docker.redpanda.com/redpandadata/console:v3.2.0
+          args: ["--config.filepath=/etc/console/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /etc/console/config.yaml
+              subPath: config.yaml
+            # One mount per proto file, because a ConfigMap key may not contain
+            # a slash and an import path is a path: `import
+            # "ecommerce/common/v1/money.proto"` has to find the file at that
+            # path or every mapping fails to resolve. The basenames happen to
+            # be unique across the set, which is what lets one flat ConfigMap
+            # carry a tree.
+            - name: protos
+              mountPath: /etc/console/protos/buf/validate/validate.proto
+              subPath: validate.proto
+            - name: protos
+              mountPath: /etc/console/protos/ecommerce/common/v1/money.proto
+              subPath: money.proto
+            - name: protos
+              mountPath: /etc/console/protos/ecommerce/events/v1/envelope.proto
+              subPath: envelope.proto
+            - name: protos
+              mountPath: /etc/console/protos/ecommerce/events/v1/identity.proto
+              subPath: identity.proto
+            - name: protos
+              mountPath: /etc/console/protos/ecommerce/events/v1/order.proto
+              subPath: order.proto
+            - name: protos
+              mountPath: /etc/console/protos/ecommerce/events/v1/payment.proto
+              subPath: payment.proto
+            # The process writes nothing to disk, but Go's own temporary
+            # directory has to exist somewhere the root filesystem is not.
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /admin/health
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: kafka-console-config
+        - name: protos
+          configMap:
+            name: kafka-console-protos
+        - name: tmp
+          emptyDir: {}

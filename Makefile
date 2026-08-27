@@ -335,7 +335,7 @@ build: ## Build every services/*/cmd/* binary into bin/
 ##@ Proto (buf)
 
 .PHONY: proto
-proto: proto-lint proto-breaking proto-generate ## Lint, check breaking changes, then generate
+proto: proto-lint proto-breaking proto-generate proto-export ## Lint, check breaking changes, then generate
 
 .PHONY: proto-lint
 proto-lint: ## buf lint
@@ -366,16 +366,33 @@ proto-generate: ## buf generate into gen/go and docs/proto
 	$(call need,buf)
 	buf generate
 
+# The console has no schema registry to ask, so it reads the schemas off disk —
+# and needs every transitive import or none of its mappings resolve. That is
+# what makes this `buf export` rather than a copy of proto/: money.proto imports
+# buf/validate/validate.proto, which comes from the BSR through buf.lock and is
+# in no directory of this repo.
+#
+# Only the event protos, because only they are ever on a topic. Exporting the
+# service protos too would mount a contract nothing on the broker speaks.
+KAFKA_CONSOLE_PROTOS := deploy/k8s/components/kafka-console/protos
+
+.PHONY: proto-export
+proto-export: ## Export the event protos and their imports for the Kafka console
+	$(call need,buf)
+	@rm -rf $(KAFKA_CONSOLE_PROTOS)
+	buf export . --path proto/ecommerce/events/v1 --output $(KAFKA_CONSOLE_PROTOS)
+
 .PHONY: proto-deps
 proto-deps: ## Update buf.lock from buf.yaml dependencies
 	$(call need,buf)
 	buf dep update
 
 .PHONY: proto-check
-proto-check: ## Fail if gen/ or docs/proto is stale relative to proto/ (CI)
+proto-check: ## Fail if gen/, docs/proto, or the console's protos are stale (CI)
 	$(call need,buf)
 	buf generate
-	$(call check_generated,gen/ docs/proto/,generated output is stale — run: make proto and commit the result)
+	@$(MAKE) --no-print-directory proto-export
+	$(call check_generated,gen/ docs/proto/ $(KAFKA_CONSOLE_PROTOS),generated output is stale — run: make proto and commit the result)
 
 ##@ Database
 
@@ -549,6 +566,9 @@ port-forward: ## Expose a service's database and the observability UIs on localh
 	@# ports Prometheus is scraping.
 	@echo "prometheus      -> http://localhost:9092 (alerts: /alerts)"
 	@echo "grafana         -> http://localhost:3000"
+	@# Local only: the component that deploys it is included by overlays/local
+	@# alone, so this line points at nothing anywhere else.
+	@echo "kafka console   -> http://localhost:8081"
 	@# One database at a time on 5432, because that is what DSN and every
 	@# psql invocation assume. Forwarding a second service means a second
 	@# terminal with SVC set to it and a port of its own.
@@ -557,6 +577,7 @@ port-forward: ## Expose a service's database and the observability UIs on localh
 	kubectl -n $(NAMESPACE) port-forward svc/jaeger 16686:16686 >/dev/null & \
 	kubectl -n $(NAMESPACE) port-forward svc/prometheus 9092:9090 >/dev/null & \
 	kubectl -n $(NAMESPACE) port-forward svc/grafana 3000:3000 >/dev/null & \
+	kubectl -n $(NAMESPACE) port-forward svc/kafka-console 8081:8080 >/dev/null 2>&1 & \
 	wait
 
 ##@ Develop
