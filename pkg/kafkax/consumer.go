@@ -69,8 +69,11 @@ type consumerOptions struct {
 
 // WithRegisterer registers the consumer's metrics somewhere other than the
 // default Prometheus registry — the registry pkg/observability owns, in a
-// service, and a throwaway one in tests, which would otherwise panic on a
-// second consumer registering the same collectors.
+// service, and a throwaway one in tests, so a package's own counters do not
+// outlive the test that made them.
+//
+// Several consumers may share one registry: they share the collectors and are
+// told apart by their group id and topic.
 func WithRegisterer(reg prometheus.Registerer) ConsumerOption {
 	return func(o *consumerOptions) {
 		o.registerer = reg
@@ -112,7 +115,7 @@ func NewConsumer(brokers []string, cfg ConsumerConfig, dlq *Publisher, opts ...C
 		opt(&o)
 	}
 
-	metrics, err := newConsumerMetrics(o.registerer)
+	metrics, err := newConsumerMetrics(o.registerer, cfg)
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -254,6 +255,76 @@ func TestNewConsumerRejectsUnusableConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Two subscriptions in one process share one registry, which order's worker is
+// the first thing here to do — and the second NewConsumer refusing to register
+// collectors the first had already registered crash-looped it. Distinct label
+// values are the other half of the same fix: one counter covering both
+// subscriptions cannot say which of them gave up on a message.
+func TestConsumersShareOneRegistry(t *testing.T) {
+	brokers := []string{"kafka:9092"}
+	dlq, err := kafkax.NewPublisher(kafkax.PublisherConfig{
+		Brokers: brokers, WriteTimeout: time.Second, MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewPublisher() error = %v, want nil", err)
+	}
+	defer dlq.Close() //nolint:errcheck // never dialed
+
+	reg := prometheus.NewRegistry()
+
+	for _, cfg := range []kafkax.ConsumerConfig{
+		{GroupID: "order.checkout-saga", Topic: "ecommerce.order.events.v1", MaxAttempts: 1},
+		{GroupID: "order.payment-saga", Topic: "ecommerce.payment.events.v1", MaxAttempts: 1},
+	} {
+		if _, err := kafkax.NewConsumer(brokers, cfg, dlq, kafkax.WithRegisterer(reg)); err != nil {
+			t.Fatalf("NewConsumer(%s) error = %v, want nil", cfg.GroupID, err)
+		}
+	}
+
+	for _, name := range []string{
+		"kafka_consumer_messages_processed_total",
+		"kafka_consumer_dlq_messages_total",
+	} {
+		got := labelValues(t, reg, name, "group_id")
+		want := []string{"order.checkout-saga", "order.payment-saga"}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s group_id values = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// labelValues reads back every value of one label on the named metric family,
+// sorted, so a test can assert on which series exist without depending on the
+// order the registry gathers them in.
+func labelValues(t *testing.T, g prometheus.Gatherer, name, label string) []string {
+	t.Helper()
+
+	families, err := g.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v, want nil", err)
+	}
+
+	var got []string
+
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+
+		for _, metric := range family.GetMetric() {
+			for _, pair := range metric.GetLabel() {
+				if pair.GetName() == label {
+					got = append(got, pair.GetValue())
+				}
+			}
+		}
+	}
+
+	slices.Sort(got)
+
+	return got
 }
 
 // waitFor blocks until want values have arrived on ch, failing rather than
